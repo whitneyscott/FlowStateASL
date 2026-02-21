@@ -1,0 +1,35 @@
+# Dependencies
+node_modules
+
+# Environment (secrets)
+.env
+.env.local
+.env.*.local
+
+# Build outputs
+dist
+tmp
+out-tsc
+*.log
+
+# Nx
+.nx/cache
+.nx/workspace-data
+
+# IDEs
+.idea
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+.project
+.classpath
+.settings/
+*.sublime-workspace
+
+# System
+.DS_Store
+Thumbs.db
+
+# Coverage
+coverage
