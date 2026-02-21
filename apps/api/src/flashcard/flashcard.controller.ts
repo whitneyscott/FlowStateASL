@@ -19,19 +19,34 @@ export class FlashcardController {
   ) {}
 
   @Get('playlists')
-  async getPlaylists(@Req() req: Request, @Query('filter') filter: string) {
+  async getPlaylists(
+    @Req() req: Request,
+    @Query('filter') filter: string,
+    @Query('curriculum') curriculumQ: string,
+    @Query('unit') unitQ: string,
+    @Query('section') sectionQ: string,
+  ) {
     const ctx = req.session?.ltiContext;
     const prefix = process.env.CURRICULUM_PREFIX ?? 'TWA';
+    if (curriculumQ && ctx?.courseId) {
+      return this.flashcard.getPlaylistsByHierarchy(
+        curriculumQ,
+        unitQ ?? '',
+        sectionQ ?? '',
+      );
+    }
     let effectiveFilter = filter ?? '';
     if (!effectiveFilter && ctx?.courseId && ctx?.resourceLinkId) {
       const config = await this.flashcard.getConfig(
         ctx.courseId,
         ctx.resourceLinkId,
       );
-      if (config && config.curriculum) {
-        effectiveFilter = [config.curriculum, config.unit, config.section]
-          .filter(Boolean)
-          .join(' ');
+      if (config?.curriculum) {
+        return this.flashcard.getPlaylistsByHierarchy(
+          config.curriculum,
+          config.unit,
+          config.section,
+        );
       }
     }
     if (!effectiveFilter && ctx?.courseId && ctx?.moduleId) {

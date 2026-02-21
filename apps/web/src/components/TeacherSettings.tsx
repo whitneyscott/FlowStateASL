@@ -27,10 +27,12 @@ interface Hierarchy {
 interface TeacherSettingsProps {
   context: LtiContext | null;
   onConfigChange?: () => void;
+  onSelectionChange?: (curriculum: string, unit: string, section: string) => void;
 }
 
-export function TeacherSettings({ context, onConfigChange }: TeacherSettingsProps) {
+export function TeacherSettings({ context, onConfigChange, onSelectionChange }: TeacherSettingsProps) {
   const [hierarchy, setHierarchy] = useState<Hierarchy | null>(null);
+  const [playlistsRetrieved, setPlaylistsRetrieved] = useState<number | null>(null);
   const [config, setConfig] = useState<{
     curriculum: string;
     unit: string;
@@ -61,6 +63,7 @@ export function TeacherSettings({ context, onConfigChange }: TeacherSettingsProp
         const h = await hRes.json();
         const c = await cRes.json();
         setHierarchy(h);
+        setPlaylistsRetrieved(h?.playlistsRetrieved ?? null);
         setConfig(c);
         if (c) {
           setCurriculum(c.curriculum);
@@ -91,6 +94,10 @@ export function TeacherSettings({ context, onConfigChange }: TeacherSettingsProp
       setSection('');
     }
   }, [curriculum, unit, hierarchy, section]);
+
+  useEffect(() => {
+    onSelectionChange?.(curriculum, unit, section);
+  }, [curriculum, unit, section, onSelectionChange]);
 
   const handleSave = async () => {
     if (!teacher || !hasLti) return;
@@ -161,7 +168,7 @@ export function TeacherSettings({ context, onConfigChange }: TeacherSettingsProp
           </select>
         </label>
         <label className="flex flex-col gap-1">
-          <span className="text-sm text-zinc-400">Section</span>
+          <span className="text-sm text-zinc-400">Module</span>
           <select
             value={section}
             onChange={(e) => setSection(e.target.value)}
@@ -185,6 +192,11 @@ export function TeacherSettings({ context, onConfigChange }: TeacherSettingsProp
           {saving ? 'Saving...' : 'Save'}
         </button>
       </div>
+      {playlistsRetrieved != null && (
+        <p className="text-sm text-zinc-500 mt-3">
+          SproutVideo API: accessed, {playlistsRetrieved} playlists retrieved
+        </p>
+      )}
     </div>
   );
 }

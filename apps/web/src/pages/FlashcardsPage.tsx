@@ -14,8 +14,21 @@ interface ScoreDetail {
   originalData: VideoItem;
 }
 
+const TEACHER_PATTERNS = ['instructor','administrator','faculty','teacher','staff','contentdeveloper','teachingassistant','ta'];
+
+function isTeacher(roles: string): boolean {
+  if (!roles || typeof roles !== 'string') return false;
+  const lower = roles.toLowerCase();
+  return TEACHER_PATTERNS.some((p) => lower.includes(p));
+}
+
 export default function FlashcardsPage() {
   const { context } = useLtiContext();
+  const teacherMode = context && isTeacher(context.roles) && context.courseId && context.userId !== 'standalone';
+  const [teacherSelection, setTeacherSelection] = useState({ curriculum: '', unit: '', section: '' });
+  const handleSelectionChange = useCallback((c: string, u: string, s: string) => {
+    setTeacherSelection({ curriculum: c, unit: u, section: s });
+  }, []);
   const [playlists, setPlaylists] = useState<PlaylistItem[]>([]);
   const [playlistsLoading, setPlaylistsLoading] = useState(true);
   const [view, setView] = useState<'menu' | 'study' | 'results'>('menu');
@@ -46,10 +59,15 @@ export default function FlashcardsPage() {
     message: string;
   } | null>(null);
 
-  const loadPlaylists = useCallback(async () => {
+  const loadPlaylists = useCallback(async (curriculum?: string, unit?: string, section?: string) => {
     setPlaylistsLoading(true);
     try {
-      const res = await fetch('/api/flashcard/playlists', { credentials: 'include' });
+      const params = new URLSearchParams();
+      if (curriculum) params.set('curriculum', curriculum);
+      if (unit) params.set('unit', unit);
+      if (section) params.set('section', section);
+      const url = params.toString() ? `/api/flashcard/playlists?${params}` : '/api/flashcard/playlists';
+      const res = await fetch(url, { credentials: 'include' });
       const data = await res.json();
       setPlaylists(Array.isArray(data) ? data : []);
     } catch {
@@ -60,8 +78,12 @@ export default function FlashcardsPage() {
   }, []);
 
   useEffect(() => {
-    loadPlaylists();
-  }, [loadPlaylists]);
+    if (teacherMode && teacherSelection.curriculum) {
+      loadPlaylists(teacherSelection.curriculum, teacherSelection.unit, teacherSelection.section);
+    } else if (!teacherMode) {
+      loadPlaylists();
+    }
+  }, [teacherMode, teacherSelection.curriculum, teacherSelection.unit, teacherSelection.section, loadPlaylists]);
 
   const selectPlaylist = async (id: string, title: string, idx: number) => {
     setCurrentPlaylist({ id, title });
@@ -269,10 +291,13 @@ export default function FlashcardsPage() {
           <div className="space-y-6">
             <TeacherSettings
               context={context}
-              onConfigChange={loadPlaylists}
+              onConfigChange={() => loadPlaylists(teacherSelection.curriculum, teacherSelection.unit, teacherSelection.section)}
+              onSelectionChange={handleSelectionChange}
             />
             <h1 className="text-2xl font-bold text-emerald-400">TWA Vocabulary</h1>
-            {playlistsLoading ? (
+            {!teacherMode ? (
+              <p className="text-zinc-400 py-8">Your teacher will configure the deck for this course.</p>
+            ) : playlistsLoading ? (
               <div className="flex flex-col items-center gap-4 py-12">
                 <div className="w-12 h-12 border-4 border-zinc-600 border-t-emerald-400 rounded-full animate-spin" />
                 <p>Loading playlists...</p>

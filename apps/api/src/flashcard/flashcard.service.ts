@@ -18,6 +18,21 @@ export class FlashcardService {
     return this.sproutVideo.getPlaylistItems(filter);
   }
 
+  async getPlaylistsByHierarchy(
+    curriculum: string,
+    unit: string,
+    section: string,
+  ) {
+    const playlists = await this.sproutVideo.fetchAllPlaylists();
+    console.log('[SproutVideo] playlists: API accessed, retrieved:', playlists.length);
+    return this.sproutVideo.filterPlaylistsByHierarchy(
+      playlists,
+      curriculum,
+      unit,
+      section,
+    );
+  }
+
   async getPlaylistItems(playlistId: string) {
     return this.sproutVideo.getPlaylistItems('', playlistId);
   }

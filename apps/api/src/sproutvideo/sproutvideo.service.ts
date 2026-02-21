@@ -37,10 +37,7 @@ export class SproutVideoService {
   parsePlaylistTitle(
     title: string,
   ): { curriculum: string; unit: string; section: string } {
-    const parts = title
-      .split(/[\s.\-|_]+/)
-      .map((p) => p.trim())
-      .filter((p) => p.length > 0);
+    const parts = title.split('.').map((p) => p.trim()).filter((p) => p.length > 0);
     const curriculum = parts[0] ?? '';
     const unit = parts[1] ?? '';
     const section = parts[2] ?? '';
@@ -51,8 +48,10 @@ export class SproutVideoService {
     curricula: string[];
     unitsByCurriculum: Record<string, string[]>;
     sectionsByCurriculumUnit: Record<string, string[]>;
+    playlistsRetrieved: number;
   }> {
     const playlists = await this.fetchAllPlaylists();
+    console.log('[SproutVideo] curriculum-hierarchy: API accessed, playlists retrieved:', playlists.length);
     const curriculaSet = new Set<string>();
     const unitsMap = new Map<string, Set<string>>();
     const sectionsMap = new Map<string, Set<string>>();
@@ -89,7 +88,27 @@ export class SproutVideoService {
       curricula,
       unitsByCurriculum,
       sectionsByCurriculumUnit,
+      playlistsRetrieved: playlists.length,
     };
+  }
+
+  filterPlaylistsByHierarchy(
+    playlists: SproutPlaylist[],
+    curriculum: string,
+    unit: string,
+    section: string,
+  ): SproutPlaylistListItem[] {
+    const result: SproutPlaylistListItem[] = [];
+    for (const p of playlists) {
+      const title = String(p.title ?? '');
+      if (this.isBlacklisted(title)) continue;
+      const parsed = this.parsePlaylistTitle(title);
+      if (parsed.curriculum !== curriculum) continue;
+      if (unit && parsed.unit !== unit) continue;
+      if (section && parsed.section !== section) continue;
+      result.push({ title, id: String(p.id) });
+    }
+    return result;
   }
 
   filterPlaylists(
