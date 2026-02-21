@@ -23,14 +23,14 @@ export class FlashcardService {
     unit: string,
     section: string,
   ) {
+    const parts = [curriculum, unit, section].filter(Boolean);
+    const filter = parts.join('.');
+    if (!filter) return [];
     const playlists = await this.sproutVideo.fetchAllPlaylists();
-    console.log('[SproutVideo] playlists: API accessed, retrieved:', playlists.length);
-    return this.sproutVideo.filterPlaylistsByHierarchy(
-      playlists,
-      curriculum,
-      unit,
-      section,
-    );
+    console.log('[SproutVideo] playlists: filter=', filter, ', retrieved:', playlists.length);
+    const searchTerms = this.sproutVideo.getSmartVersions(filter);
+    if (searchTerms.length === 0) return [];
+    return this.sproutVideo.filterPlaylists(playlists, searchTerms);
   }
 
   async getPlaylistItems(playlistId: string) {
@@ -46,8 +46,8 @@ export class FlashcardService {
     return this.canvas.getModuleInfo(courseId, moduleId, prefix, canvasDomain);
   }
 
-  async getCurriculumHierarchy() {
-    return this.sproutVideo.getCurriculumHierarchy();
+  async getAllPlaylists() {
+    return this.sproutVideo.getPlaylists();
   }
 
   async getConfig(

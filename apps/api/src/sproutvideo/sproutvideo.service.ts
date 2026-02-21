@@ -34,101 +34,6 @@ export class SproutVideoService {
     return BLACKLIST.some((term) => lower.includes(term));
   }
 
-  parsePlaylistTitle(
-    title: string,
-  ): { curriculum: string; unit: string; section: string } {
-    const parts = title.split('.').map((p) => p.trim()).filter((p) => p.length > 0);
-    const curriculum = parts[0] ?? '';
-    const unit = parts[1] ?? '';
-    const section = parts[2] ?? '';
-    return { curriculum, unit, section };
-  }
-
-  async getCurriculumHierarchy(): Promise<{
-    curricula: string[];
-    unitsByCurriculum: Record<string, string[]>;
-    sectionsByCurriculumUnit: Record<string, string[]>;
-    playlistsRetrieved: number;
-  }> {
-    const playlists = await this.fetchAllPlaylists();
-    console.log('[SproutVideo] curriculum-hierarchy: API accessed, playlists retrieved:', playlists.length);
-    const curriculaSet = new Set<string>();
-    const unitsMap = new Map<string, Set<string>>();
-    const sectionsMap = new Map<string, Set<string>>();
-
-    for (const p of playlists) {
-      const title = String(p.title ?? '');
-      if (this.isBlacklisted(title)) continue;
-      const { curriculum, unit, section } = this.parsePlaylistTitle(title);
-      if (!curriculum) continue;
-      curriculaSet.add(curriculum);
-      if (unit) {
-        const key = curriculum;
-        if (!unitsMap.has(key)) unitsMap.set(key, new Set());
-        unitsMap.get(key)!.add(unit);
-      }
-      if (unit && section) {
-        const key = `${curriculum}|${unit}`;
-        if (!sectionsMap.has(key)) sectionsMap.set(key, new Set());
-        sectionsMap.get(key)!.add(section);
-      }
-    }
-
-    const curricula = Array.from(curriculaSet).sort();
-    const unitsByCurriculum: Record<string, string[]> = {};
-    for (const [c, set] of unitsMap) {
-      unitsByCurriculum[c] = Array.from(set).sort();
-    }
-    const sectionsByCurriculumUnit: Record<string, string[]> = {};
-    for (const [k, set] of sectionsMap) {
-      sectionsByCurriculumUnit[k] = Array.from(set).sort();
-    }
-
-    return {
-      curricula,
-      unitsByCurriculum,
-      sectionsByCurriculumUnit,
-      playlistsRetrieved: playlists.length,
-    };
-  }
-
-  filterPlaylistsByHierarchy(
-    playlists: SproutPlaylist[],
-    curriculum: string,
-    unit: string,
-    section: string,
-  ): SproutPlaylistListItem[] {
-    const result: SproutPlaylistListItem[] = [];
-    for (const p of playlists) {
-      const title = String(p.title ?? '');
-      if (this.isBlacklisted(title)) continue;
-      const parsed = this.parsePlaylistTitle(title);
-      if (parsed.curriculum !== curriculum) continue;
-      if (unit && parsed.unit !== unit) continue;
-      if (section && parsed.section !== section) continue;
-      result.push({ title, id: String(p.id) });
-    }
-    return result;
-  }
-
-  filterPlaylists(
-    playlists: SproutPlaylist[],
-    searchTerms: string[],
-  ): SproutPlaylistListItem[] {
-    const result: SproutPlaylistListItem[] = [];
-    for (const p of playlists) {
-      const title = String(p.title ?? '');
-      if (this.isBlacklisted(title)) continue;
-      for (const term of searchTerms) {
-        if (title.toLowerCase().startsWith(term.toLowerCase())) {
-          result.push({ title, id: String(p.id) });
-          break;
-        }
-      }
-    }
-    return result;
-  }
-
   async fetchAllPlaylists(): Promise<SproutPlaylist[]> {
     const apiKey = this.config.get('SPROUT_KEY');
     if (!apiKey) throw new Error('SproutVideo not configured');
@@ -151,6 +56,13 @@ export class SproutVideoService {
       page++;
     }
     return all;
+  }
+
+  async getPlaylists(): Promise<Array<{ id: string; title: string }>> {
+    const playlists = await this.fetchAllPlaylists();
+    return playlists
+      .filter((p) => !this.isBlacklisted(String(p.title ?? '')))
+      .map((p) => ({ id: String(p.id), title: String(p.title ?? '') }));
   }
 
   async getPlaylistItems(
@@ -187,6 +99,35 @@ export class SproutVideoService {
     const playlists = await this.fetchAllPlaylists();
     const searchTerms = this.getSmartVersions(filter);
     if (searchTerms.length === 0) return [];
-    return this.filterPlaylists(playlists, searchTerms);
+    const result: SproutPlaylistListItem[] = [];
+    for (const p of playlists) {
+      const title = String(p.title ?? '');
+      if (this.isBlacklisted(title)) continue;
+      for (const term of searchTerms) {
+        if (title.toLowerCase().startsWith(term.toLowerCase())) {
+          result.push({ title, id: String(p.id) });
+          break;
+        }
+      }
+    }
+    return result;
+  }
+
+  filterPlaylists(
+    playlists: SproutPlaylist[],
+    searchTerms: string[],
+  ): SproutPlaylistListItem[] {
+    const result: SproutPlaylistListItem[] = [];
+    for (const p of playlists) {
+      const title = String(p.title ?? '');
+      if (this.isBlacklisted(title)) continue;
+      for (const term of searchTerms) {
+        if (title.toLowerCase().startsWith(term.toLowerCase())) {
+          result.push({ title, id: String(p.id) });
+          break;
+        }
+      }
+    }
+    return result;
   }
 }

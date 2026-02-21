@@ -30,10 +30,6 @@ interface FlashcardsPageProps {
 export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   const { setLastFunction, setSproutVideo } = useDebug();
   const teacherMode = context && isTeacher(context.roles) && context.courseId && context.userId !== 'standalone';
-  const [teacherSelection, setTeacherSelection] = useState({ curriculum: '', unit: '', section: '' });
-  const handleSelectionChange = useCallback((c: string, u: string, s: string) => {
-    setTeacherSelection({ curriculum: c, unit: u, section: s });
-  }, []);
   const [playlists, setPlaylists] = useState<PlaylistItem[]>([]);
   const [playlistsLoading, setPlaylistsLoading] = useState(true);
   const [view, setView] = useState<'menu' | 'study' | 'results'>('menu');
@@ -64,16 +60,11 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     message: string;
   } | null>(null);
 
-  const loadPlaylists = useCallback(async (curriculum?: string, unit?: string, section?: string) => {
+  const loadPlaylists = useCallback(async () => {
     setPlaylistsLoading(true);
     try {
-      const params = new URLSearchParams();
-      if (curriculum) params.set('curriculum', curriculum);
-      if (unit) params.set('unit', unit);
-      if (section) params.set('section', section);
-      const url = params.toString() ? `/api/flashcard/playlists?${params}` : '/api/flashcard/playlists';
-      setLastFunction(`GET ${url}`);
-      const res = await fetch(url, { credentials: 'include' });
+      setLastFunction('GET /api/flashcard/playlists');
+      const res = await fetch('/api/flashcard/playlists', { credentials: 'include' });
       const data = await res.json();
       const list = Array.isArray(data) ? data : [];
       setPlaylists(list);
@@ -86,12 +77,15 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   }, []);
 
   useEffect(() => {
-    if (teacherMode && teacherSelection.curriculum) {
-      loadPlaylists(teacherSelection.curriculum, teacherSelection.unit, teacherSelection.section);
-    } else if (!teacherMode) {
-      loadPlaylists();
-    }
-  }, [teacherMode, teacherSelection.curriculum, teacherSelection.unit, teacherSelection.section, loadPlaylists]);
+    if (!teacherMode) loadPlaylists();
+  }, [teacherMode, loadPlaylists]);
+
+  const handleFilteredPlaylists = useCallback((list: Array<{ id: string; title: string }>) => {
+    setPlaylistsLoading(false);
+    const items = list.map((p) => ({ title: p.title, id: p.id }));
+    setPlaylists(items);
+    if (items.length > 0) setSproutVideo(true, items.length);
+  }, []);
 
   const selectPlaylist = async (id: string, title: string, idx: number) => {
     setCurrentPlaylist({ id, title });
@@ -299,8 +293,8 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
           <div className="space-y-6">
             <TeacherSettings
               context={context}
-              onConfigChange={() => loadPlaylists(teacherSelection.curriculum, teacherSelection.unit, teacherSelection.section)}
-              onSelectionChange={handleSelectionChange}
+              onConfigChange={() => {}}
+              onFilteredPlaylists={handleFilteredPlaylists}
             />
             <h1 className="text-2xl font-bold text-emerald-400">TWA Vocabulary</h1>
             {!teacherMode ? (

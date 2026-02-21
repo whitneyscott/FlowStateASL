@@ -72,12 +72,12 @@ export class FlashcardController {
     return this.flashcard.getPlaylistItems(playlistId ?? '');
   }
 
-  @Get('curriculum-hierarchy')
-  async getCurriculumHierarchy() {
+  @Get('all-playlists')
+  async getAllPlaylists() {
     try {
-      return await this.flashcard.getCurriculumHierarchy();
+      return await this.flashcard.getAllPlaylists();
     } catch (err) {
-      setLastError('GET /api/flashcard/curriculum-hierarchy', err);
+      setLastError('GET /api/flashcard/all-playlists', err);
       throw err;
     }
   }
