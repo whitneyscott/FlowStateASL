@@ -82,6 +82,29 @@ export class FlashcardController {
     }
   }
 
+  @Get('module-suggestion')
+  async getModuleSuggestion(@Req() req: Request) {
+    const ctx = req.session?.ltiContext;
+    if (!ctx?.courseId || !ctx?.moduleId) return null;
+    const prefix = process.env.CURRICULUM_PREFIX ?? 'TWA';
+    try {
+      const info = await this.flashcard.getModuleInfo(
+        ctx.courseId,
+        ctx.moduleId,
+        prefix,
+        ctx?.canvasDomain,
+      );
+      return {
+        curriculum: prefix,
+        unit: info.unit ?? '',
+        section: info.section ?? '',
+        moduleName: info.module_name,
+      };
+    } catch {
+      return null;
+    }
+  }
+
   @Get('config')
   async getConfig(@Req() req: Request) {
     const ctx = req.session?.ltiContext;

@@ -31,6 +31,9 @@ interface TeacherSettingsProps {
   onSelectionChange?: (curriculum: string, unit: string, section: string) => void;
 }
 
+const SELECT_STYLE =
+  'w-full min-w-[140px] py-3 px-4 pr-10 bg-zinc-800 border border-zinc-600 rounded-lg text-white cursor-pointer appearance-none hover:border-zinc-500 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 [&>option]:bg-zinc-800';
+
 export function TeacherSettings({ context, onConfigChange, onSelectionChange }: TeacherSettingsProps) {
   const { setSproutVideo, setLastFunction } = useDebug();
   const [hierarchy, setHierarchy] = useState<Hierarchy | null>(null);
@@ -46,6 +49,7 @@ export function TeacherSettings({ context, onConfigChange, onSelectionChange }: 
   const [unit, setUnit] = useState('');
   const [section, setSection] = useState('');
   const [saving, setSaving] = useState(false);
+  const [savedFeedback, setSavedFeedback] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const teacher = context && isTeacher(context.roles);
@@ -61,14 +65,18 @@ export function TeacherSettings({ context, onConfigChange, onSelectionChange }: 
       try {
         setLastFunction('GET /api/flashcard/curriculum-hierarchy');
         setHierarchyError(null);
-        const [hRes, cRes] = await Promise.all([
+        const [hRes, cRes, suggRes] = await Promise.all([
           fetch('/api/flashcard/curriculum-hierarchy', { credentials: 'include' }),
           fetch('/api/flashcard/config', { credentials: 'include' }),
+          context?.moduleId
+            ? fetch('/api/flashcard/module-suggestion', { credentials: 'include' })
+            : Promise.resolve(null),
         ]);
         setLastFunction('GET /api/flashcard/config');
         if (cancelled) return;
         const h = await hRes.json().catch(() => ({}));
         const c = await cRes.json().catch(() => null);
+        const sugg = suggRes ? await suggRes.json().catch(() => null) : null;
         if (!hRes.ok) {
           setHierarchyError((h as { message?: string })?.message ?? `HTTP ${hRes.status}`);
           if (!cancelled) setLoading(false);
@@ -78,12 +86,19 @@ export function TeacherSettings({ context, onConfigChange, onSelectionChange }: 
         setPlaylistsRetrieved(h?.playlistsRetrieved ?? null);
         setSproutVideo(true, h?.playlistsRetrieved ?? null);
         setConfig(c);
+        const curricula = (h as Hierarchy)?.curricula ?? [];
         if (c) {
           setCurriculum(c.curriculum);
           setUnit(c.unit);
           setSection(c.section);
-        } else if (h?.curricula?.length) {
-          setCurriculum(h.curricula[0]);
+        } else if (sugg?.curriculum && curricula.includes(sugg.curriculum) && (sugg.unit || sugg.section)) {
+          setCurriculum(sugg.curriculum);
+          setUnit(sugg.unit ?? '');
+          setSection(sugg.section ?? '');
+        } else {
+          setCurriculum('');
+          setUnit('');
+          setSection('');
         }
       } catch (err) {
         if (!cancelled) {
@@ -96,7 +111,7 @@ export function TeacherSettings({ context, onConfigChange, onSelectionChange }: 
     }
     load();
     return () => { cancelled = true; };
-  }, [teacher, hasLti, retryCount]);
+  }, [teacher, hasLti, retryCount, context?.moduleId]);
 
   useEffect(() => {
     if (hierarchy && curriculum && !hierarchy.unitsByCurriculum?.[curriculum]?.includes(unit)) {
@@ -118,6 +133,7 @@ export function TeacherSettings({ context, onConfigChange, onSelectionChange }: 
   const handleSave = async () => {
     if (!teacher || !hasLti) return;
     setSaving(true);
+    setSavedFeedback(false);
     try {
       await fetch('/api/flashcard/config', {
         method: 'PUT',
@@ -126,6 +142,8 @@ export function TeacherSettings({ context, onConfigChange, onSelectionChange }: 
         body: JSON.stringify({ curriculum, unit, section }),
       });
       onConfigChange?.();
+      setSavedFeedback(true);
+      setTimeout(() => setSavedFeedback(false), 2000);
     } finally {
       setSaving(false);
     }
@@ -169,61 +187,75 @@ export function TeacherSettings({ context, onConfigChange, onSelectionChange }: 
         Curriculum Settings
       </h2>
       <div className="flex flex-wrap gap-4 items-end">
-        <label className="flex flex-col gap-1">
+        <label className="flex flex-col gap-1.5 min-w-[140px]">
           <span className="text-sm text-zinc-400">Curriculum</span>
-          <select
-            value={curriculum}
-            onChange={(e) => setCurriculum(e.target.value)}
-            className="bg-zinc-900 border border-zinc-600 rounded px-3 py-2 text-white min-w-[120px]"
-          >
-            <option value="">Select...</option>
-            {curricula.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </select>
+          <div className="relative">
+            <select
+              value={curriculum}
+              onChange={(e) => setCurriculum(e.target.value)}
+              className={SELECT_STYLE}
+            >
+              <option value="">— Select —</option>
+              {curricula.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+            <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm">▾</span>
+          </div>
         </label>
-        <label className="flex flex-col gap-1">
+        <label className="flex flex-col gap-1.5 min-w-[140px]">
           <span className="text-sm text-zinc-400">Unit</span>
-          <select
-            value={unit}
-            onChange={(e) => setUnit(e.target.value)}
-            className="bg-zinc-900 border border-zinc-600 rounded px-3 py-2 text-white min-w-[120px]"
-            disabled={!curriculum}
-          >
-            <option value="">Select...</option>
-            {units.map((u) => (
-              <option key={u} value={u}>
-                {u}
-              </option>
-            ))}
-          </select>
+          <div className="relative">
+            <select
+              value={unit}
+              onChange={(e) => setUnit(e.target.value)}
+              className={SELECT_STYLE}
+              disabled={!curriculum}
+            >
+              <option value="">— Select —</option>
+              {units.map((u) => (
+                <option key={u} value={u}>
+                  {u}
+                </option>
+              ))}
+            </select>
+            <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm">▾</span>
+          </div>
         </label>
-        <label className="flex flex-col gap-1">
+        <label className="flex flex-col gap-1.5 min-w-[140px]">
           <span className="text-sm text-zinc-400">Module</span>
-          <select
-            value={section}
-            onChange={(e) => setSection(e.target.value)}
-            className="bg-zinc-900 border border-zinc-600 rounded px-3 py-2 text-white min-w-[120px]"
-            disabled={!unit}
-          >
-            <option value="">Select...</option>
-            {sections.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
+          <div className="relative">
+            <select
+              value={section}
+              onChange={(e) => setSection(e.target.value)}
+              className={SELECT_STYLE}
+              disabled={!unit}
+            >
+              <option value="">— Select —</option>
+              {sections.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+            <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm">▾</span>
+          </div>
         </label>
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={saving}
-          className="px-4 py-2 bg-emerald-600 rounded font-semibold hover:bg-emerald-500 disabled:opacity-50"
-        >
-          {saving ? 'Saving...' : 'Save'}
-        </button>
+        <div className="flex items-end gap-2">
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saving || !curriculum}
+            className="px-4 py-3 bg-emerald-600 rounded-lg font-semibold hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {saving ? 'Saving...' : 'Save'}
+          </button>
+          {savedFeedback && (
+            <span className="text-emerald-400 text-sm font-medium py-2">Saved!</span>
+          )}
+        </div>
       </div>
       {playlistsRetrieved != null && (
         <p className="text-sm text-zinc-500 mt-3">
