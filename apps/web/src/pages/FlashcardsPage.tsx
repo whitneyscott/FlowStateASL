@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
 import { TeacherSettings } from '../components/TeacherSettings';
+import './FlashcardsPage.css';
 
 type PlaylistItem = { title: string; id?: string };
 type VideoItem = { title: string; embed?: string };
@@ -287,28 +288,30 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   };
 
   return (
-    <div className="min-h-screen bg-zinc-900 text-white flex flex-col items-center p-6">
-      <div className="w-full max-w-2xl">
+    <div className="flashcards-page">
+      <div className="flashcards-container">
         {view === 'menu' && (
-          <div className="space-y-6">
+          <div className="flashcards-menu">
             <TeacherSettings
               context={context}
               onConfigChange={() => {}}
               onFilteredPlaylists={handleFilteredPlaylists}
             />
-            <h1 className="text-2xl font-bold text-emerald-400">TWA Vocabulary</h1>
+            <h1 className="flashcards-title">TWA Vocabulary</h1>
             {!teacherMode ? (
-              <p className="text-zinc-400 py-8">Your teacher will configure the deck for this course.</p>
+              <p className="flashcards-teacher-msg">Your teacher will configure the deck for this course.</p>
             ) : playlistsLoading ? (
-              <div className="flex flex-col items-center gap-4 py-12">
-                <div className="w-12 h-12 border-4 border-zinc-600 border-t-emerald-400 rounded-full animate-spin" />
+              <div className="flashcards-loading">
+                <div className="flashcards-spinner" />
                 <p>Loading playlists...</p>
               </div>
             ) : (
-              <div className="space-y-3">
+              <div className="flashcards-playlist-list">
                 {playlists.map((pl, idx) => (
                   <button
                     key={(pl as { id?: string }).id ?? idx}
+                    type="button"
+                    className="flashcards-playlist-btn"
                     onClick={() =>
                       selectPlaylist(
                         (pl as { id?: string }).id ?? String(idx),
@@ -316,7 +319,6 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                         idx,
                       )
                     }
-                    className="w-full py-4 px-6 bg-zinc-800 border border-zinc-600 rounded-lg text-left hover:bg-zinc-700 hover:border-emerald-500 transition-colors"
                   >
                     {pl.title}
                   </button>
@@ -327,9 +329,9 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
         )}
 
         {view === 'study' && (
-          <div className="space-y-4">
-            <div className="flex flex-wrap gap-4 p-3 bg-zinc-800 rounded-lg text-sm">
-              <label className="flex items-center gap-2">
+          <div className="flashcards-study">
+            <div className="flashcards-persistent-options">
+              <label>
                 Sec:{' '}
                 <input
                   type="number"
@@ -337,10 +339,9 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                   max={10}
                   value={secDisplay}
                   onChange={(e) => setSecDisplay(Number(e.target.value) || 3)}
-                  className="w-12 bg-zinc-900 border border-zinc-600 rounded px-2 py-1"
                 />
               </label>
-              <label className="flex items-center gap-2">
+              <label>
                 <input
                   type="checkbox"
                   checked={showTimer}
@@ -348,7 +349,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                 />
                 Timer
               </label>
-              <label className="flex items-center gap-2">
+              <label>
                 <input
                   type="checkbox"
                   checked={shuffle}
@@ -356,7 +357,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                 />
                 Shuffle
               </label>
-              <label className="flex items-center gap-2">
+              <label>
                 Mode:{' '}
                 <select
                   value={mode}
@@ -364,7 +365,6 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                     setMode(e.target.value as Mode);
                     setStreak(0);
                   }}
-                  className="bg-zinc-900 border border-zinc-600 rounded px-2 py-1"
                 >
                   <option value="rehearsal">Rehearsal</option>
                   <option value="tutorial">Tutorial</option>
@@ -372,14 +372,13 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                 </select>
               </label>
               {mode === 'screening' && (
-                <label className="flex items-center gap-2">
+                <label>
                   Crit:{' '}
                   <select
                     value={screeningCriteria}
                     onChange={(e) =>
                       setScreeningCriteria(Number(e.target.value) || 5)
                     }
-                    className="bg-zinc-900 border border-zinc-600 rounded px-2 py-1"
                   >
                     {[3, 4, 5].map((n) => (
                       <option key={n} value={n}>
@@ -389,12 +388,11 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                   </select>
                 </label>
               )}
-              <label className="flex items-center gap-2">
+              <label>
                 1st:{' '}
                 <select
                   value={firstSide}
                   onChange={(e) => setFirstSide(e.target.value as FirstSide)}
-                  className="bg-zinc-900 border border-zinc-600 rounded px-2 py-1"
                 >
                   <option value="english">Eng</option>
                   <option value="asl">ASL</option>
@@ -402,13 +400,15 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
               </label>
             </div>
 
-            <div className="flex justify-between text-zinc-400 text-sm">
+            <div className="flashcards-status-bar">
               <span>
                 Progress: {score.correct} / {score.total}{' '}
                 {mode === 'screening' && streak !== 0 && (
                   <span
                     className={
-                      streak > 0 ? 'text-emerald-400' : 'text-red-500'
+                      streak > 0
+                        ? 'flashcards-streak-positive'
+                        : 'flashcards-streak-negative'
                     }
                   >
                     Streak: {streak}
@@ -420,38 +420,40 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
               </span>
             </div>
 
-            <div className="relative bg-zinc-800 rounded-xl p-8 min-h-[320px] flex flex-col justify-center items-center">
+            <div className="flashcards-card">
               {screeningOverlay && (
-                <div className="absolute inset-0 bg-black/95 flex flex-col justify-center items-center p-6 z-10 rounded-xl">
+                <div className="flashcards-screening-overlay">
                   <h2
-                    className={`text-xl font-bold mb-4 ${
+                    className={`flashcards-overlay-title ${
                       screeningOverlay.type === 'mastery'
-                        ? 'text-emerald-400'
-                        : 'text-red-500'
+                        ? 'flashcards-overlay-title-mastery'
+                        : 'flashcards-overlay-title-frustration'
                     }`}
                   >
                     {screeningOverlay.title}
                   </h2>
-                  <p className="text-center mb-6">{screeningOverlay.message}</p>
-                  <div className="flex gap-4">
+                  <p className="flashcards-overlay-msg">{screeningOverlay.message}</p>
+                  <div className="flashcards-overlay-controls">
                     {screeningOverlay.type === 'mastery' ? (
                       <>
                         <button
+                          type="button"
+                          className="flashcards-btn flashcards-btn-correct"
                           onClick={() => {
                             setScreeningOverlay(null);
                             loadNextUnit();
                           }}
-                          className="px-6 py-2 bg-emerald-600 rounded font-semibold hover:bg-emerald-500"
                         >
                           Next Deck
                         </button>
                         <button
+                          type="button"
+                          className="flashcards-btn flashcards-btn-secondary"
                           onClick={() => {
                             setScreeningOverlay(null);
                             setCurrentIndex((i) => i + 1);
                             setShowingAnswer(false);
                           }}
-                          className="px-6 py-2 bg-zinc-600 rounded font-semibold hover:bg-zinc-500"
                         >
                           Continue Current
                         </button>
@@ -459,6 +461,8 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                     ) : (
                       <>
                         <button
+                          type="button"
+                          className="flashcards-btn flashcards-btn-incorrect"
                           onClick={() => {
                             setMode('tutorial');
                             setStreak(0);
@@ -466,18 +470,18 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                             setCurrentIndex((i) => i + 1);
                             setShowingAnswer(false);
                           }}
-                          className="px-6 py-2 bg-red-600 rounded font-semibold hover:bg-red-500"
                         >
                           Switch to Tutorial
                         </button>
                         <button
+                          type="button"
+                          className="flashcards-btn flashcards-btn-secondary"
                           onClick={() => {
                             setBenchmarkNagDismissed(true);
                             setScreeningOverlay(null);
                             setCurrentIndex((i) => i + 1);
                             setShowingAnswer(false);
                           }}
-                          className="px-6 py-2 bg-zinc-600 rounded font-semibold hover:bg-zinc-500"
                         >
                           Keep Trying
                         </button>
@@ -488,59 +492,64 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
               )}
 
               {currentIndex < 0 ? (
-                <div className="text-center">
-                  <p className="text-3xl text-emerald-400 mb-6">READY?</p>
+                <div>
+                  <p className="flashcards-vocab-display">READY?</p>
                   <button
+                    type="button"
+                    className="flashcards-btn flashcards-btn-flip"
                     onClick={startSession}
-                    className="px-8 py-3 bg-blue-600 rounded-lg font-bold hover:bg-blue-500"
                   >
                     Start
                   </button>
                 </div>
               ) : currentItem ? (
-                <div className="w-full">
+                <div className="flashcards-controls flashcards-controls-col">
                   {!showingAnswer ? (
                     firstSide === 'english' ? (
-                      <div>
-                        <p className="text-4xl text-emerald-400 mb-6">
+                      <div className="flashcards-controls flashcards-controls-col">
+                        <p className="flashcards-vocab-display">
                           {currentItem.title}
                         </p>
                         <button
+                          type="button"
+                          className="flashcards-btn flashcards-btn-flip"
                           onClick={revealAnswer}
-                          className="px-6 py-2 bg-blue-600 rounded font-semibold hover:bg-blue-500"
                         >
                           Show Answer
                         </button>
                       </div>
                     ) : (
-                      <div className="w-full aspect-video bg-black rounded overflow-hidden">
-                        {currentItem.embed && (
-                          <div
-                            className="w-full h-full"
-                            dangerouslySetInnerHTML={{
-                              __html: embedWithAutoplay(currentItem.embed),
-                            }}
-                          />
-                        )}
+                      <div className="flashcards-controls flashcards-controls-col">
+                        <div className="flashcards-video-wrap">
+                          {currentItem.embed && (
+                            <div
+                              className="flashcards-video-wrap-inner"
+                              dangerouslySetInnerHTML={{
+                                __html: embedWithAutoplay(currentItem.embed),
+                              }}
+                            />
+                          )}
+                        </div>
                         <button
+                          type="button"
+                          className="flashcards-btn flashcards-btn-flip"
                           onClick={revealAnswer}
-                          className="mt-4 px-6 py-2 bg-blue-600 rounded font-semibold hover:bg-blue-500"
                         >
                           Show Answer
                         </button>
                       </div>
                     )
                   ) : (
-                    <div>
+                    <div className="flashcards-controls flashcards-controls-col">
                       {firstSide === 'asl' ? (
-                        <p className="text-3xl text-emerald-400 mb-6">
+                        <p className="flashcards-vocab-display flashcards-vocab-display-sm">
                           {currentItem.title}
                         </p>
                       ) : (
-                        <div className="w-full aspect-video bg-black rounded overflow-hidden mb-6">
+                        <div className="flashcards-video-wrap">
                           {currentItem.embed && (
                             <div
-                              className="w-full h-full [&>iframe]:w-full [&>iframe]:h-full"
+                              className="flashcards-video-wrap-inner"
                               dangerouslySetInnerHTML={{
                                 __html: embedWithAutoplay(currentItem.embed),
                               }}
@@ -550,22 +559,25 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                       )}
                       {mode === 'tutorial' ? (
                         <button
+                          type="button"
+                          className="flashcards-btn flashcards-btn-correct"
                           onClick={() => recordScore(true)}
-                          className="px-6 py-2 bg-emerald-600 rounded font-semibold hover:bg-emerald-500"
                         >
                           Next
                         </button>
                       ) : (
-                        <div className="flex gap-4">
+                        <div className="flashcards-controls">
                           <button
+                            type="button"
+                            className="flashcards-btn flashcards-btn-correct"
                             onClick={() => recordScore(true)}
-                            className="px-6 py-2 bg-emerald-600 rounded font-semibold hover:bg-emerald-500"
                           >
                             Correct
                           </button>
                           <button
+                            type="button"
+                            className="flashcards-btn flashcards-btn-incorrect"
                             onClick={() => recordScore(false)}
-                            className="px-6 py-2 bg-red-600 rounded font-semibold hover:bg-red-500"
                           >
                             Incorrect
                           </button>
@@ -577,10 +589,11 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
               ) : null}
             </div>
 
-            <div className="flex gap-4 justify-center">
+            <div className="flashcards-secondary-controls">
               <button
+                type="button"
+                className="flashcards-btn-nav"
                 onClick={returnToMenu}
-                className="px-4 py-2 bg-zinc-700 border border-zinc-600 rounded font-semibold hover:bg-zinc-600"
               >
                 Change Deck
               </button>
@@ -589,49 +602,54 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
         )}
 
         {view === 'results' && (
-          <div className="space-y-6">
-            <h1 className="text-2xl font-bold text-emerald-400">Results</h1>
-            <p className="text-3xl">
+          <div className="flashcards-results">
+            <h1 className="flashcards-results-title">Results</h1>
+            <p className="flashcards-results-score">
               {score.correct}/{score.total} ({percentage}%)
             </p>
-            <p className="text-zinc-400 italic">Suggested minimum score: 85%</p>
-            <div className="flex flex-wrap gap-3 justify-center">
+            <p className="flashcards-benchmark-note">Suggested minimum score: 85%</p>
+            <div className="flashcards-results-btns">
               <button
+                type="button"
+                className="flashcards-btn flashcards-btn-utility"
                 onClick={repeatAll}
-                className="px-6 py-2 bg-blue-600 rounded font-semibold hover:bg-blue-500"
               >
                 Repeat All
               </button>
               {hasMissed && (
                 <button
+                  type="button"
+                  className="flashcards-btn flashcards-btn-utility"
                   onClick={retryMissed}
-                  className="px-6 py-2 bg-blue-600 rounded font-semibold hover:bg-blue-500"
                 >
                   Retry Missed Only
                 </button>
               )}
               <button
+                type="button"
+                className="flashcards-btn flashcards-btn-utility"
                 onClick={loadNextUnit}
-                className="px-6 py-2 bg-blue-600 rounded font-semibold hover:bg-blue-500"
               >
                 Next
               </button>
               <button
+                type="button"
+                className="flashcards-btn flashcards-btn-utility"
                 onClick={submitGrade}
                 disabled={submitting}
-                className="px-6 py-2 bg-emerald-600 rounded font-semibold hover:bg-emerald-500 disabled:opacity-50"
               >
                 {submitting ? 'Submitting...' : 'Submit Grade'}
               </button>
               <button
+                type="button"
+                className="flashcards-btn-nav"
                 onClick={returnToMenu}
-                className="px-6 py-2 bg-zinc-700 border border-zinc-600 rounded font-semibold hover:bg-zinc-600"
               >
                 Back to Menu
               </button>
             </div>
             {submitError && (
-              <p className="text-red-500 text-sm">Error: {submitError}</p>
+              <p className="flashcards-error">Error: {submitError}</p>
             )}
           </div>
         )}
