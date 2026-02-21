@@ -10,6 +10,7 @@ import {
 import { Request } from 'express';
 import { FlashcardService } from './flashcard.service';
 import { LtiService } from '../lti/lti.service';
+import { setLastError } from '../common/last-error.store';
 
 @Controller('flashcard')
 export class FlashcardController {
@@ -28,36 +29,41 @@ export class FlashcardController {
   ) {
     const ctx = req.session?.ltiContext;
     const prefix = process.env.CURRICULUM_PREFIX ?? 'TWA';
-    if (curriculumQ && ctx?.courseId) {
-      return this.flashcard.getPlaylistsByHierarchy(
-        curriculumQ,
-        unitQ ?? '',
-        sectionQ ?? '',
-      );
-    }
-    let effectiveFilter = filter ?? '';
-    if (!effectiveFilter && ctx?.courseId && ctx?.resourceLinkId) {
-      const config = await this.flashcard.getConfig(
-        ctx.courseId,
-        ctx.resourceLinkId,
-      );
-      if (config?.curriculum) {
-        return this.flashcard.getPlaylistsByHierarchy(
-          config.curriculum,
-          config.unit,
-          config.section,
+    try {
+      if (curriculumQ && ctx?.courseId) {
+        return await this.flashcard.getPlaylistsByHierarchy(
+          curriculumQ,
+          unitQ ?? '',
+          sectionQ ?? '',
         );
       }
+      let effectiveFilter = filter ?? '';
+      if (!effectiveFilter && ctx?.courseId && ctx?.resourceLinkId) {
+        const config = await this.flashcard.getConfig(
+          ctx.courseId,
+          ctx.resourceLinkId,
+        );
+        if (config?.curriculum) {
+          return await this.flashcard.getPlaylistsByHierarchy(
+            config.curriculum,
+            config.unit,
+            config.section,
+          );
+        }
+      }
+      if (!effectiveFilter && ctx?.courseId && ctx?.moduleId) {
+        const info = await this.flashcard.getModuleInfo(
+          ctx.courseId,
+          ctx.moduleId,
+          prefix,
+        );
+        effectiveFilter = info.filter ?? '';
+      }
+      return await this.flashcard.getPlaylists(effectiveFilter);
+    } catch (err) {
+      setLastError('GET /api/flashcard/playlists', err);
+      throw err;
     }
-    if (!effectiveFilter && ctx?.courseId && ctx?.moduleId) {
-      const info = await this.flashcard.getModuleInfo(
-        ctx.courseId,
-        ctx.moduleId,
-        prefix,
-      );
-      effectiveFilter = info.filter ?? '';
-    }
-    return this.flashcard.getPlaylists(effectiveFilter);
   }
 
   @Get('items')
@@ -67,7 +73,12 @@ export class FlashcardController {
 
   @Get('curriculum-hierarchy')
   async getCurriculumHierarchy() {
-    return this.flashcard.getCurriculumHierarchy();
+    try {
+      return await this.flashcard.getCurriculumHierarchy();
+    } catch (err) {
+      setLastError('GET /api/flashcard/curriculum-hierarchy', err);
+      throw err;
+    }
   }
 
   @Get('config')

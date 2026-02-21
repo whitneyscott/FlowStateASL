@@ -10,7 +10,25 @@ interface BridgeLogProps {
 
 export function BridgeLog({ context, loading, error }: BridgeLogProps) {
   const { sproutVideoAccessed, sproutVideoPlaylistsRetrieved, lastFunctionCalled } = useDebug();
+  const [lastServerError, setLastServerError] = useState<{ endpoint: string; message: string } | null>(null);
   const [lines, setLines] = useState<string[]>(['Initializing...']);
+
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const res = await fetch('/api/debug/last-error', { credentials: 'include' });
+        if (cancelled) return;
+        const data = await res.json();
+        setLastServerError(data ?? null);
+      } catch {
+        if (!cancelled) setLastServerError(null);
+      }
+    };
+    poll();
+    const id = setInterval(poll, 3000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
   const [expanded, setExpanded] = useState(true);
   const [copied, setCopied] = useState(false);
 
@@ -61,8 +79,12 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
     if (lastFunctionCalled) {
       newLines.push(`Last function: ${lastFunctionCalled}`);
     }
+    if (lastServerError) {
+      newLines.push(`Last error (500): ${lastServerError.endpoint}`);
+      newLines.push(`  → ${lastServerError.message}`);
+    }
     setLines(newLines);
-  }, [context, loading, error, sproutVideoAccessed, sproutVideoPlaylistsRetrieved, lastFunctionCalled]);
+  }, [context, loading, error, sproutVideoAccessed, sproutVideoPlaylistsRetrieved, lastFunctionCalled, lastServerError]);
 
   const text = ['BRIDGE DEBUG LOG:', ...lines].join('\n');
 

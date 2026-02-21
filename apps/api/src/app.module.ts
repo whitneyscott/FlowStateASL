@@ -9,6 +9,7 @@ import { CanvasModule } from './canvas/canvas.module';
 import { SproutVideoModule } from './sproutvideo/sproutvideo.module';
 import { FlashcardModule } from './flashcard/flashcard.module';
 import { LtiModule } from './lti/lti.module';
+import { DebugModule } from './debug/debug.module';
 import { SubmissionModule } from './submission/submission.module';
 import { PromptConfigEntity } from './assessment/entities/prompt-config.entity';
 import { BlockedAttemptEntity } from './assessment/entities/blocked-attempt.entity';
@@ -55,6 +56,7 @@ const webRoot = join(__dirname, '..', '..', 'web');
     SproutVideoModule,
     FlashcardModule,
     LtiModule,
+    DebugModule,
     SubmissionModule,
   ],
   providers: [RoutingLogMiddleware],
