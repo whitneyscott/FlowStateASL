@@ -44,7 +44,10 @@ export default function AppRouter() {
           <BridgeLog context={context} loading={false} error={null} />
         </div>
         <Routes>
-          <Route path="/flashcards" element={<FlashcardsPage />} />
+          <Route
+            path="/flashcards"
+            element={<FlashcardsPage context={context} />}
+          />
           <Route path="*" element={<Navigate to="/flashcards" replace />} />
         </Routes>
       </div>

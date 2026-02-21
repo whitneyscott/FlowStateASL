@@ -7,6 +7,19 @@ declare module 'express-session' {
   }
 }
 
+function extractCanvasDomain(body: Record<string, string>): string | undefined {
+  const url =
+    (body.tool_consumer_instance_url ?? '').trim() ||
+    (body.lis_outcome_service_url ?? '').trim();
+  if (!url) return undefined;
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 const TEACHER_PATTERNS = [
   'instructor',
   'administrator',
@@ -55,6 +68,7 @@ export class LtiService {
       (body.resource_link_title ?? body.custom_link_title ?? '').trim() || undefined;
     const lisOutcomeServiceUrl = (body.lis_outcome_service_url ?? '').trim() || undefined;
     const lisResultSourcedid = (body.lis_result_sourcedid ?? '').trim() || undefined;
+    const canvasDomain = extractCanvasDomain(body);
 
     if (!courseId || !userId) return null;
     return {
@@ -68,6 +82,7 @@ export class LtiService {
       resourceLinkTitle,
       lisOutcomeServiceUrl,
       lisResultSourcedid,
+      canvasDomain,
     };
   }
 }

@@ -56,6 +56,7 @@ export class FlashcardController {
           ctx.courseId,
           ctx.moduleId,
           prefix,
+          ctx?.canvasDomain,
         );
         effectiveFilter = info.filter ?? '';
       }

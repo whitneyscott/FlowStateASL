@@ -25,8 +25,8 @@ export class CanvasService {
     };
   }
 
-  private getDomain(): string {
-    const domain = this.config.get('CANVAS_DOMAIN');
+  private getDomain(override?: string): string {
+    const domain = (override?.trim() || this.config.get('CANVAS_DOMAIN')) as string | undefined;
     if (!domain) throw new Error('Canvas not configured');
     return domain;
   }
@@ -44,8 +44,9 @@ export class CanvasService {
     courseId: string,
     moduleId: string,
     prefix = 'TWA',
+    domainOverride?: string,
   ): Promise<ModuleInfoDto> {
-    const domain = this.getDomain();
+    const domain = this.getDomain(domainOverride);
     const url = `https://${domain}/api/v1/courses/${courseId}/modules/${moduleId}`;
     const res = await fetch(url, { headers: this.getAuthHeaders() });
     const httpCode = res.status;
@@ -128,8 +129,9 @@ export class CanvasService {
     filename: string,
     size: number,
     contentType: string,
+    domainOverride?: string,
   ): Promise<{ uploadUrl: string; uploadParams: Record<string, string> }> {
-    const domain = this.getDomain();
+    const domain = this.getDomain(domainOverride);
     const url = `https://${domain}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}/files`;
     const form = new FormData();
     form.append('name', filename);
@@ -223,8 +225,9 @@ export class CanvasService {
     userId: string,
     fileId: string,
     bodyHtml: string,
+    domainOverride?: string,
   ): Promise<void> {
-    const domain = this.getDomain();
+    const domain = this.getDomain(domainOverride);
     const url = `https://${domain}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions`;
     const body = {
       submission: {
@@ -248,8 +251,9 @@ export class CanvasService {
     courseId: string,
     assignmentId: string,
     newName: string,
+    domainOverride?: string,
   ): Promise<void> {
-    const domain = this.getDomain();
+    const domain = this.getDomain(domainOverride);
     const url = `https://${domain}/api/v1/courses/${courseId}/assignments/${assignmentId}`;
     const res = await fetch(url, {
       method: 'PUT',
@@ -265,8 +269,9 @@ export class CanvasService {
   async findAssignmentByName(
     courseId: string,
     assignmentName: string,
+    domainOverride?: string,
   ): Promise<string | null> {
-    const domain = this.getDomain();
+    const domain = this.getDomain(domainOverride);
     const url = `https://${domain}/api/v1/courses/${courseId}/assignments?per_page=100`;
     const res = await fetch(url, { headers: this.getAuthHeaders() });
     if (!res.ok) return null;

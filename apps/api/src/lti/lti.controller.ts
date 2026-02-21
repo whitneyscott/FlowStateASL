@@ -78,6 +78,7 @@ export class LtiController {
           ctx.assignmentId,
           ctx.resourceLinkId || '',
           ctx.resourceLinkTitle,
+          ctx.canvasDomain,
         );
       } catch {
         ctx.assignmentNameSynced = false;

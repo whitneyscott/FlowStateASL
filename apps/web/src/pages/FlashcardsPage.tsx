@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useLtiContext } from '../hooks/useLtiContext';
+import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
 import { TeacherSettings } from '../components/TeacherSettings';
 
@@ -23,8 +23,11 @@ function isTeacher(roles: string): boolean {
   return TEACHER_PATTERNS.some((p) => lower.includes(p));
 }
 
-export default function FlashcardsPage() {
-  const { context } = useLtiContext();
+interface FlashcardsPageProps {
+  context: LtiContext;
+}
+
+export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   const { setLastFunction, setSproutVideo } = useDebug();
   const teacherMode = context && isTeacher(context.roles) && context.courseId && context.userId !== 'standalone';
   const [teacherSelection, setTeacherSelection] = useState({ curriculum: '', unit: '', section: '' });

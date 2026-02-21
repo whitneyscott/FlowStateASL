@@ -19,7 +19,7 @@ NestJS + React monorepo for ASL Express Drill and Assess.
 
 ## Setup
 
-1. Copy `.env.example` to `.env` and set `DATABASE_URL`, `SPROUT_KEY`, `CANVAS_API_TOKEN`, `CANVAS_DOMAIN`.
+1. Copy `.env.example` to `.env` and set `DATABASE_URL`, `SPROUT_KEY`, `CANVAS_API_TOKEN`. `CANVAS_DOMAIN` is optional when launched via LTI (auto-extracted from launch params).
 2. Run migrations (requires DATABASE_URL in .env):
    `npx typeorm migration:run -d apps/api/src/data/data-source.ts`
 3. `npm install`

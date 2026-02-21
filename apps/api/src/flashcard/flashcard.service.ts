@@ -37,8 +37,13 @@ export class FlashcardService {
     return this.sproutVideo.getPlaylistItems('', playlistId);
   }
 
-  async getModuleInfo(courseId: string, moduleId: string, prefix?: string) {
-    return this.canvas.getModuleInfo(courseId, moduleId, prefix);
+  async getModuleInfo(
+    courseId: string,
+    moduleId: string,
+    prefix?: string,
+    canvasDomain?: string,
+  ) {
+    return this.canvas.getModuleInfo(courseId, moduleId, prefix, canvasDomain);
   }
 
   async getCurriculumHierarchy() {

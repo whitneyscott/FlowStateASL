@@ -8,4 +8,6 @@ export interface LtiContext {
   roles: string;
   resourceLinkTitle?: string;
   assignmentNameSynced?: boolean;
+  /** Canvas instance hostname extracted from LTI launch */
+  canvasDomain?: string;
 }
