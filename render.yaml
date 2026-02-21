@@ -12,8 +12,8 @@ services:
     runtime: node
     region: oregon
 
-    # Monorepo: app lives in aslexpress/ - use explicit cd (rootDir can cause path issues with Nx)
-    buildCommand: cd aslexpress && npm ci && npx nx run-many -t build -p api,web
+    # Monorepo: app lives in aslexpress/ - build sequentially to reduce memory on free tier
+    buildCommand: cd aslexpress && npm ci && npx nx build api && npx nx build web
     startCommand: cd aslexpress && node dist/apps/api/src/main.js
 
     # Run migrations before each deploy
@@ -24,6 +24,10 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=460
+      - key: NX_DAEMON
+        value: "false"
       - key: PORT
         value: 10000
       - key: DATABASE_URL
