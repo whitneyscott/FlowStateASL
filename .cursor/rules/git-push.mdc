@@ -1,0 +1,12 @@
+---
+description: Always push commits to GitHub after making changes
+alwaysApply: true
+---
+
+# Git Push Policy
+
+After committing changes to the repository, always push to GitHub unless the user explicitly says otherwise (e.g., "don't push" or "commit only").
+
+When making edits to the codebase:
+1. Stage and commit changes with a clear message
+2. Push to the remote (typically `origin main`) unless told not to
