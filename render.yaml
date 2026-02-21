@@ -12,14 +12,12 @@ services:
     runtime: node
     region: oregon
 
-    # Monorepo: app lives in aslexpress/
-    rootDir: aslexpress
-
-    buildCommand: npm ci && npx nx run-many -t build -p api,web
-    startCommand: node dist/apps/api/src/main.js
+    # Monorepo: app lives in aslexpress/ - use explicit cd (rootDir can cause path issues with Nx)
+    buildCommand: cd aslexpress && npm ci && npx nx run-many -t build -p api,web
+    startCommand: cd aslexpress && node dist/apps/api/src/main.js
 
     # Run migrations before each deploy
-    preDeployCommand: npx typeorm migration:run -d dist/apps/api/src/data/data-source.js
+    preDeployCommand: cd aslexpress && npx typeorm migration:run -d dist/apps/api/src/data/data-source.js
 
     healthCheckPath: /  # SPA root returns 200
 
