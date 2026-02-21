@@ -1,0 +1,42 @@
+# FlowStateASL / ASL Express - Render Blueprint
+# https://docs.render.com/blueprint-spec
+
+databases:
+  - name: flowstateasl-db
+    databaseName: flowstateasl
+    plan: free  # Free tier; upgrade to starter for production
+
+services:
+  - type: web
+    name: flowstateasl
+    runtime: node
+    region: oregon
+
+    # Monorepo: app lives in aslexpress/
+    rootDir: aslexpress
+
+    buildCommand: npm ci && npx nx run-many -t build -p api,web
+    startCommand: node dist/apps/api/src/main.js
+
+    # Run migrations before each deploy
+    preDeployCommand: npx typeorm migration:run -d dist/apps/api/src/data/data-source.js
+
+    healthCheckPath: /  # SPA root returns 200
+
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: DATABASE_URL
+        fromDatabase:
+          name: flowstateasl-db
+          property: connectionString
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: CORS_ORIGIN
+        value: https://flowstateasl.onrender.com  # Update after first deploy if you use a custom domain
+      - key: FRONTEND_URL
+        value: https://flowstateasl.onrender.com
+      # Add these in Render Dashboard after first deploy:
+      # SPROUT_KEY, CANVAS_API_TOKEN, CANVAS_DOMAIN, CURRICULUM_PREFIX
