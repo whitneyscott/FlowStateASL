@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useLtiContext } from '../hooks/useLtiContext';
+import { TeacherSettings } from '../components/TeacherSettings';
 
 type PlaylistItem = { title: string; id?: string };
 type VideoItem = { title: string; embed?: string };
@@ -13,6 +15,7 @@ interface ScoreDetail {
 }
 
 export default function FlashcardsPage() {
+  const { context } = useLtiContext();
   const [playlists, setPlaylists] = useState<PlaylistItem[]>([]);
   const [playlistsLoading, setPlaylistsLoading] = useState(true);
   const [view, setView] = useState<'menu' | 'study' | 'results'>('menu');
@@ -264,6 +267,10 @@ export default function FlashcardsPage() {
       <div className="w-full max-w-2xl">
         {view === 'menu' && (
           <div className="space-y-6">
+            <TeacherSettings
+              context={context}
+              onConfigChange={loadPlaylists}
+            />
             <h1 className="text-2xl font-bold text-emerald-400">TWA Vocabulary</h1>
             {playlistsLoading ? (
               <div className="flex flex-col items-center gap-4 py-12">

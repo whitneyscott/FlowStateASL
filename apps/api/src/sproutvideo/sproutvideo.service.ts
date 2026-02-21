@@ -34,6 +34,64 @@ export class SproutVideoService {
     return BLACKLIST.some((term) => lower.includes(term));
   }
 
+  parsePlaylistTitle(
+    title: string,
+  ): { curriculum: string; unit: string; section: string } {
+    const parts = title
+      .split(/[\s.\-|_]+/)
+      .map((p) => p.trim())
+      .filter((p) => p.length > 0);
+    const curriculum = parts[0] ?? '';
+    const unit = parts[1] ?? '';
+    const section = parts[2] ?? '';
+    return { curriculum, unit, section };
+  }
+
+  async getCurriculumHierarchy(): Promise<{
+    curricula: string[];
+    unitsByCurriculum: Record<string, string[]>;
+    sectionsByCurriculumUnit: Record<string, string[]>;
+  }> {
+    const playlists = await this.fetchAllPlaylists();
+    const curriculaSet = new Set<string>();
+    const unitsMap = new Map<string, Set<string>>();
+    const sectionsMap = new Map<string, Set<string>>();
+
+    for (const p of playlists) {
+      const title = String(p.title ?? '');
+      if (this.isBlacklisted(title)) continue;
+      const { curriculum, unit, section } = this.parsePlaylistTitle(title);
+      if (!curriculum) continue;
+      curriculaSet.add(curriculum);
+      if (unit) {
+        const key = curriculum;
+        if (!unitsMap.has(key)) unitsMap.set(key, new Set());
+        unitsMap.get(key)!.add(unit);
+      }
+      if (unit && section) {
+        const key = `${curriculum}|${unit}`;
+        if (!sectionsMap.has(key)) sectionsMap.set(key, new Set());
+        sectionsMap.get(key)!.add(section);
+      }
+    }
+
+    const curricula = Array.from(curriculaSet).sort();
+    const unitsByCurriculum: Record<string, string[]> = {};
+    for (const [c, set] of unitsMap) {
+      unitsByCurriculum[c] = Array.from(set).sort();
+    }
+    const sectionsByCurriculumUnit: Record<string, string[]> = {};
+    for (const [k, set] of sectionsMap) {
+      sectionsByCurriculumUnit[k] = Array.from(set).sort();
+    }
+
+    return {
+      curricula,
+      unitsByCurriculum,
+      sectionsByCurriculumUnit,
+    };
+  }
+
   filterPlaylists(
     playlists: SproutPlaylist[],
     searchTerms: string[],

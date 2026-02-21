@@ -13,6 +13,7 @@ import { SubmissionModule } from './submission/submission.module';
 import { PromptConfigEntity } from './assessment/entities/prompt-config.entity';
 import { BlockedAttemptEntity } from './assessment/entities/blocked-attempt.entity';
 import { AssessmentSessionEntity } from './assessment/entities/assessment-session.entity';
+import { FlashcardConfigEntity } from './flashcard/entities/flashcard-config.entity';
 
 const isProduction = process.env.NODE_ENV === 'production';
 const webRoot = join(__dirname, '..', '..', 'web');
@@ -42,6 +43,7 @@ const webRoot = join(__dirname, '..', '..', 'web');
           PromptConfigEntity,
           BlockedAttemptEntity,
           AssessmentSessionEntity,
+          FlashcardConfigEntity,
         ],
         migrations: [__dirname + '/migrations/*{.ts,.js}'],
         migrationsRun: false,

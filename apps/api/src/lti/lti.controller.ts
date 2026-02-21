@@ -8,9 +8,10 @@ import {
   NotImplementedException,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
+import { randomBytes } from 'crypto';
 import { LtiService } from './lti.service';
-import { LtiLaunchGuard } from './guards/lti-launch.guard';
 import { AssessmentService } from '../assessment/assessment.service';
+import { setLtiToken, consumeLtiToken } from './lti-token.store';
 
 @Controller('lti')
 export class LtiController {
@@ -25,17 +26,35 @@ export class LtiController {
     @Req() req: Request,
     @Res() res: Response,
   ) {
+    console.log('[LTI] launch/flashcards received', {
+      hasCourseId: !!body.custom_canvas_course_id,
+      hasUserId: !!body.custom_canvas_user_id,
+      hasRoles: !!body.custom_roles,
+      keys: Object.keys(body).slice(0, 15),
+    });
     const ctx = this.ltiService.extractContext(body);
     if (!ctx) {
+      console.log('[LTI] extractContext failed', { bodyKeys: Object.keys(body) });
       return res.status(400).send('Missing LTI parameters');
     }
     ctx.toolType = 'flashcards';
-    req.session!.ltiContext = ctx;
-    req.session!.save((err) => {
-      if (err) return res.status(500).send('Session save failed');
+    const token = randomBytes(24).toString('hex');
+    setLtiToken(token, ctx);
+    if (req.session) {
+      req.session.ltiContext = ctx;
+      req.session.save((err) => {
+        if (err) console.error('[LTI] session save failed', err);
+        const base = process.env.FRONTEND_URL ?? '';
+        const url = `${base}/flashcards?lti_token=${token}`;
+        console.log('[LTI] redirecting to', url.replace(token, '***'));
+        res.redirect(url);
+      });
+    } else {
       const base = process.env.FRONTEND_URL ?? '';
-      res.redirect(`${base}/flashcards`);
-    });
+      const url = `${base}/flashcards?lti_token=${token}`;
+      console.log('[LTI] no session, redirecting with token');
+      res.redirect(url);
+    }
   }
 
   @Post('launch/prompter')
@@ -61,18 +80,40 @@ export class LtiController {
         ctx.assignmentNameSynced = false;
       }
     }
-    req.session!.ltiContext = ctx;
-    req.session!.save((err) => {
-      if (err) return res.status(500).send('Session save failed');
+    const token = randomBytes(24).toString('hex');
+    setLtiToken(token, ctx);
+    if (req.session) {
+      req.session.ltiContext = ctx;
+      req.session.save((err) => {
+        if (err) console.error('[LTI] session save failed', err);
+        const base = process.env.FRONTEND_URL ?? '';
+        res.redirect(`${base}/prompter?lti_token=${token}`);
+      });
+    } else {
       const base = process.env.FRONTEND_URL ?? '';
-      res.redirect(`${base}/prompter`);
-    });
+      res.redirect(`${base}/prompter?lti_token=${token}`);
+    }
   }
 
   @Get('context')
   getContext(@Req() req: Request) {
     const ctx = req.session?.ltiContext;
-    if (ctx) return ctx;
+    if (ctx) {
+      console.log('[LTI] context from session', { courseId: ctx.courseId, roles: ctx.roles?.slice(0, 30) });
+      return ctx;
+    }
+    const token = (req.query.lti_token as string) ?? '';
+    if (token) {
+      const tokenCtx = consumeLtiToken(token);
+      if (tokenCtx) {
+        console.log('[LTI] context from token', { courseId: tokenCtx.courseId });
+        if (req.session) {
+          req.session.ltiContext = tokenCtx;
+          req.session.save(() => {});
+        }
+        return tokenCtx;
+      }
+    }
     return {
       courseId: '',
       assignmentId: '',
