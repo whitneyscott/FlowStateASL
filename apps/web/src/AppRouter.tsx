@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useLtiContext } from './hooks/useLtiContext';
 import { BridgeLog } from './components/BridgeLog';
+import { ToolSelector } from './components/ToolSelector';
 import FlashcardsPage from './pages/FlashcardsPage';
 import TimerPage from './pages/TimerPage';
 import TeacherConfigPage from './pages/TeacherConfigPage';
@@ -37,8 +38,9 @@ export default function AppRouter() {
 
   if (context.toolType === 'flashcards') {
     return (
-      <div className="min-h-screen flex flex-col">
-        <div className="w-full max-w-4xl mx-auto px-4">
+      <div className="min-h-screen flex flex-col bg-zinc-900">
+        <div className="w-full max-w-4xl mx-auto px-4 py-4">
+          <ToolSelector context={context} currentTool="flashcards" />
           <BridgeLog context={context} loading={false} error={null} />
         </div>
         <Routes>

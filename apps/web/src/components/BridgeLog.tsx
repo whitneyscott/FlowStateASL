@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import type { LtiContext } from '@aslexpress/shared-types';
+import { useDebug } from '../contexts/DebugContext';
 
 interface BridgeLogProps {
   context: LtiContext | null;
@@ -8,6 +9,7 @@ interface BridgeLogProps {
 }
 
 export function BridgeLog({ context, loading, error }: BridgeLogProps) {
+  const { sproutVideoAccessed, sproutVideoPlaylistsRetrieved, lastFunctionCalled } = useDebug();
   const [lines, setLines] = useState<string[]>(['Initializing...']);
   const [expanded, setExpanded] = useState(true);
   const [copied, setCopied] = useState(false);
@@ -51,8 +53,16 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
     } else {
       newLines.push('No context available.');
     }
+    if (sproutVideoAccessed) {
+      newLines.push(`SproutVideo API: accessed, ${sproutVideoPlaylistsRetrieved ?? '?'} playlists`);
+    } else if (context?.toolType === 'flashcards') {
+      newLines.push('SproutVideo API: not yet accessed');
+    }
+    if (lastFunctionCalled) {
+      newLines.push(`Last function: ${lastFunctionCalled}`);
+    }
     setLines(newLines);
-  }, [context, loading, error]);
+  }, [context, loading, error, sproutVideoAccessed, sproutVideoPlaylistsRetrieved, lastFunctionCalled]);
 
   const text = ['BRIDGE DEBUG LOG:', ...lines].join('\n');
 

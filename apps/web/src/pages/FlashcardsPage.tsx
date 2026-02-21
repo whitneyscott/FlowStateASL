@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useLtiContext } from '../hooks/useLtiContext';
+import { useDebug } from '../contexts/DebugContext';
 import { TeacherSettings } from '../components/TeacherSettings';
 
 type PlaylistItem = { title: string; id?: string };
@@ -24,6 +25,7 @@ function isTeacher(roles: string): boolean {
 
 export default function FlashcardsPage() {
   const { context } = useLtiContext();
+  const { setLastFunction, setSproutVideo } = useDebug();
   const teacherMode = context && isTeacher(context.roles) && context.courseId && context.userId !== 'standalone';
   const [teacherSelection, setTeacherSelection] = useState({ curriculum: '', unit: '', section: '' });
   const handleSelectionChange = useCallback((c: string, u: string, s: string) => {
@@ -67,9 +69,12 @@ export default function FlashcardsPage() {
       if (unit) params.set('unit', unit);
       if (section) params.set('section', section);
       const url = params.toString() ? `/api/flashcard/playlists?${params}` : '/api/flashcard/playlists';
+      setLastFunction(`GET ${url}`);
       const res = await fetch(url, { credentials: 'include' });
       const data = await res.json();
-      setPlaylists(Array.isArray(data) ? data : []);
+      const list = Array.isArray(data) ? data : [];
+      setPlaylists(list);
+      if (list.length > 0) setSproutVideo(true, list.length);
     } catch {
       setPlaylists([]);
     } finally {

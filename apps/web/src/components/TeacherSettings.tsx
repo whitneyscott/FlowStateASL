@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { LtiContext } from '@aslexpress/shared-types';
+import { useDebug } from '../contexts/DebugContext';
 
 const TEACHER_PATTERNS = [
   'instructor',
@@ -31,8 +32,11 @@ interface TeacherSettingsProps {
 }
 
 export function TeacherSettings({ context, onConfigChange, onSelectionChange }: TeacherSettingsProps) {
+  const { setSproutVideo, setLastFunction } = useDebug();
   const [hierarchy, setHierarchy] = useState<Hierarchy | null>(null);
   const [playlistsRetrieved, setPlaylistsRetrieved] = useState<number | null>(null);
+  const [hierarchyError, setHierarchyError] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
   const [config, setConfig] = useState<{
     curriculum: string;
     unit: string;
@@ -55,15 +59,24 @@ export function TeacherSettings({ context, onConfigChange, onSelectionChange }: 
         return;
       }
       try {
+        setLastFunction('GET /api/flashcard/curriculum-hierarchy');
+        setHierarchyError(null);
         const [hRes, cRes] = await Promise.all([
           fetch('/api/flashcard/curriculum-hierarchy', { credentials: 'include' }),
           fetch('/api/flashcard/config', { credentials: 'include' }),
         ]);
+        setLastFunction('GET /api/flashcard/config');
         if (cancelled) return;
-        const h = await hRes.json();
-        const c = await cRes.json();
-        setHierarchy(h);
+        const h = await hRes.json().catch(() => ({}));
+        const c = await cRes.json().catch(() => null);
+        if (!hRes.ok) {
+          setHierarchyError((h as { message?: string })?.message ?? `HTTP ${hRes.status}`);
+          if (!cancelled) setLoading(false);
+          return;
+        }
+        setHierarchy(h as Hierarchy);
         setPlaylistsRetrieved(h?.playlistsRetrieved ?? null);
+        setSproutVideo(true, h?.playlistsRetrieved ?? null);
         setConfig(c);
         if (c) {
           setCurriculum(c.curriculum);
@@ -72,15 +85,18 @@ export function TeacherSettings({ context, onConfigChange, onSelectionChange }: 
         } else if (h?.curricula?.length) {
           setCurriculum(h.curricula[0]);
         }
-      } catch {
-        if (!cancelled) setHierarchy(null);
+      } catch (err) {
+        if (!cancelled) {
+          setHierarchy(null);
+          setHierarchyError(err instanceof Error ? err.message : 'Failed to load');
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
     }
     load();
     return () => { cancelled = true; };
-  }, [teacher, hasLti]);
+  }, [teacher, hasLti, retryCount]);
 
   useEffect(() => {
     if (hierarchy && curriculum && !hierarchy.unitsByCurriculum?.[curriculum]?.includes(unit)) {
@@ -116,14 +132,31 @@ export function TeacherSettings({ context, onConfigChange, onSelectionChange }: 
   };
 
   if (!teacher || !hasLti) return null;
-  if (loading || !hierarchy) {
+  if (loading && !hierarchy && !hierarchyError) {
     return (
       <div className="mb-6 p-4 bg-zinc-800 rounded-lg border border-zinc-600">
-        <p className="text-zinc-400">Loading teacher settings...</p>
+        <p className="text-zinc-400">Loading teacher settings (fetching SproutVideo playlists)...</p>
       </div>
     );
   }
+  if (hierarchyError && !hierarchy) {
+    return (
+      <div className="mb-6 p-4 bg-zinc-800 rounded-lg border border-red-600">
+        <p className="text-red-400">Failed to load curriculum: {hierarchyError}</p>
+        <p className="text-zinc-500 text-sm mt-2">Check that SPROUT_KEY is set in Render.</p>
+        <button
+          type="button"
+          onClick={() => { setHierarchyError(null); setLoading(true); setRetryCount((r) => r + 1); }}
+          className="mt-3 px-3 py-1 bg-zinc-600 rounded text-sm"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+  if (!hierarchy) return null;
 
+  const curricula = hierarchy.curricula ?? [];
   const units = hierarchy.unitsByCurriculum?.[curriculum] ?? [];
   const sections =
     (curriculum && unit
@@ -144,7 +177,7 @@ export function TeacherSettings({ context, onConfigChange, onSelectionChange }: 
             className="bg-zinc-900 border border-zinc-600 rounded px-3 py-2 text-white min-w-[120px]"
           >
             <option value="">Select...</option>
-            {hierarchy.curricula.map((c) => (
+            {curricula.map((c) => (
               <option key={c} value={c}>
                 {c}
               </option>

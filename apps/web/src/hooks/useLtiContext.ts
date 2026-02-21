@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import type { LtiContext } from '@aslexpress/shared-types';
+import { useDebug } from '../contexts/DebugContext';
 
 export function useLtiContext() {
+  const { setLastFunction } = useDebug();
   const [context, setContext] = useState<LtiContext | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -12,6 +14,7 @@ export function useLtiContext() {
     const url = ltiToken
       ? `/api/lti/context?lti_token=${encodeURIComponent(ltiToken)}`
       : '/api/lti/context';
+    setLastFunction(`GET ${url}`);
     fetch(url, { credentials: 'include' })
       .then((res) => {
         if (!res.ok) throw new Error(res.statusText);
