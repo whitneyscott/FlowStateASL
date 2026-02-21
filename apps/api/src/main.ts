@@ -15,7 +15,10 @@ async function bootstrap() {
       secret: process.env.SESSION_SECRET ?? 'dev-secret-change-in-production',
       resave: false,
       saveUninitialized: false,
-      cookie: { secure: process.env.NODE_ENV === 'production' },
+      cookie: {
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+      },
     }),
   );
   await app.listen(process.env.PORT ?? 3000, '0.0.0.0');

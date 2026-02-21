@@ -1,8 +1,9 @@
-import { Module } from '@nestjs/common';
+import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { join } from 'path';
+import { SpaMiddleware } from './spa/spa.middleware';
 import { DataModule } from './data/data.module';
 import { CanvasModule } from './canvas/canvas.module';
 import { SproutVideoModule } from './sproutvideo/sproutvideo.module';
@@ -55,4 +56,10 @@ const webRoot = join(__dirname, '..', '..', 'web');
     SubmissionModule,
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    if (process.env.NODE_ENV === 'production') {
+      consumer.apply(SpaMiddleware).forRoutes('*');
+    }
+  }
+}
