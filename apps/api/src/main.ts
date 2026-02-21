@@ -9,19 +9,18 @@ import { DebugExceptionFilter } from './common/debug-exception.filter';
 import { renderDebugPage } from './common/debug-page';
 
 async function bootstrap() {
-  // Create Express app - add SPA handler BEFORE NestJS so it runs before router
   const expressApp = express();
   const isProduction = process.env.NODE_ENV === 'production';
+  const port = process.env.PORT ?? 3000;
 
-  // Session must run first so LTI context is available for /api/lti/context
   expressApp.use(
     session({
       secret: process.env.SESSION_SECRET ?? 'dev-secret-change-in-production',
       resave: false,
       saveUninitialized: false,
       cookie: {
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+        secure: isProduction,
+        sameSite: isProduction ? 'none' : 'lax',
       },
     }),
   );
@@ -35,19 +34,20 @@ async function bootstrap() {
         !req.path.startsWith('/api') &&
         !req.path.includes('.')
       ) {
+        console.log(`[Routing] ${req.method} ${req.path} -> Static File Loader (SPA)`);
         res.sendFile(indexPath, (err) => {
           if (err) {
+            const exactDir = join(webRoot, req.path);
             const html = renderDebugPage({
+              statusCode: 500,
               handler: 'Raw Express SPA handler (main.ts)',
               error: err.message,
               request_path: req.path,
               request_method: req.method,
               resolved_indexPath: indexPath,
               resolved_webRoot: webRoot,
+              exact_directory_looked_in: exactDir,
               __dirname,
-              trying_to_open: indexPath,
-              looking_in: webRoot,
-              hint: 'sendFile failed. Check that dist/apps/web/index.html exists after build.',
             });
             res.setHeader('Content-Type', 'text/html').status(500).send(html);
           }
@@ -65,6 +65,12 @@ async function bootstrap() {
     origin: process.env.CORS_ORIGIN ?? 'http://localhost:4200',
     credentials: true,
   });
-  await app.listen(process.env.PORT ?? 3000, '0.0.0.0');
+
+  await app.listen(port, '0.0.0.0');
+
+  const staticRoot = isProduction ? join(__dirname, '..', '..', 'web') : 'N/A';
+  console.log(`Listening on port ${port}`);
+  console.log(`Static root path: ${staticRoot}`);
 }
+
 bootstrap();

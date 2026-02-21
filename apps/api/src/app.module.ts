@@ -3,7 +3,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { join } from 'path';
-import { SpaMiddleware } from './spa/spa.middleware';
+import { RoutingLogMiddleware } from './common/routing-log.middleware';
 import { DataModule } from './data/data.module';
 import { CanvasModule } from './canvas/canvas.module';
 import { SproutVideoModule } from './sproutvideo/sproutvideo.module';
@@ -26,7 +26,7 @@ const webRoot = join(__dirname, '..', '..', 'web');
             rootPath: webRoot,
             exclude: ['/api*'],
             serveRoot: '/',
-            renderPath: '*',  // SPA fallback: serve index.html for client-side routes
+            renderPath: '*',
           }),
         ]
       : []),
@@ -55,11 +55,10 @@ const webRoot = join(__dirname, '..', '..', 'web');
     LtiModule,
     SubmissionModule,
   ],
+  providers: [RoutingLogMiddleware],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
-    if (process.env.NODE_ENV === 'production') {
-      consumer.apply(SpaMiddleware).forRoutes('*');
-    }
+    consumer.apply(RoutingLogMiddleware).forRoutes('*');
   }
 }
