@@ -13,7 +13,7 @@ services:
     region: oregon
 
     # Monorepo: app lives in aslexpress/ - build sequentially to reduce memory on free tier
-    buildCommand: cd aslexpress && npm ci && npx nx build api && npx nx build web
+    buildCommand: cd aslexpress && npm ci --include=dev && npm run build:api && npm run build:web
     startCommand: cd aslexpress && node dist/apps/api/src/main.js
 
     # Run migrations before each deploy
