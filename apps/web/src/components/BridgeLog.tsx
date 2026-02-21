@@ -10,6 +10,17 @@ interface BridgeLogProps {
 export function BridgeLog({ context, loading, error }: BridgeLogProps) {
   const [lines, setLines] = useState<string[]>(['Initializing...']);
   const [expanded, setExpanded] = useState(true);
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCopied(false);
+    }
+  };
 
   useEffect(() => {
     const newLines: string[] = [];
@@ -55,23 +66,48 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
         maxWidth: 800,
       }}
     >
-      <button
-        type="button"
-        onClick={() => setExpanded((e) => !e)}
+      <div
         style={{
-          background: 'none',
-          border: 'none',
-          color: '#00ff88',
-          cursor: 'pointer',
-          fontFamily: 'inherit',
-          fontSize: 'inherit',
-          fontWeight: 'bold',
-          padding: 0,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
           marginBottom: expanded ? 4 : 0,
         }}
       >
-        {expanded ? '▼' : '▶'} BRIDGE DEBUG LOG
-      </button>
+        <button
+          type="button"
+          onClick={() => setExpanded((e) => !e)}
+          style={{
+            background: 'none',
+            border: 'none',
+            color: '#00ff88',
+            cursor: 'pointer',
+            fontFamily: 'inherit',
+            fontSize: 'inherit',
+            fontWeight: 'bold',
+            padding: 0,
+          }}
+        >
+          {expanded ? '▼' : '▶'} BRIDGE DEBUG LOG
+        </button>
+        <button
+          type="button"
+          onClick={handleCopy}
+          style={{
+            background: '#00ff88',
+            color: '#000',
+            border: 'none',
+            padding: '4px 10px',
+            borderRadius: 4,
+            cursor: 'pointer',
+            fontFamily: 'inherit',
+            fontSize: 12,
+            fontWeight: 'bold',
+          }}
+        >
+          {copied ? 'Copied!' : 'Copy'}
+        </button>
+      </div>
       {expanded && <div>{text.split('\n').slice(1).join('\n')}</div>}
     </div>
   );
