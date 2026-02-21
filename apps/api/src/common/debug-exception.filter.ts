@@ -43,12 +43,21 @@ export class DebugExceptionFilter implements ExceptionFilter {
     const html = renderDebugPage({
       statusCode: status,
       error: message,
+      handler: 'DebugExceptionFilter (NestJS exception - ran when no route matched)',
       request_path: req.path,
       request_method: req.method,
       request_url: req.originalUrl || req.url,
+      path_starts_with_api: req.path.startsWith('/api'),
+      path_includes_dot: req.path.includes('.'),
+      would_spa_handler_match:
+        req.method === 'GET' &&
+        !req.path.startsWith('/api') &&
+        !req.path.includes('.')
+          ? 'YES - raw Express handler in main.ts should have caught this'
+          : 'NO',
       hint:
         status === 404
-          ? '404 = route not found. For /flashcards, SpaMiddleware should serve index.html. If you see this, the request may not be reaching SpaMiddleware.'
+          ? '404 = NestJS router returned this. Raw Express SPA handler (main.ts) should run BEFORE NestJS. If you see this, that handler may not be registered or ran after NestJS.'
           : 'Check the error and request details above.',
     });
 
