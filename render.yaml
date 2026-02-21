@@ -40,5 +40,13 @@ services:
         value: https://flowstateasl.onrender.com  # Update after first deploy if you use a custom domain
       - key: FRONTEND_URL
         value: https://flowstateasl.onrender.com
-      # Add these in Render Dashboard after first deploy:
-      # SPROUT_KEY, CANVAS_API_TOKEN, CANVAS_DOMAIN, CURRICULUM_PREFIX
+      # Canvas LMS API credentials (set values in Render Dashboard)
+      - key: CANVAS_API_TOKEN
+        sync: false
+      - key: CANVAS_DOMAIN
+        sync: false
+      # SproutVideo API credentials (set values in Render Dashboard)
+      - key: SPROUT_KEY
+        sync: false
+      - key: CURRICULUM_PREFIX
+        value: TWA
