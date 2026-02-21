@@ -1,16 +1,14 @@
-import { Controller, Get, Query, Req, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, Req } from '@nestjs/common';
 import { Request } from 'express';
 import { FlashcardService } from './flashcard.service';
-import { LtiLaunchGuard } from '../lti/guards/lti-launch.guard';
 
 @Controller('flashcard')
-@UseGuards(LtiLaunchGuard)
 export class FlashcardController {
   constructor(private readonly flashcard: FlashcardService) {}
 
   @Get('playlists')
   async getPlaylists(@Req() req: Request, @Query('filter') filter: string) {
-    const ctx = req.session!.ltiContext;
+    const ctx = req.session?.ltiContext;
     const prefix = process.env.CURRICULUM_PREFIX ?? 'TWA';
     let effectiveFilter = filter ?? '';
     if (!effectiveFilter && ctx?.courseId && ctx?.moduleId) {

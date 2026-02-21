@@ -5,7 +5,6 @@ import {
   Body,
   Res,
   Req,
-  UseGuards,
   NotImplementedException,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
@@ -71,9 +70,18 @@ export class LtiController {
   }
 
   @Get('context')
-  @UseGuards(LtiLaunchGuard)
   getContext(@Req() req: Request) {
-    return req.session!.ltiContext!;
+    const ctx = req.session?.ltiContext;
+    if (ctx) return ctx;
+    return {
+      courseId: '',
+      assignmentId: '',
+      userId: 'standalone',
+      resourceLinkId: '',
+      moduleId: '',
+      toolType: 'flashcards' as const,
+      roles: '',
+    };
   }
 
   @Get('oidc/login')
