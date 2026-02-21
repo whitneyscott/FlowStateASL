@@ -18,14 +18,14 @@ export class AssessmentSessionEntity {
   @Column({ name: 'word_count', default: 0 }) wordCount: number;
   @Column({ default: 0 }) score: number;
   @Column({ name: 'score_total', default: 0 }) scoreTotal: number;
-  @Column({ name: 'canvas_file_id', nullable: true }) canvasFileId: string | null;
+  @Column({ name: 'canvas_file_id', type: 'varchar', nullable: true }) canvasFileId: string | null;
   @Column({ name: 'upload_progress_offset', type: 'int', default: 0 }) uploadProgressOffset: number;
   @Column({
     name: 'sync_status',
     type: 'text',
     default: 'pending',
   }) syncStatus: 'pending' | 'uploading' | 'failed';
-  @Column({ name: 'sync_error_message', nullable: true }) syncErrorMessage: string | null;
+  @Column({ name: 'sync_error_message', type: 'text', nullable: true }) syncErrorMessage: string | null;
   @CreateDateColumn({ name: 'started_at' }) startedAt: Date;
   @Column({ name: 'submitted_at', type: 'timestamptz', nullable: true }) submittedAt: Date | null;
 }
