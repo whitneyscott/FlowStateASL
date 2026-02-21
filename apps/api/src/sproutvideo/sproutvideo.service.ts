@@ -136,7 +136,7 @@ export class SproutVideoService {
     let page = 1;
     const perPage = 100;
     let hasMore = true;
-    while (hasMore && all.length < 500) {
+    while (hasMore) {
       const url = `https://api.sproutvideo.com/v1/playlists?per_page=${perPage}&page=${page}`;
       const res = await fetch(url, {
         headers: { 'SproutVideo-Api-Key': apiKey },
