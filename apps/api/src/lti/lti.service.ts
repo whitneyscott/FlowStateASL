@@ -44,7 +44,13 @@ export class LtiService {
     const resourceLinkId =
       (body.resource_link_id ?? body.custom_resource_link_id ?? body.custom_custom_resource_link_id ?? '').trim();
     const moduleId = body.custom_module_id ?? body.custom_canvas_module_id ?? '';
-    const roles = body.custom_roles ?? body.roles ?? '';
+    const roles =
+      body.custom_roles ??
+      body.roles ??
+      body.ext_roles ??
+      body.canvas_membership_roles ??
+      body.com_instructure_membership_roles ??
+      '';
     const resourceLinkTitle =
       (body.resource_link_title ?? body.custom_link_title ?? '').trim() || undefined;
     const lisOutcomeServiceUrl = (body.lis_outcome_service_url ?? '').trim() || undefined;

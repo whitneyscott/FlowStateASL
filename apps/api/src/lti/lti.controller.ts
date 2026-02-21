@@ -26,11 +26,14 @@ export class LtiController {
     @Req() req: Request,
     @Res() res: Response,
   ) {
+    const roleKeys = ['custom_roles','roles','ext_roles','canvas_membership_roles'];
+    const rolesReceived = roleKeys
+      .filter((k) => body[k])
+      .map((k) => `${k}=${String(body[k]).slice(0, 80)}`);
     console.log('[LTI] launch/flashcards received', {
       hasCourseId: !!body.custom_canvas_course_id,
       hasUserId: !!body.custom_canvas_user_id,
-      hasRoles: !!body.custom_roles,
-      keys: Object.keys(body).slice(0, 15),
+      rolesReceived: rolesReceived.length ? rolesReceived : 'none',
     });
     const ctx = this.ltiService.extractContext(body);
     if (!ctx) {

@@ -24,6 +24,9 @@
             <lticm:property name="url">https://flowstateasl.onrender.com/api/lti/launch/flashcards</lticm:property>
             <lticm:property name="visibility">admins</lticm:property>
             <lticm:property name="default">enabled</lticm:property>
+            <lticm:options name="custom_fields">
+                <lticm:property name="custom_roles">$Canvas.membership.roles</lticm:property>
+            </lticm:options>
         </lticm:options>
     </blti:extensions>
     

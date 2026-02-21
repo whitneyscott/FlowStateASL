@@ -40,6 +40,12 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
         if (context.moduleId) newLines.push(`Module ID: ${context.moduleId}`);
         if (context.assignmentId)
           newLines.push(`Assignment ID: ${context.assignmentId}`);
+        newLines.push(`Roles: ${context.roles || '(none)'}`);
+        const teacherPatterns = ['instructor','administrator','teacher','ta','staff'];
+        const isTeacher = context.roles && teacherPatterns.some((p) =>
+          context.roles!.toLowerCase().includes(p)
+        );
+        newLines.push(`Teacher mode: ${isTeacher ? 'ON' : 'OFF'}`);
         newLines.push(`Tool: ${context.toolType}`);
       }
     } else {
