@@ -1,10 +1,25 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { randomUUID } from 'crypto';
 import { Repository } from 'typeorm';
 import { AssessmentSessionEntity } from '../assessment/entities/assessment-session.entity';
 import { CanvasService } from '../canvas/canvas.service';
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
 import type { SubmitFlashcardDto } from './dto/submit-flashcard.dto';
+
+function buildProgressJson(dto: SubmitFlashcardDto): string {
+  const payload = {
+    sessionId: randomUUID(),
+    browserSession: Date.now().toString(36),
+    deckIds: dto.deckIds ?? [],
+    mode: dto.mode ?? 'rehearsal',
+    score: dto.score,
+    scoreTotal: dto.scoreTotal,
+    playlistTitle: dto.playlistTitle ?? '',
+    submittedAt: new Date().toISOString(),
+  };
+  return JSON.stringify(payload);
+}
 
 @Injectable()
 export class SubmissionService {
@@ -13,6 +28,43 @@ export class SubmissionService {
     private readonly sessionRepo: Repository<AssessmentSessionEntity>,
     private readonly canvas: CanvasService,
   ) {}
+
+  /**
+   * Save flashcard progress to Canvas Flashcard Progress assignment via submission comment.
+   * Ensures the assignment exists, then adds comment (or creates submission + comment if none).
+   */
+  private async saveProgressToCanvas(
+    ctx: LtiContext,
+    dto: SubmitFlashcardDto,
+  ): Promise<void> {
+    try {
+      const progressAssignmentId = await this.canvas.ensureFlashcardProgressAssignment(
+        ctx.courseId,
+        ctx.canvasDomain,
+      );
+      const commentText = buildProgressJson(dto);
+      try {
+        await this.canvas.putSubmissionComment(
+          ctx.courseId,
+          progressAssignmentId,
+          ctx.userId,
+          commentText,
+          ctx.canvasDomain,
+        );
+      } catch {
+        await this.canvas.createSubmissionWithComment(
+          ctx.courseId,
+          progressAssignmentId,
+          ctx.userId,
+          'Flashcard progress',
+          commentText,
+          ctx.canvasDomain,
+        );
+      }
+    } catch {
+      // Non-fatal: progress save best-effort; do not block LTI sync
+    }
+  }
 
   /**
    * Tutorial = 0 pts; others = percentage (0–100).
@@ -28,7 +80,8 @@ export class SubmissionService {
   }
 
   /**
-   * Flashcard submission: UPSERT outbox → attempt LTI grade → DELETE on success.
+   * Flashcard submission: UPSERT outbox → save progress to Flashcard Progress assignment →
+   * attempt LTI grade → DELETE on success.
    * Returns 201 if synced, 202 if Canvas/LTI fails (row kept for retry).
    */
   async submitFlashcard(ctx: LtiContext, dto: SubmitFlashcardDto): Promise<{
@@ -73,8 +126,11 @@ export class SubmissionService {
 
     if (!isGraded) {
       await this.sessionRepo.delete(row.id);
+      await this.saveProgressToCanvas(ctx, dto);
       return { synced: true };
     }
+
+    await this.saveProgressToCanvas(ctx, dto);
 
     const { lisOutcomeServiceUrl, lisResultSourcedid } = ctx;
     if (!lisOutcomeServiceUrl || !lisResultSourcedid) {

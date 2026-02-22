@@ -34,11 +34,11 @@
 
 ## Stage 4: Progress Tracking & Submission
 
-⬜ Canvas Integration: Logic to check for the "Flashcard Progress" assignment. Create it if missing.
+✅ Canvas Integration: Logic to check for the "Flashcard Progress" assignment. Create it if missing.
 
-⬜ Data Storage: Implement saving to Canvas comments using the established JSON schema (Browser Session + UUID).
+✅ Data Storage: Implement saving to Canvas comments using the established JSON schema (Browser Session + UUID).
 
-⬜ Tutorial Scoring: Ensure Tutorial mode does not award 100% credit.
+✅ Tutorial Scoring: Ensure Tutorial mode does not award 100% credit.
 
 ## Stage 5: Expressive Mode & AI
 

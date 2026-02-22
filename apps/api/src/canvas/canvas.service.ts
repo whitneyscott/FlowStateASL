@@ -281,4 +281,112 @@ export class CanvasService {
     );
     return found ? String(found.id) : null;
   }
+
+  async createAssignment(
+    courseId: string,
+    name: string,
+    options: {
+      submissionTypes?: string[];
+      pointsPossible?: number;
+      published?: boolean;
+      description?: string;
+    } = {},
+    domainOverride?: string,
+  ): Promise<string> {
+    const domain = this.getDomain(domainOverride);
+    const url = `https://${domain}/api/v1/courses/${courseId}/assignments`;
+    const body = {
+      assignment: {
+        name,
+        submission_types: options.submissionTypes ?? ['online_text_entry'],
+        points_possible: options.pointsPossible ?? 0,
+        published: options.published ?? true,
+        description: options.description ?? '',
+      },
+    };
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: this.getAuthHeaders(),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Canvas create assignment failed: ${res.status} ${text}`);
+    }
+    const data = (await res.json()) as { id?: number };
+    return String(data.id ?? '');
+  }
+
+  async ensureFlashcardProgressAssignment(
+    courseId: string,
+    domainOverride?: string,
+  ): Promise<string> {
+    const existing = await this.findAssignmentByName(
+      courseId,
+      'Flashcard Progress',
+      domainOverride,
+    );
+    if (existing) return existing;
+    return this.createAssignment(
+      courseId,
+      'Flashcard Progress',
+      {
+        submissionTypes: ['online_text_entry'],
+        pointsPossible: 0,
+        published: true,
+        description: 'Stores flashcard study progress (auto-created by ASL Express)',
+      },
+      domainOverride,
+    );
+  }
+
+  async putSubmissionComment(
+    courseId: string,
+    assignmentId: string,
+    userId: string,
+    commentText: string,
+    domainOverride?: string,
+  ): Promise<void> {
+    const domain = this.getDomain(domainOverride);
+    const url = `https://${domain}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}`;
+    const body = { comment: { text_comment: commentText } };
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: this.getAuthHeaders(),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Canvas put submission comment failed: ${res.status} ${text}`);
+    }
+  }
+
+  async createSubmissionWithComment(
+    courseId: string,
+    assignmentId: string,
+    userId: string,
+    bodyText: string,
+    commentText: string,
+    domainOverride?: string,
+  ): Promise<void> {
+    const domain = this.getDomain(domainOverride);
+    const url = `https://${domain}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions`;
+    const body = {
+      submission: {
+        submission_type: 'online_text_entry',
+        body: bodyText,
+        user_id: parseInt(userId, 10) || userId,
+      },
+      comment: { text_comment: commentText },
+    };
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: this.getAuthHeaders(),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Canvas create submission failed: ${res.status} ${text}`);
+    }
+  }
 }
