@@ -22,7 +22,7 @@
         <lticm:options name="course_navigation">
             <lticm:property name="text">ASL Express Flashcards</lticm:property>
             <lticm:property name="url">https://flowstateasl.onrender.com/api/lti/launch/flashcards</lticm:property>
-            <lticm:property name="visibility">admins</lticm:property>
+            <lticm:property name="visibility">members</lticm:property>
             <lticm:property name="default">enabled</lticm:property>
             <lticm:options name="custom_fields">
                 <lticm:property name="custom_roles">$Canvas.membership.roles</lticm:property>
