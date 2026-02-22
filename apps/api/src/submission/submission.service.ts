@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto';
 import { Repository } from 'typeorm';
 import { AssessmentSessionEntity } from '../assessment/entities/assessment-session.entity';
 import { CanvasService } from '../canvas/canvas.service';
+import { CourseSettingsService } from '../course-settings/course-settings.service';
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
 import type { SubmitFlashcardDto } from './dto/submit-flashcard.dto';
 
@@ -27,21 +28,19 @@ export class SubmissionService {
     @InjectRepository(AssessmentSessionEntity)
     private readonly sessionRepo: Repository<AssessmentSessionEntity>,
     private readonly canvas: CanvasService,
+    private readonly courseSettings: CourseSettingsService,
   ) {}
 
-  /**
-   * Save flashcard progress to Canvas Flashcard Progress assignment via submission comment.
-   * Ensures the assignment exists, then adds comment (or creates submission + comment if none).
-   */
   private async saveProgressToCanvas(
     ctx: LtiContext,
     dto: SubmitFlashcardDto,
   ): Promise<void> {
     try {
-      const progressAssignmentId = await this.canvas.ensureFlashcardProgressAssignment(
-        ctx.courseId,
-        ctx.canvasDomain,
-      );
+      const progressAssignmentId =
+        await this.courseSettings.getProgressAssignmentId(
+          ctx.courseId,
+          ctx.canvasDomain,
+        );
       const commentText = buildProgressJson(dto);
       try {
         await this.canvas.putSubmissionComment(
@@ -66,9 +65,6 @@ export class SubmissionService {
     }
   }
 
-  /**
-   * Tutorial = 0 pts; others = percentage (0–100).
-   */
   calculateGrade(dto: SubmitFlashcardDto): { points: number; isGraded: boolean } {
     const mode = (dto.mode ?? 'rehearsal').toLowerCase();
     if (mode === 'tutorial') {
@@ -79,11 +75,6 @@ export class SubmissionService {
     return { points: percentage, isGraded: true };
   }
 
-  /**
-   * Flashcard submission: UPSERT outbox → save progress to Flashcard Progress assignment →
-   * attempt LTI grade → DELETE on success.
-   * Returns 201 if synced, 202 if Canvas/LTI fails (row kept for retry).
-   */
   async submitFlashcard(ctx: LtiContext, dto: SubmitFlashcardDto): Promise<{
     synced: boolean;
     error?: string;

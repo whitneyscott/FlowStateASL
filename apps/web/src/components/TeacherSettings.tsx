@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
 import './TeacherSettings.css';
@@ -40,9 +40,8 @@ interface TeacherSettingsProps {
 export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }: TeacherSettingsProps) {
   const { setSproutVideo, setLastFunction } = useDebug();
   const [allPlaylists, setAllPlaylists] = useState<Array<{ id: string; title: string }>>([]);
-  const [selectedCurriculum, setSelectedCurriculum] = useState('');
-  const [selectedUnit, setSelectedUnit] = useState('');
-  const [selectedSection, setSelectedSection] = useState('');
+  const [selectedCurriculums, setSelectedCurriculums] = useState<string[]>([]);
+  const [selectedUnits, setSelectedUnits] = useState<string[]>([]);
   const [assessmentPlaylistsVisible, setAssessmentPlaylistsVisible] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [retryCount, setRetryCount] = useState(0);
@@ -57,6 +56,33 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
   const displayPlaylists = assessmentPlaylistsVisible
     ? allPlaylists
     : allPlaylists.filter((p) => !hasAssessmentTerm(p.title));
+
+  const curricula = [...new Set(displayPlaylists.map((p) => segments(p.title)[0]).filter(Boolean))].sort();
+  const allUnits = [...new Set(
+    displayPlaylists
+      .filter((p) => selectedCurriculums.length === 0 || selectedCurriculums.includes(segments(p.title)[0] ?? ''))
+      .map((p) => segments(p.title)[1])
+      .filter(Boolean)
+  )].sort();
+
+  const filtered = displayPlaylists.filter((p) => {
+    const [c, u] = segments(p.title);
+    if (selectedCurriculums.length > 0 && (!c || !selectedCurriculums.includes(c))) return false;
+    if (selectedUnits.length > 0 && (!u || !selectedUnits.includes(u))) return false;
+    return true;
+  });
+
+  const toggleCurriculum = useCallback((c: string) => {
+    setSelectedCurriculums((prev) =>
+      prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]
+    );
+  }, []);
+
+  const toggleUnit = useCallback((u: string) => {
+    setSelectedUnits((prev) =>
+      prev.includes(u) ? prev.filter((x) => x !== u) : [...prev, u]
+    );
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -77,15 +103,13 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
           }
         }
         if (cancelled) return;
-        const [pRes, cRes, suggRes] = await Promise.all([
+        const [pRes, csRes] = await Promise.all([
           fetch('/api/flashcard/all-playlists', { credentials: 'include' }),
-          fetch('/api/flashcard/config', { credentials: 'include' }),
-          context?.moduleId ? fetch('/api/flashcard/module-suggestion', { credentials: 'include' }) : Promise.resolve(null),
+          fetch('/api/course-settings', { credentials: 'include' }),
         ]);
         if (cancelled) return;
         const list = await pRes.json().catch(() => []);
-        const c = await cRes.json().catch(() => null);
-        const sugg = suggRes ? await suggRes.json().catch(() => null) : null;
+        const cs = await csRes.json().catch(() => null);
         if (!pRes.ok) {
           setError(`HTTP ${pRes.status}`);
           if (!cancelled) setLoading(false);
@@ -93,18 +117,11 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
         }
         setAllPlaylists(Array.isArray(list) ? list : []);
         setSproutVideo(true, Array.isArray(list) ? list.length : 0);
-        if (c) {
-          setSelectedCurriculum(c.curriculum ?? '');
-          setSelectedUnit(c.unit ?? '');
-          setSelectedSection(c.section ?? '');
-        } else if (sugg?.curriculum) {
-          setSelectedCurriculum(sugg.curriculum ?? '');
-          setSelectedUnit(sugg.unit ?? '');
-          setSelectedSection(sugg.section ?? '');
-        } else {
-          setSelectedCurriculum('');
-          setSelectedUnit('');
-          setSelectedSection('');
+        if (cs?.selectedCurriculums) {
+          setSelectedCurriculums(Array.isArray(cs.selectedCurriculums) ? cs.selectedCurriculums : []);
+        }
+        if (cs?.selectedUnits) {
+          setSelectedUnits(Array.isArray(cs.selectedUnits) ? cs.selectedUnits : []);
         }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load');
@@ -114,48 +131,24 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
     }
     load();
     return () => { cancelled = true; };
-  }, [teacher, hasLti, retryCount, context?.moduleId]);
+  }, [teacher, hasLti, retryCount]);
 
   useEffect(() => {
-    if (!selectedCurriculum) {
-      setSelectedUnit('');
-      setSelectedSection('');
-    } else if (!selectedUnit) {
-      setSelectedSection('');
-    }
-  }, [selectedCurriculum, selectedUnit]);
-
-  const curricula = [...new Set(displayPlaylists.map((p) => segments(p.title)[0]).filter(Boolean))].sort();
-  const byCurriculum = displayPlaylists.filter((p) => segments(p.title)[0] === selectedCurriculum);
-  const units = [...new Set(byCurriculum.map((p) => segments(p.title)[1]).filter(Boolean))].sort();
-  const byUnit = byCurriculum.filter((p) => segments(p.title)[1] === selectedUnit);
-  const sections = [...new Set(byUnit.map((p) => segments(p.title)[2]).filter(Boolean))].sort();
-  const filtered = displayPlaylists.filter((p) => {
-    const [c, u, s] = segments(p.title);
-    if (selectedCurriculum && c !== selectedCurriculum) return false;
-    if (selectedUnit && u !== selectedUnit) return false;
-    if (selectedSection && s !== selectedSection) return false;
-    return true;
-  });
-
-  useEffect(() => {
-    const list = selectedCurriculum ? filtered : [];
-    onFilteredPlaylists?.(list);
-  }, [selectedCurriculum, selectedUnit, selectedSection, allPlaylists, assessmentPlaylistsVisible, onFilteredPlaylists]);
+    onFilteredPlaylists?.(filtered);
+  }, [selectedCurriculums, selectedUnits, filtered, assessmentPlaylistsVisible, onFilteredPlaylists]);
 
   const handleSave = async () => {
     if (!teacher || !hasLti) return;
     setSaving(true);
     setSavedFeedback(false);
     try {
-      await fetch('/api/flashcard/config', {
+      await fetch('/api/course-settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({
-          curriculum: selectedCurriculum,
-          unit: selectedUnit,
-          section: selectedSection,
+          selectedCurriculums,
+          selectedUnits,
         }),
       });
       onConfigChange?.();
@@ -208,69 +201,54 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
           {assessmentPlaylistsVisible ? 'Hide' : 'Show'}
         </button>
       </div>
-      <div className="teacher-settings-row">
-        <label className="teacher-settings-field">
+      <div className="teacher-settings-row teacher-settings-multiselect-row">
+        <div className="teacher-settings-checkbox-group">
           <span className="teacher-settings-label">Curriculum</span>
-          <div className="teacher-settings-select-wrap">
-            <select
-              value={selectedCurriculum}
-              onChange={(e) => setSelectedCurriculum(e.target.value)}
-              className="teacher-settings-select"
-            >
-              <option value="">— Select —</option>
-              {curricula.map((c) => (
-                <option key={c} value={c}>{c}</option>
-              ))}
-            </select>
-            <span className="teacher-settings-select-arrow">▾</span>
+          <div className="teacher-settings-checkbox-list">
+            {curricula.map((c) => (
+              <label key={c} className="teacher-settings-checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={selectedCurriculums.includes(c)}
+                  onChange={() => toggleCurriculum(c)}
+                />
+                {c}
+              </label>
+            ))}
           </div>
-        </label>
-        <label className="teacher-settings-field">
+        </div>
+        <div className="teacher-settings-checkbox-group">
           <span className="teacher-settings-label">Unit</span>
-          <div className="teacher-settings-select-wrap">
-            <select
-              value={selectedUnit}
-              onChange={(e) => setSelectedUnit(e.target.value)}
-              className="teacher-settings-select"
-              disabled={!selectedCurriculum}
-            >
-              <option value="">— Select —</option>
-              {units.map((u) => (
-                <option key={u} value={u}>{u}</option>
-              ))}
-            </select>
-            <span className="teacher-settings-select-arrow">▾</span>
+          <div className="teacher-settings-checkbox-list">
+            {allUnits.map((u) => (
+              <label key={u} className="teacher-settings-checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={selectedUnits.includes(u)}
+                  onChange={() => toggleUnit(u)}
+                />
+                {u}
+              </label>
+            ))}
           </div>
-        </label>
-        <label className="teacher-settings-field">
-          <span className="teacher-settings-label">Section</span>
-          <div className="teacher-settings-select-wrap">
-            <select
-              value={selectedSection}
-              onChange={(e) => setSelectedSection(e.target.value)}
-              className="teacher-settings-select"
-              disabled={!selectedUnit}
-            >
-              <option value="">— Select —</option>
-              {sections.map((s) => (
-                <option key={s} value={s}>{s}</option>
-              ))}
-            </select>
-            <span className="teacher-settings-select-arrow">▾</span>
-          </div>
-        </label>
+        </div>
         <div className="teacher-settings-actions">
           <button
             type="button"
             className="teacher-settings-btn"
             onClick={handleSave}
-            disabled={saving || !selectedCurriculum}
+            disabled={saving}
           >
             {saving ? 'Saving...' : 'Save'}
           </button>
           {savedFeedback && <span className="teacher-settings-saved">Saved!</span>}
         </div>
       </div>
+      {saving && (
+        <div className="teacher-settings-overlay">
+          <div className="teacher-settings-spinner" />
+        </div>
+      )}
       {allPlaylists.length > 0 && (
         <p className="teacher-settings-footer">{allPlaylists.length} playlists loaded</p>
       )}

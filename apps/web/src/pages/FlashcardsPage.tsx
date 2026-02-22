@@ -24,6 +24,12 @@ function isTeacher(roles: string): boolean {
   return TEACHER_PATTERNS.some((p) => lower.includes(p));
 }
 
+function segments(title: string): string[] {
+  return title.split('.').map((p) => p.trim()).filter(Boolean);
+}
+
+const LAST_SESSION_KEY = (courseId: string) => `flashcards-last-${courseId}`;
+
 interface FlashcardsPageProps {
   context: LtiContext;
 }
@@ -31,8 +37,14 @@ interface FlashcardsPageProps {
 export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   const { setLastFunction, setSproutVideo } = useDebug();
   const teacherMode = context && isTeacher(context.roles) && context.courseId && context.userId !== 'standalone';
+  const isCourseNavigation = !!(context?.courseId && (!context?.assignmentId || context.assignmentId === ''));
   const [playlists, setPlaylists] = useState<PlaylistItem[]>([]);
   const [playlistsLoading, setPlaylistsLoading] = useState(true);
+  const [courseSettings, setCourseSettings] = useState<{ selectedCurriculums: string[]; selectedUnits: string[] } | null>(null);
+  const [allPlaylistsHub, setAllPlaylistsHub] = useState<Array<{ id: string; title: string }>>([]);
+  const [hubSelectedUnit, setHubSelectedUnit] = useState('');
+  const [hubSelectedSection, setHubSelectedSection] = useState('');
+  const [lastSession, setLastSession] = useState<{ unit: string } | null>(null);
   const [view, setView] = useState<'menu' | 'study' | 'results'>('menu');
   const [currentPlaylist, setCurrentPlaylist] = useState<{
     id: string;
@@ -45,8 +57,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   const [showingAnswer, setShowingAnswer] = useState(false);
   const [streak, setStreak] = useState(0);
   const [benchmarkNagDismissed, setBenchmarkNagDismissed] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
+  const submittedForSessionRef = useRef(false);
 
   const [secDisplay, setSecDisplay] = useState(3);
   const [showTimer, setShowTimer] = useState(true);
@@ -87,8 +98,86 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   }, []);
 
   useEffect(() => {
-    if (!teacherMode) loadPlaylists();
-  }, [teacherMode, loadPlaylists]);
+    if (!teacherMode && !isCourseNavigation) loadPlaylists();
+  }, [teacherMode, isCourseNavigation, loadPlaylists]);
+
+  const loadHubData = useCallback(async () => {
+    if (!context?.courseId || !isCourseNavigation) return;
+    setPlaylistsLoading(true);
+    try {
+      setLastFunction('GET /api/course-settings + all-playlists');
+      const [csRes, plRes] = await Promise.all([
+        fetch('/api/course-settings', { credentials: 'include' }),
+        fetch('/api/flashcard/all-playlists', { credentials: 'include' }),
+      ]);
+      const cs = await csRes.json().catch(() => null);
+      const pl = await plRes.json().catch(() => []);
+      const list = Array.isArray(pl) ? pl : [];
+      setCourseSettings(cs ? { selectedCurriculums: cs.selectedCurriculums ?? [], selectedUnits: cs.selectedUnits ?? [] } : null);
+      setAllPlaylistsHub(list.map((p: { id?: string; title: string }) => ({ id: p.id ?? p.title, title: p.title })));
+      if (list.length > 0) setSproutVideo(true, list.length);
+      const stored = localStorage.getItem(LAST_SESSION_KEY(context.courseId));
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored) as { unit?: string };
+          if (parsed?.unit) setLastSession({ unit: parsed.unit });
+        } catch {
+        }
+      }
+    } finally {
+      setPlaylistsLoading(false);
+    }
+  }, [context?.courseId, isCourseNavigation]);
+
+  useEffect(() => {
+    if (!teacherMode && isCourseNavigation) loadHubData();
+  }, [teacherMode, isCourseNavigation, loadHubData]);
+
+  const hubFilteredPlaylists = useCallback(() => {
+    const cs = courseSettings;
+    if (!cs || allPlaylistsHub.length === 0) return [];
+    return allPlaylistsHub.filter((p) => {
+      const [c, u, s] = segments(p.title);
+      if (cs.selectedUnits.length > 0 && (!u || !cs.selectedUnits.includes(u))) return false;
+      if (cs.selectedCurriculums.length > 0 && (!c || !cs.selectedCurriculums.includes(c))) return false;
+      if (hubSelectedUnit && u !== hubSelectedUnit) return false;
+      if (hubSelectedSection && s !== hubSelectedSection) return false;
+      return true;
+    });
+  }, [courseSettings, allPlaylistsHub, hubSelectedUnit, hubSelectedSection]);
+
+  const hubUnits = [...new Set(
+    allPlaylistsHub
+      .filter((p) => {
+        const [c, u] = segments(p.title);
+        if (!u) return false;
+        if (courseSettings?.selectedCurriculums.length && (!c || !courseSettings.selectedCurriculums.includes(c))) return false;
+        if (courseSettings?.selectedUnits.length && !courseSettings.selectedUnits.includes(u)) return false;
+        return true;
+      })
+      .map((p) => segments(p.title)[1])
+      .filter(Boolean)
+  )].sort();
+
+  const hubSections = [...new Set(
+    allPlaylistsHub
+      .filter((p) => {
+        const [c, u, s] = segments(p.title);
+        if (!s || !hubSelectedUnit || u !== hubSelectedUnit) return false;
+        if (courseSettings?.selectedCurriculums.length && (!c || !courseSettings.selectedCurriculums.includes(c))) return false;
+        return true;
+      })
+      .map((p) => segments(p.title)[2])
+      .filter(Boolean)
+  )].sort();
+
+  useEffect(() => {
+    if (!teacherMode && isCourseNavigation) {
+      const filtered = hubFilteredPlaylists();
+      const items = filtered.map((p) => ({ title: p.title, id: p.id }));
+      setPlaylists(items);
+    }
+  }, [teacherMode, isCourseNavigation, hubFilteredPlaylists]);
 
   const handleFilteredPlaylists = useCallback((list: Array<{ id: string; title: string }>) => {
     setPlaylistsLoading(false);
@@ -98,6 +187,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   }, []);
 
   const selectPlaylist = async (id: string, title: string, idx: number) => {
+    submittedForSessionRef.current = false;
     setCurrentPlaylist({ id, title });
     setPlaylistIndex(idx);
     setCurrentIndex(-1);
@@ -256,12 +346,20 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     }
   }, [mode, tutorialAutoAdvance, showingAnswer, firstSide, canAdvance, items, currentIndex, revealAnswer]);
 
-  const submitGrade = async () => {
-    if (!currentPlaylist) return;
-    setSubmitting(true);
-    setSubmitError(null);
+  const silentSubmitProgress = useCallback(async () => {
+    if (!currentPlaylist || submittedForSessionRef.current) return;
+    submittedForSessionRef.current = true;
+    if (context?.courseId) {
+      const [,, u] = segments(currentPlaylist.title);
+      if (u) {
+        try {
+          localStorage.setItem(LAST_SESSION_KEY(context.courseId), JSON.stringify({ unit: u }));
+        } catch {
+        }
+      }
+    }
     try {
-      const res = await fetch('/api/submission', {
+      await fetch('/api/submission', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -274,19 +372,15 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
           playlistTitle: currentPlaylist.title,
         }),
       });
-      const data = await res.json();
-      if (data.synced) {
-        setView('menu');
-        loadPlaylists();
-      } else {
-        setSubmitError(data.error ?? 'Failed to submit grade');
-      }
-    } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : 'Failed to submit');
-    } finally {
-      setSubmitting(false);
+    } catch {
     }
-  };
+  }, [context?.courseId, currentPlaylist, score.correct, score.total, mode]);
+
+  useEffect(() => {
+    if (view === 'results' && currentPlaylist) {
+      silentSubmitProgress();
+    }
+  }, [view, currentPlaylist, silentSubmitProgress]);
 
   const returnToMenu = () => {
     setView('menu');
@@ -318,6 +412,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   };
 
   const repeatAll = () => {
+    submittedForSessionRef.current = false;
     let deck = [...originalItems];
     if (shuffle) deck.sort(() => Math.random() - 0.5);
     setItems(deck);
@@ -330,6 +425,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   };
 
   const retryMissed = () => {
+    submittedForSessionRef.current = false;
     const missed = score.details
       .filter((d) => d.result === 'Incorrect')
       .map((d) => d.originalData);
@@ -463,8 +559,101 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
               onFilteredPlaylists={handleFilteredPlaylists}
             />
             <h1 className="flashcards-title">TWA Vocabulary</h1>
-            {!teacherMode ? (
+            {!teacherMode && !isCourseNavigation ? (
               <p className="flashcards-teacher-msg">Your teacher will configure the deck for this course.</p>
+            ) : !teacherMode && isCourseNavigation ? (
+              <>
+                {lastSession && (
+                  <p className="flashcards-welcome-back">Welcome back! Last session: Unit {lastSession.unit}</p>
+                )}
+                {playlistsLoading ? (
+                  <div className="flashcards-loading">
+                    <div className="flashcards-spinner" />
+                    <p>Loading...</p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flashcards-hub-filters">
+                      <label className="flashcards-hub-field">
+                        <span className="flashcards-hub-label">Unit</span>
+                        <select
+                          value={hubSelectedUnit}
+                          onChange={(e) => { setHubSelectedUnit(e.target.value); setHubSelectedSection(''); }}
+                          className="flashcards-hub-select"
+                        >
+                          <option value="">— All —</option>
+                          {hubUnits.map((u) => (
+                            <option key={u} value={u}>{u}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="flashcards-hub-field">
+                        <span className="flashcards-hub-label">Section</span>
+                        <select
+                          value={hubSelectedSection}
+                          onChange={(e) => setHubSelectedSection(e.target.value)}
+                          className="flashcards-hub-select"
+                          disabled={!hubSelectedUnit}
+                        >
+                          <option value="">— All —</option>
+                          {hubSections.map((s) => (
+                            <option key={s} value={s}>{s}</option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                    <div className="flashcards-menu-toggles">
+                      <label className="flashcards-playlist-view-toggle">
+                        <input
+                          type="checkbox"
+                          checked={viewAsPlaylist}
+                          onChange={(e) => setViewAsPlaylist(e.target.checked)}
+                        />
+                        View as Playlist
+                      </label>
+                      <label className="flashcards-playlist-view-toggle">
+                        <input
+                          type="checkbox"
+                          checked={singleVersionPerAnswer}
+                          onChange={(e) => setSingleVersionPerAnswer(e.target.checked)}
+                        />
+                        One version per answer
+                      </label>
+                    </div>
+                    <div
+                      className={
+                        viewAsPlaylist
+                          ? 'flashcards-playlist-list flashcards-playlist-list-compact'
+                          : 'flashcards-playlist-list'
+                      }
+                    >
+                      {playlists.map((pl, idx) => (
+                        <button
+                          key={(pl as { id?: string }).id ?? idx}
+                          type="button"
+                          className={
+                            viewAsPlaylist
+                              ? 'flashcards-playlist-btn flashcards-playlist-btn-compact'
+                              : 'flashcards-playlist-btn'
+                          }
+                          onClick={() =>
+                            selectPlaylist(
+                              (pl as { id?: string }).id ?? String(idx),
+                              pl.title,
+                              idx,
+                            )
+                          }
+                        >
+                          {viewAsPlaylist && (
+                            <span className="flashcards-playlist-num">{idx + 1}</span>
+                          )}
+                          {pl.title}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </>
             ) : playlistsLoading ? (
               <div className="flashcards-loading">
                 <div className="flashcards-spinner" />
@@ -894,23 +1083,12 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
               </button>
               <button
                 type="button"
-                className="flashcards-btn flashcards-btn-utility"
-                onClick={submitGrade}
-                disabled={submitting}
-              >
-                {submitting ? 'Submitting...' : 'Submit Grade'}
-              </button>
-              <button
-                type="button"
                 className="flashcards-btn-nav"
                 onClick={returnToMenu}
               >
                 Back to Menu
               </button>
             </div>
-            {submitError && (
-              <p className="flashcards-error">Error: {submitError}</p>
-            )}
           </div>
         )}
       </div>

@@ -11,10 +11,12 @@ import { FlashcardModule } from './flashcard/flashcard.module';
 import { LtiModule } from './lti/lti.module';
 import { DebugModule } from './debug/debug.module';
 import { SubmissionModule } from './submission/submission.module';
+import { CourseSettingsModule } from './course-settings/course-settings.module';
 import { PromptConfigEntity } from './assessment/entities/prompt-config.entity';
 import { BlockedAttemptEntity } from './assessment/entities/blocked-attempt.entity';
 import { AssessmentSessionEntity } from './assessment/entities/assessment-session.entity';
 import { FlashcardConfigEntity } from './flashcard/entities/flashcard-config.entity';
+import { CourseSettingsEntity } from './course-settings/entities/course-settings.entity';
 
 const isProduction = process.env.NODE_ENV === 'production';
 const webRoot = join(__dirname, '..', '..', 'web');
@@ -45,6 +47,7 @@ const webRoot = join(__dirname, '..', '..', 'web');
           BlockedAttemptEntity,
           AssessmentSessionEntity,
           FlashcardConfigEntity,
+          CourseSettingsEntity,
         ],
         migrations: [__dirname + '/migrations/*{.ts,.js}'],
         migrationsRun: false,
@@ -58,6 +61,7 @@ const webRoot = join(__dirname, '..', '..', 'web');
     LtiModule,
     DebugModule,
     SubmissionModule,
+    CourseSettingsModule,
   ],
   providers: [RoutingLogMiddleware],
 })
