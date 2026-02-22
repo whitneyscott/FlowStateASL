@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
 import { TeacherSettings } from '../components/TeacherSettings';
@@ -56,6 +56,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   const [firstSide, setFirstSide] = useState<FirstSide>('english');
   const [playlistIndex, setPlaylistIndex] = useState(-1);
   const [canAdvance, setCanAdvance] = useState(false);
+  const autoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [screeningOverlay, setScreeningOverlay] = useState<{
     type: 'mastery' | 'frustration';
     title: string;
@@ -197,7 +198,34 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     ],
   );
 
-  const revealAnswer = () => setShowingAnswer(true);
+  const revealAnswer = useCallback(() => {
+    if (autoTimerRef.current) {
+      clearTimeout(autoTimerRef.current);
+      autoTimerRef.current = null;
+    }
+    setShowingAnswer(true);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (autoTimerRef.current) clearTimeout(autoTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    const showRehearsal = items[currentIndex] && firstSide === 'english' && !showingAnswer && (mode === 'rehearsal' || mode === 'screening') && showTimer;
+    if (!showRehearsal) return;
+    const displayMs = secDisplay * 1000;
+    autoTimerRef.current = setTimeout(() => {
+      revealAnswer();
+    }, displayMs);
+    return () => {
+      if (autoTimerRef.current) {
+        clearTimeout(autoTimerRef.current);
+        autoTimerRef.current = null;
+      }
+    };
+  }, [currentIndex, firstSide, showingAnswer, mode, showTimer, secDisplay, revealAnswer, items]);
 
   const submitGrade = async () => {
     if (!currentPlaylist) return;
@@ -297,6 +325,8 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     (firstSide === 'english' && showingAnswer && currentItem.embed) ||
     (firstSide === 'asl' && !showingAnswer && currentItem.embed)
   );
+
+  const showRehearsalTimer = currentItem && firstSide === 'english' && !showingAnswer && (mode === 'rehearsal' || mode === 'screening') && showTimer;
 
   useEffect(() => {
     if (hasVideoOnScreen) {
@@ -469,6 +499,11 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
             </div>
 
             <div className="flashcards-card">
+              {showRehearsalTimer && (
+                <div className="flashcards-timer-track">
+                  <div className={`flashcards-timer-fill flashcards-timer-fill-d${Math.min(10, Math.max(1, secDisplay))}`} />
+                </div>
+              )}
               {screeningOverlay && (
                 <div className="flashcards-screening-overlay">
                   <h2
@@ -540,7 +575,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
               )}
 
               {currentIndex < 0 ? (
-                <div>
+                <div className="flashcards-card-content">
                   <p className="flashcards-vocab-display">READY?</p>
                   <button
                     type="button"
@@ -551,10 +586,10 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                   </button>
                 </div>
               ) : currentItem ? (
-                <div className="flashcards-controls flashcards-controls-col">
+                <div className="flashcards-controls flashcards-controls-col flashcards-card-content">
                   {!showingAnswer ? (
                     firstSide === 'english' ? (
-                      <div className="flashcards-controls flashcards-controls-col">
+                      <div className="flashcards-controls flashcards-controls-col flashcards-card-content">
                         <p className="flashcards-vocab-display">
                           {currentItem.title}
                         </p>
@@ -567,7 +602,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                         </button>
                       </div>
                     ) : (
-                      <div className="flashcards-controls flashcards-controls-col">
+                      <div className="flashcards-controls flashcards-controls-col flashcards-card-content">
                         <div className="flashcards-video-wrap">
                           {currentItem.embed && (
                             <div
@@ -589,7 +624,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                       </div>
                     )
                   ) : (
-                    <div className="flashcards-controls flashcards-controls-col">
+                    <div className="flashcards-controls flashcards-controls-col flashcards-card-content">
                       {firstSide === 'asl' ? (
                         <p className="flashcards-vocab-display flashcards-vocab-display-sm">
                           {currentItem.title}

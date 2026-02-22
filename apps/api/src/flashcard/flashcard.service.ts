@@ -50,6 +50,10 @@ export class FlashcardService {
     return this.sproutVideo.getPlaylists();
   }
 
+  async getPlaylistCount(): Promise<number> {
+    return this.sproutVideo.getPlaylistCount();
+  }
+
   async getConfig(
     courseId: string,
     resourceLinkId: string,

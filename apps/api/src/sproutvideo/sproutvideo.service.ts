@@ -34,6 +34,23 @@ export class SproutVideoService {
     return BLACKLIST.some((term) => lower.includes(term));
   }
 
+  async getPlaylistCount(): Promise<number> {
+    const apiKey = this.config.get('SPROUT_KEY');
+    if (!apiKey) return 0;
+    try {
+      const res = await fetch(
+        'https://api.sproutvideo.com/v1/playlists?per_page=1&page=1',
+        { headers: { 'SproutVideo-Api-Key': apiKey } },
+      );
+      if (!res.ok) return 0;
+      const data = (await res.json()) as { total?: number; playlists?: unknown[] };
+      if (typeof data.total === 'number') return data.total;
+      return 0;
+    } catch {
+      return 0;
+    }
+  }
+
   async fetchAllPlaylists(): Promise<SproutPlaylist[]> {
     const apiKey = this.config.get('SPROUT_KEY');
     if (!apiKey) throw new Error('SproutVideo not configured');

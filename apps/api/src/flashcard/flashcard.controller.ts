@@ -72,6 +72,16 @@ export class FlashcardController {
     return this.flashcard.getPlaylistItems(playlistId ?? '');
   }
 
+  @Get('playlist-count')
+  async getPlaylistCount() {
+    try {
+      const count = await this.flashcard.getPlaylistCount();
+      return { total: count };
+    } catch {
+      return { total: 0 };
+    }
+  }
+
   @Get('all-playlists')
   async getAllPlaylists() {
     try {

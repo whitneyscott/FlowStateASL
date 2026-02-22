@@ -10,8 +10,8 @@
 }
 
 .flashcards-container {
-  width: 100%;
-  max-width: 672px;
+  width: 95%;
+  max-width: 800px;
 }
 
 .flashcards-menu {
@@ -168,6 +168,38 @@
   justify-content: center;
   align-items: center;
   overflow: hidden;
+  text-align: center;
+}
+
+.flashcards-timer-track {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 8px;
+  background: #444;
+  overflow: hidden;
+}
+
+.flashcards-timer-fill {
+  height: 100%;
+  background: #00ff88;
+}
+
+.flashcards-timer-fill-d1 { width: 100%; animation: flashcards-timer-shrink 1s linear forwards; }
+.flashcards-timer-fill-d2 { width: 100%; animation: flashcards-timer-shrink 2s linear forwards; }
+.flashcards-timer-fill-d3 { width: 100%; animation: flashcards-timer-shrink 3s linear forwards; }
+.flashcards-timer-fill-d4 { width: 100%; animation: flashcards-timer-shrink 4s linear forwards; }
+.flashcards-timer-fill-d5 { width: 100%; animation: flashcards-timer-shrink 5s linear forwards; }
+.flashcards-timer-fill-d6 { width: 100%; animation: flashcards-timer-shrink 6s linear forwards; }
+.flashcards-timer-fill-d7 { width: 100%; animation: flashcards-timer-shrink 7s linear forwards; }
+.flashcards-timer-fill-d8 { width: 100%; animation: flashcards-timer-shrink 8s linear forwards; }
+.flashcards-timer-fill-d9 { width: 100%; animation: flashcards-timer-shrink 9s linear forwards; }
+.flashcards-timer-fill-d10 { width: 100%; animation: flashcards-timer-shrink 10s linear forwards; }
+
+@keyframes flashcards-timer-shrink {
+  from { width: 100%; }
+  to { width: 0%; }
 }
 
 .flashcards-vocab-display {
@@ -184,11 +216,20 @@
 
 .flashcards-video-wrap {
   width: 100%;
+  max-width: 100%;
   aspect-ratio: 16 / 9;
   background: #000;
   border-radius: 8px;
   overflow: hidden;
   margin-bottom: 24px;
+}
+
+.flashcards-card-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
 }
 
 .flashcards-video-wrap-inner {

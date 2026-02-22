@@ -49,6 +49,7 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
   const [saving, setSaving] = useState(false);
   const [savedFeedback, setSavedFeedback] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [playlistTotal, setPlaylistTotal] = useState<number | null>(null);
 
   const teacher = context && isTeacher(context.roles);
   const hasLti = context && context.courseId && context.userId !== 'standalone';
@@ -67,6 +68,15 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
       try {
         setLastFunction('GET /api/flashcard/all-playlists');
         setError(null);
+        setPlaylistTotal(null);
+        const countRes = await fetch('/api/flashcard/playlist-count', { credentials: 'include' });
+        if (!cancelled) {
+          const countData = await countRes.json().catch(() => ({}));
+          if (typeof countData.total === 'number' && countData.total > 0) {
+            setPlaylistTotal(countData.total);
+          }
+        }
+        if (cancelled) return;
         const [pRes, cRes, suggRes] = await Promise.all([
           fetch('/api/flashcard/all-playlists', { credentials: 'include' }),
           fetch('/api/flashcard/config', { credentials: 'include' }),
@@ -158,11 +168,14 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
 
   if (!teacher || !hasLti) return null;
   if (loading && allPlaylists.length === 0 && !error) {
+    const loadingText = playlistTotal != null && playlistTotal > 0
+      ? `Loading playlists... (0 of ${playlistTotal})`
+      : 'Loading playlists...';
     return (
       <div className="teacher-settings-loading">
         <div className="teacher-settings-loading-inner">
           <div className="teacher-settings-spinner" />
-          <p>Loading playlists...</p>
+          <p>{loadingText}</p>
         </div>
       </div>
     );
