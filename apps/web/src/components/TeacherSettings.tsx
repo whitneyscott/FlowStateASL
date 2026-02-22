@@ -141,8 +141,9 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
     if (!teacher || !hasLti) return;
     setSaving(true);
     setSavedFeedback(false);
+    console.log('[Teacher Save] Sending:', { selectedCurriculums, selectedUnits });
     try {
-      await fetch('/api/course-settings', {
+      const res = await fetch('/api/course-settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -151,6 +152,7 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
           selectedUnits,
         }),
       });
+      console.log('[Teacher Save] Response:', res.status, res.ok ? 'OK' : 'FAILED');
       onConfigChange?.();
       setSavedFeedback(true);
       setTimeout(() => setSavedFeedback(false), 2000);

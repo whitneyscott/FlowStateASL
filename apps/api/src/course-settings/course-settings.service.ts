@@ -18,6 +18,7 @@ export class CourseSettingsService {
     progressAssignmentId: string | null;
   } | null> {
     const row = await this.repo.findOne({ where: { courseId } });
+    console.log('[CourseSettingsService.get] courseId:', courseId, 'row:', row ? { selectedCurriculums: row.selectedCurriculums, selectedUnits: row.selectedUnits } : 'null');
     if (!row) return null;
     return {
       selectedCurriculums: Array.isArray(row.selectedCurriculums)
@@ -34,6 +35,7 @@ export class CourseSettingsService {
     selectedUnits: string[],
     canvasDomain?: string,
   ): Promise<void> {
+    console.log('[CourseSettingsService.save] courseId:', courseId, 'selectedCurriculums:', selectedCurriculums, 'selectedUnits:', selectedUnits);
     const progressAssignmentId =
       await this.canvas.ensureFlashcardProgressAssignment(
         courseId,

@@ -116,6 +116,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
       const cs = await csRes.json().catch(() => null);
       const pl = await plRes.json().catch(() => []);
       const list = Array.isArray(pl) ? pl : [];
+      console.log('[Student loadHubData] courseId:', context.courseId, 'courseSettings from API:', cs);
       setCourseSettings(cs ? { selectedCurriculums: cs.selectedCurriculums ?? [], selectedUnits: cs.selectedUnits ?? [] } : null);
       setAllPlaylistsHub(list.map((p: { id?: string; title: string }) => ({ id: p.id ?? p.title, title: p.title })));
       if (list.length > 0) setSproutVideo(true, list.length);
@@ -161,6 +162,9 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
       .map((p) => segments(p.title)[1])
       .filter(Boolean)
   )].sort();
+  if (!teacherMode && isCourseNavigation) {
+    console.log('[Student hubUnits] courseSettings:', courseSettings, 'hubUnits:', hubUnits);
+  }
 
   const hubSections = [...new Set(
     allPlaylistsHub

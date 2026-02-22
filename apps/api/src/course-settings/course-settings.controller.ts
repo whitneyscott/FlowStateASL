@@ -25,7 +25,9 @@ export class CourseSettingsController {
   async get(@Req() req: Request) {
     const ctx = req.session?.ltiContext as LtiContext | undefined;
     if (!ctx?.courseId) return null;
-    return this.courseSettings.get(ctx.courseId);
+    const result = await this.courseSettings.get(ctx.courseId);
+    console.log('[CourseSettings GET] courseId:', ctx.courseId, 'result:', JSON.stringify(result));
+    return result;
   }
 
   @Put()
@@ -34,6 +36,7 @@ export class CourseSettingsController {
     @Body() body: { selectedCurriculums?: string[]; selectedUnits?: string[] },
   ) {
     const ctx = req.session?.ltiContext as LtiContext | undefined;
+    console.log('[CourseSettings PUT] courseId:', ctx?.courseId, 'body:', JSON.stringify(body));
     if (!ctx?.courseId) {
       throw new ForbiddenException('LTI context required');
     }
