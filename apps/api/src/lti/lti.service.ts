@@ -7,6 +7,18 @@ declare module 'express-session' {
   }
 }
 
+const CANVAS_PLACEHOLDERS = ['$canvas.assignment.id', '$canvas.module.id', '$Canvas.assignment.id', '$Canvas.module.id'];
+
+function isCanvasPlaceholder(val: string): boolean {
+  if (!val || typeof val !== 'string') return true;
+  const lower = val.trim().toLowerCase();
+  return CANVAS_PLACEHOLDERS.some((p) => lower === p.toLowerCase());
+}
+
+function normalizeContextValue(val: string): string {
+  return isCanvasPlaceholder(val) ? '' : val.trim();
+}
+
 function extractCanvasDomain(body: Record<string, string>): string | undefined {
   const url =
     (body.tool_consumer_instance_url ?? '').trim() ||
@@ -45,10 +57,11 @@ export class LtiService {
       body.custom_course_id ??
       body.context_id ??
       '';
-    const assignmentId =
+    const assignmentId = normalizeContextValue(
       body.custom_canvas_assignment_id ??
       body.custom_assignment_id ??
-      '';
+      '',
+    );
     const userId =
       body.custom_canvas_user_id ??
       body.user_id ??
@@ -56,7 +69,9 @@ export class LtiService {
       '';
     const resourceLinkId =
       (body.resource_link_id ?? body.custom_resource_link_id ?? body.custom_custom_resource_link_id ?? '').trim();
-    const moduleId = body.custom_module_id ?? body.custom_canvas_module_id ?? '';
+    const moduleId = normalizeContextValue(
+      body.custom_module_id ?? body.custom_canvas_module_id ?? '',
+    );
     const roles =
       body.custom_roles ??
       body.roles ??

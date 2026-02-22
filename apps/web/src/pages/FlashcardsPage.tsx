@@ -37,7 +37,10 @@ interface FlashcardsPageProps {
 export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   const { setLastFunction, setSproutVideo } = useDebug();
   const teacherMode = context && isTeacher(context.roles) && context.courseId && context.userId !== 'standalone';
-  const isCourseNavigation = !!(context?.courseId && (!context?.assignmentId || context.assignmentId === ''));
+  const hasRealAssignment = context?.assignmentId && 
+    context.assignmentId !== '' && 
+    !context.assignmentId.toLowerCase().includes('$canvas.assignment');
+  const isCourseNavigation = !!(context?.courseId && !hasRealAssignment);
   const [playlists, setPlaylists] = useState<PlaylistItem[]>([]);
   const [playlistsLoading, setPlaylistsLoading] = useState(true);
   const [courseSettings, setCourseSettings] = useState<{ selectedCurriculums: string[]; selectedUnits: string[] } | null>(null);
