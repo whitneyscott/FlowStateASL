@@ -12,15 +12,15 @@
 
 ## Stage 2: Interface & Navigation Restoration
 
-⬜ Reset & Pause: Restore the "Reset Deck" button and add "Pause/Replay" to Tutorial and Rehearsal modes.
+✅ Reset & Pause: Restore the "Reset Deck" button and add "Pause/Replay" to Tutorial and Rehearsal modes.
 
-⬜ Topic Header: Put the Playlist title at the top of the Deck while it's in use.
+✅ Topic Header: Put the Playlist title at the top of the Deck while it's in use.
 
-⬜ Playlist View: Add "View as Playlist" toggle to the initial selection window.
+✅ Playlist View: Add "View as Playlist" toggle to the initial selection window.
 
-⬜ Change Deck Optimization: Cache the list of playlists so "Change Deck" doesn't trigger a full reload.
+✅ Change Deck Optimization: Cache the list of playlists so "Change Deck" doesn't trigger a full reload.
 
-⬜ Video Display Logic: Add option to present only one version if multiple videos have the same English answer.
+✅ Video Display Logic: Add option to present only one version if multiple videos have the same English answer.
 
 ## Stage 3: Teacher Settings & Permissions
 

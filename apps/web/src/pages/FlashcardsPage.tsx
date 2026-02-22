@@ -56,12 +56,16 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   const [firstSide, setFirstSide] = useState<FirstSide>('english');
   const [playlistIndex, setPlaylistIndex] = useState(-1);
   const [canAdvance, setCanAdvance] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const [replayKey, setReplayKey] = useState(0);
   const autoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [screeningOverlay, setScreeningOverlay] = useState<{
     type: 'mastery' | 'frustration';
     title: string;
     message: string;
   } | null>(null);
+  const [viewAsPlaylist, setViewAsPlaylist] = useState(false);
+  const [singleVersionPerAnswer, setSingleVersionPerAnswer] = useState(false);
 
   const loadPlaylists = useCallback(async () => {
     setPlaylistsLoading(true);
@@ -106,7 +110,16 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
         { credentials: 'include' },
       );
       const data = await res.json();
-      const list = Array.isArray(data) ? data : [];
+      let list = Array.isArray(data) ? data : [];
+      if (singleVersionPerAnswer) {
+        const seen = new Set<string>();
+        list = list.filter((item: VideoItem) => {
+          const key = (item.title || '').toLowerCase().trim();
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+      }
       setOriginalItems(list);
       setItems([...list]);
     } catch {
@@ -213,7 +226,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   }, []);
 
   useEffect(() => {
-    const showRehearsal = items[currentIndex] && firstSide === 'english' && !showingAnswer && (mode === 'rehearsal' || mode === 'screening') && showTimer;
+    const showRehearsal = items[currentIndex] && firstSide === 'english' && !showingAnswer && (mode === 'rehearsal' || mode === 'screening') && showTimer && !isPaused;
     if (!showRehearsal) return;
     const displayMs = secDisplay * 1000;
     autoTimerRef.current = setTimeout(() => {
@@ -225,7 +238,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
         autoTimerRef.current = null;
       }
     };
-  }, [currentIndex, firstSide, showingAnswer, mode, showTimer, secDisplay, revealAnswer, items]);
+  }, [currentIndex, firstSide, showingAnswer, mode, showTimer, secDisplay, revealAnswer, items, isPaused]);
 
   const submitGrade = async () => {
     if (!currentPlaylist) return;
@@ -265,6 +278,25 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     setItems([]);
     setCurrentIndex(-1);
     setScreeningOverlay(null);
+  };
+
+  const resetCurrentDeck = () => {
+    if (autoTimerRef.current) {
+      clearTimeout(autoTimerRef.current);
+      autoTimerRef.current = null;
+    }
+    setIsPaused(false);
+    setReplayKey((k) => k + 1);
+    let deck = [...originalItems];
+    if (shuffle) deck.sort(() => Math.random() - 0.5);
+    setItems(deck);
+    setCurrentIndex(-1);
+    setScore({ correct: 0, total: originalItems.length, details: [] });
+    setStreak(0);
+    setBenchmarkNagDismissed(false);
+    setShowingAnswer(false);
+    setScreeningOverlay(null);
+    setCanAdvance(false);
   };
 
   const repeatAll = () => {
@@ -326,7 +358,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     (firstSide === 'asl' && !showingAnswer && currentItem.embed)
   );
 
-  const showRehearsalTimer = currentItem && firstSide === 'english' && !showingAnswer && (mode === 'rehearsal' || mode === 'screening') && showTimer;
+  const showRehearsalTimer = currentItem && firstSide === 'english' && !showingAnswer && (mode === 'rehearsal' || mode === 'screening') && showTimer && !isPaused;
 
   useEffect(() => {
     if (hasVideoOnScreen) {
@@ -384,30 +416,66 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                 <p>Loading playlists...</p>
               </div>
             ) : (
-              <div className="flashcards-playlist-list">
-                {playlists.map((pl, idx) => (
-                  <button
-                    key={(pl as { id?: string }).id ?? idx}
-                    type="button"
-                    className="flashcards-playlist-btn"
-                    onClick={() =>
-                      selectPlaylist(
-                        (pl as { id?: string }).id ?? String(idx),
-                        pl.title,
-                        idx,
-                      )
-                    }
-                  >
-                    {pl.title}
-                  </button>
-                ))}
-              </div>
+              <>
+                <div className="flashcards-menu-toggles">
+                  <label className="flashcards-playlist-view-toggle">
+                    <input
+                      type="checkbox"
+                      checked={viewAsPlaylist}
+                      onChange={(e) => setViewAsPlaylist(e.target.checked)}
+                    />
+                    View as Playlist
+                  </label>
+                  <label className="flashcards-playlist-view-toggle">
+                    <input
+                      type="checkbox"
+                      checked={singleVersionPerAnswer}
+                      onChange={(e) => setSingleVersionPerAnswer(e.target.checked)}
+                    />
+                    One version per answer
+                  </label>
+                </div>
+                <div
+                  className={
+                    viewAsPlaylist
+                      ? 'flashcards-playlist-list flashcards-playlist-list-compact'
+                      : 'flashcards-playlist-list'
+                  }
+                >
+                  {playlists.map((pl, idx) => (
+                    <button
+                      key={(pl as { id?: string }).id ?? idx}
+                      type="button"
+                      className={
+                        viewAsPlaylist
+                          ? 'flashcards-playlist-btn flashcards-playlist-btn-compact'
+                          : 'flashcards-playlist-btn'
+                      }
+                      onClick={() =>
+                        selectPlaylist(
+                          (pl as { id?: string }).id ?? String(idx),
+                          pl.title,
+                          idx,
+                        )
+                      }
+                    >
+                      {viewAsPlaylist && (
+                        <span className="flashcards-playlist-num">{idx + 1}</span>
+                      )}
+                      {pl.title}
+                    </button>
+                  ))}
+                </div>
+              </>
             )}
           </div>
         )}
 
         {view === 'study' && (
           <div className="flashcards-study">
+            {currentPlaylist && (
+              <h2 className="flashcards-topic-header">{currentPlaylist.title}</h2>
+            )}
             <div className="flashcards-persistent-options">
               <label>
                 Sec:{' '}
@@ -593,17 +661,30 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                         <p className="flashcards-vocab-display">
                           {currentItem.title}
                         </p>
-                        <button
-                          type="button"
-                          className="flashcards-btn flashcards-btn-flip"
-                          onClick={revealAnswer}
-                        >
-                          Show Answer
-                        </button>
+                        <div className="flashcards-controls">
+                          {!showRehearsalTimer && (
+                            <button
+                              type="button"
+                              className="flashcards-btn flashcards-btn-flip"
+                              onClick={revealAnswer}
+                            >
+                              Show Answer
+                            </button>
+                          )}
+                          {(mode === 'rehearsal' || mode === 'screening') && showTimer && firstSide === 'english' && !showingAnswer && (
+                            <button
+                              type="button"
+                              className="flashcards-btn flashcards-btn-secondary"
+                              onClick={() => setIsPaused((p) => !p)}
+                            >
+                              {isPaused ? 'Resume' : 'Pause'}
+                            </button>
+                          )}
+                        </div>
                       </div>
                     ) : (
                       <div className="flashcards-controls flashcards-controls-col flashcards-card-content">
-                        <div className="flashcards-video-wrap">
+                        <div className="flashcards-video-wrap" key={replayKey}>
                           {currentItem.embed && (
                             <div
                               className="flashcards-video-wrap-inner"
@@ -613,14 +694,23 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                             />
                           )}
                         </div>
-                        <button
-                          type="button"
-                          className={`flashcards-btn flashcards-btn-flip${mode === 'tutorial' && !canAdvance ? ' flashcards-btn-disabled' : ''}`}
-                          onClick={revealAnswer}
-                          disabled={mode === 'tutorial' && !canAdvance}
-                        >
-                          Show Answer
-                        </button>
+                        <div className="flashcards-controls">
+                          <button
+                            type="button"
+                            className={`flashcards-btn flashcards-btn-flip${mode === 'tutorial' && !canAdvance ? ' flashcards-btn-disabled' : ''}`}
+                            onClick={revealAnswer}
+                            disabled={mode === 'tutorial' && !canAdvance}
+                          >
+                            Show Answer
+                          </button>
+                          <button
+                            type="button"
+                            className="flashcards-btn flashcards-btn-secondary"
+                            onClick={() => setReplayKey((k) => k + 1)}
+                          >
+                            Replay
+                          </button>
+                        </div>
                       </div>
                     )
                   ) : (
@@ -630,15 +720,24 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                           {currentItem.title}
                         </p>
                       ) : (
-                        <div className="flashcards-video-wrap">
-                          {currentItem.embed && (
-                            <div
-                              className="flashcards-video-wrap-inner"
-                              dangerouslySetInnerHTML={{
-                                __html: embedWithAutoplay(currentItem.embed),
-                              }}
-                            />
-                          )}
+                        <div className="flashcards-controls flashcards-controls-col flashcards-card-content">
+                          <div className="flashcards-video-wrap" key={`answer-${replayKey}`}>
+                            {currentItem.embed && (
+                              <div
+                                className="flashcards-video-wrap-inner"
+                                dangerouslySetInnerHTML={{
+                                  __html: embedWithAutoplay(currentItem.embed),
+                                }}
+                              />
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            className="flashcards-btn flashcards-btn-secondary"
+                            onClick={() => setReplayKey((k) => k + 1)}
+                          >
+                            Replay
+                          </button>
                         </div>
                       )}
                       {mode === 'tutorial' ? (
@@ -675,6 +774,13 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
             </div>
 
             <div className="flashcards-secondary-controls">
+              <button
+                type="button"
+                className="flashcards-btn-nav"
+                onClick={resetCurrentDeck}
+              >
+                Reset Deck
+              </button>
               <button
                 type="button"
                 className="flashcards-btn-nav"
