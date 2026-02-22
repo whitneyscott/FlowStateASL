@@ -59,6 +59,8 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   const [isPaused, setIsPaused] = useState(false);
   const [replayKey, setReplayKey] = useState(0);
   const autoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const videoCompletedRef = useRef(false);
+  const lastVideoKeyRef = useRef('');
   const [screeningOverlay, setScreeningOverlay] = useState<{
     type: 'mastery' | 'frustration';
     title: string;
@@ -145,9 +147,10 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
         ? (streak < 0 ? 1 : streak + 1)
         : streak > 0 ? -1 : streak - 1;
       setStreak(newStreak);
+      const creditCorrect = isCorrect && mode !== 'tutorial';
       setScore((s) => ({
         ...s,
-        correct: s.correct + (isCorrect ? 1 : 0),
+        correct: s.correct + (creditCorrect ? 1 : 0),
         details: [
           ...s.details,
           {
@@ -226,9 +229,13 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     };
   }, []);
 
+  const showRevealTimer = items[currentIndex] && firstSide === 'english' && !showingAnswer && (
+    ((mode === 'rehearsal' || mode === 'screening') && showTimer && !isPaused) ||
+    (mode === 'tutorial' && tutorialAutoAdvance)
+  );
+
   useEffect(() => {
-    const showRehearsal = items[currentIndex] && firstSide === 'english' && !showingAnswer && (mode === 'rehearsal' || mode === 'screening') && showTimer && !isPaused;
-    if (!showRehearsal) return;
+    if (!showRevealTimer) return;
     const displayMs = secDisplay * 1000;
     autoTimerRef.current = setTimeout(() => {
       revealAnswer();
@@ -239,39 +246,15 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
         autoTimerRef.current = null;
       }
     };
-  }, [currentIndex, firstSide, showingAnswer, mode, showTimer, secDisplay, revealAnswer, items, isPaused]);
+  }, [showRevealTimer, secDisplay, revealAnswer]);
 
   useEffect(() => {
     const item = items[currentIndex];
     if (mode !== 'tutorial' || !tutorialAutoAdvance || showingAnswer || !item) return;
-    if (firstSide === 'english') {
-      revealAnswer();
-      return;
-    }
     if (firstSide === 'asl' && canAdvance) {
       revealAnswer();
     }
   }, [mode, tutorialAutoAdvance, showingAnswer, firstSide, canAdvance, items, currentIndex, revealAnswer]);
-
-  useEffect(() => {
-    const item = items[currentIndex];
-    if (mode !== 'tutorial' || !tutorialAutoAdvance || !showingAnswer || !item) return;
-    const answerHasVideo = firstSide === 'english' && item.embed;
-    if (answerHasVideo) {
-      if (canAdvance) {
-        recordScore(true);
-      }
-      return;
-    }
-    const displayMs = secDisplay * 1000;
-    autoTimerRef.current = setTimeout(() => recordScore(true), displayMs);
-    return () => {
-      if (autoTimerRef.current) {
-        clearTimeout(autoTimerRef.current);
-        autoTimerRef.current = null;
-      }
-    };
-  }, [mode, tutorialAutoAdvance, showingAnswer, firstSide, canAdvance, secDisplay, items, currentIndex, recordScore]);
 
   const submitGrade = async () => {
     if (!currentPlaylist) return;
@@ -318,6 +301,8 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
       clearTimeout(autoTimerRef.current);
       autoTimerRef.current = null;
     }
+    videoCompletedRef.current = false;
+    lastVideoKeyRef.current = '';
     setIsPaused(false);
     setReplayKey((k) => k + 1);
     let deck = [...originalItems];
@@ -391,15 +376,32 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     (firstSide === 'asl' && !showingAnswer && currentItem.embed)
   );
 
-  const showRehearsalTimer = currentItem && firstSide === 'english' && !showingAnswer && (mode === 'rehearsal' || mode === 'screening') && showTimer && !isPaused;
+  const showRehearsalTimer = currentItem && firstSide === 'english' && !showingAnswer && (
+    ((mode === 'rehearsal' || mode === 'screening') && showTimer && !isPaused) ||
+    (mode === 'tutorial' && tutorialAutoAdvance)
+  );
 
   useEffect(() => {
-    if (hasVideoOnScreen) {
+    if (!hasVideoOnScreen) {
+      videoCompletedRef.current = false;
+      lastVideoKeyRef.current = '';
+      setCanAdvance(true);
+      return;
+    }
+    const videoKey = `${currentIndex}-${showingAnswer}-${firstSide}-${currentItem?.embed ?? ''}`;
+    if (videoKey !== lastVideoKeyRef.current) {
+      lastVideoKeyRef.current = videoKey;
+      videoCompletedRef.current = false;
       setCanAdvance(false);
-    } else {
+    } else if (videoCompletedRef.current) {
       setCanAdvance(true);
     }
   }, [currentIndex, showingAnswer, firstSide, currentItem?.title, currentItem?.embed]);
+
+  const handleVideoCompleted = useCallback(() => {
+    videoCompletedRef.current = true;
+    setCanAdvance(true);
+  }, []);
 
   useEffect(() => {
     const handler = (e: MessageEvent) => {
@@ -408,12 +410,12 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
       const type = typeof d === 'object' && d !== null && 'type' in d ? String(d.type) : null;
       const event = typeof d === 'object' && d !== null && 'event' in d ? String(d.event) : null;
       if (type === 'completed' || type === 'ended' || event === 'completed' || event === 'ended') {
-        setCanAdvance(true);
+        handleVideoCompleted();
       }
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, []);
+  }, [handleVideoCompleted]);
 
   useEffect(() => {
     if (!hasVideoOnScreen || !currentItem?.embed) return;
@@ -423,12 +425,32 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
       try {
         const SV = (window as unknown as { SV: { Player: new (opts: { videoId: string }) => { bind: (ev: string, fn: () => void) => void } } }).SV;
         const player = new SV.Player({ videoId: vid });
-        player.bind('completed', () => setCanAdvance(true));
+        player.bind('completed', () => handleVideoCompleted());
       } catch {
       }
     }, 100);
     return () => clearTimeout(t);
-  }, [currentIndex, showingAnswer, firstSide, currentItem?.embed]);
+  }, [currentIndex, showingAnswer, firstSide, currentItem?.embed, handleVideoCompleted]);
+
+  useEffect(() => {
+    const item = items[currentIndex];
+    if (mode !== 'tutorial' || !tutorialAutoAdvance || !showingAnswer || !item) return;
+    const answerHasVideo = firstSide === 'english' && item.embed;
+    if (answerHasVideo) {
+      if (canAdvance) {
+        recordScore(true);
+      }
+      return;
+    }
+    const displayMs = secDisplay * 1000;
+    autoTimerRef.current = setTimeout(() => recordScore(true), displayMs);
+    return () => {
+      if (autoTimerRef.current) {
+        clearTimeout(autoTimerRef.current);
+        autoTimerRef.current = null;
+      }
+    };
+  }, [mode, tutorialAutoAdvance, showingAnswer, firstSide, canAdvance, secDisplay, items, currentIndex, recordScore]);
 
   return (
     <div className="flashcards-page">
