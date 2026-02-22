@@ -83,8 +83,8 @@ If your Canvas instance doesn't support configuration by URL:
 
 ### 401 when saving Teacher Settings (e.g. PUT /api/course-settings)
 - The LTI session must be present for API calls. On platforms like Render.com that run **multiple instances**, the default in-memory session store does not persist across instances: the LTI launch may hit instance A (session set) while the next request hits instance B (no session) → 401.
-- **Fix:** Configure a shared session store (e.g. Redis with `connect-redis`). Set `SESSION_SECRET` and your Redis URL; use the same store for all instances.
-- **Check:** In the Bridge Debug Log, a line like `Last API: PUT /api/course-settings → 401 FAILED` confirms this issue.
+- **Fix:** Add a Redis instance (e.g. Render Redis, Redis Cloud, or Upstash) and set the `REDIS_URL` environment variable. The app uses `connect-redis` to persist sessions across instances. When `REDIS_URL` is set, the session store switches to Redis; when unset, it falls back to in-memory (fine for single-instance/local dev).
+- **Check:** In the Bridge Debug Log, a line like `Last API: PUT /api/course-settings → 401 FAILED` confirms this issue. On startup, the server logs `[Session] Using Redis store` when Redis is configured.
 
 ---
 

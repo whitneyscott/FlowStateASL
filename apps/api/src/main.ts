@@ -1,6 +1,8 @@
 import 'reflect-metadata';
 import express from 'express';
 import { join } from 'path';
+import { createClient } from 'redis';
+import { RedisStore } from 'connect-redis';
 import { NestFactory } from '@nestjs/core';
 import { ExpressAdapter } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
@@ -13,17 +15,27 @@ async function bootstrap() {
   const isProduction = process.env.NODE_ENV === 'production';
   const port = process.env.PORT ?? 3000;
 
-  expressApp.use(
-    session({
-      secret: process.env.SESSION_SECRET ?? 'dev-secret-change-in-production',
-      resave: false,
-      saveUninitialized: false,
-      cookie: {
-        secure: isProduction,
-        sameSite: isProduction ? 'none' : 'lax',
-      },
-    }),
-  );
+  const sessionConfig: session.SessionOptions = {
+    secret: process.env.SESSION_SECRET ?? 'dev-secret-change-in-production',
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      secure: isProduction,
+      sameSite: isProduction ? 'none' : 'lax',
+    },
+  };
+
+  const redisUrl = process.env.REDIS_URL?.trim();
+  if (redisUrl) {
+    const redisClient = createClient({ url: redisUrl });
+    redisClient.on('error', (err) => console.error('[Redis]', err));
+    await redisClient.connect();
+    const redisStore = new RedisStore({ client: redisClient });
+    sessionConfig.store = redisStore;
+    console.log('[Session] Using Redis store');
+  }
+
+  expressApp.use(session(sessionConfig));
 
   if (isProduction) {
     const webRoot = join(__dirname, '..', '..', 'web');
