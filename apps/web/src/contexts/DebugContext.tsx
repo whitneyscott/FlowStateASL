@@ -4,17 +4,20 @@ interface DebugState {
   sproutVideoAccessed: boolean;
   sproutVideoPlaylistsRetrieved: number | null;
   lastFunctionCalled: string | null;
+  lastApiResult: { endpoint: string; status: number; ok: boolean } | null;
 }
 
 interface DebugContextValue extends DebugState {
   setSproutVideo: (accessed: boolean, playlistsRetrieved: number | null) => void;
   setLastFunction: (fn: string) => void;
+  setLastApiResult: (endpoint: string, status: number, ok: boolean) => void;
 }
 
 const initial: DebugState = {
   sproutVideoAccessed: false,
   sproutVideoPlaylistsRetrieved: null,
   lastFunctionCalled: null,
+  lastApiResult: null,
 };
 
 const DebugContext = createContext<DebugContextValue | null>(null);
@@ -30,8 +33,12 @@ export function DebugProvider({ children }: { children: ReactNode }) {
     setState((s) => ({ ...s, lastFunctionCalled: fn }));
   }, []);
 
+  const setLastApiResult = useCallback((endpoint: string, status: number, ok: boolean) => {
+    setState((s) => ({ ...s, lastApiResult: { endpoint, status, ok } }));
+  }, []);
+
   return (
-    <DebugContext.Provider value={{ ...state, setSproutVideo, setLastFunction }}>
+    <DebugContext.Provider value={{ ...state, setSproutVideo, setLastFunction, setLastApiResult }}>
       {children}
     </DebugContext.Provider>
   );
@@ -43,7 +50,9 @@ export function useDebug() {
     sproutVideoAccessed: false,
     sproutVideoPlaylistsRetrieved: null,
     lastFunctionCalled: null,
+    lastApiResult: null,
     setSproutVideo: () => {},
     setLastFunction: () => {},
+    setLastApiResult: () => {},
   };
 }

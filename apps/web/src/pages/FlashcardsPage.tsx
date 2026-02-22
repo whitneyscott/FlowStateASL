@@ -35,7 +35,7 @@ interface FlashcardsPageProps {
 }
 
 export default function FlashcardsPage({ context }: FlashcardsPageProps) {
-  const { setLastFunction, setSproutVideo } = useDebug();
+  const { setLastFunction, setSproutVideo, setLastApiResult } = useDebug();
   const teacherMode = context && isTeacher(context.roles) && context.courseId && context.userId !== 'standalone';
   const hasRealAssignment = context?.assignmentId && 
     context.assignmentId !== '' && 
@@ -113,6 +113,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
         fetch('/api/course-settings', { credentials: 'include' }),
         fetch('/api/flashcard/all-playlists', { credentials: 'include' }),
       ]);
+      setLastApiResult('GET /api/course-settings', csRes.status, csRes.ok);
       const cs = await csRes.json().catch(() => null);
       const pl = await plRes.json().catch(() => []);
       const list = Array.isArray(pl) ? pl : [];

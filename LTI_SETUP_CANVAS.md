@@ -81,6 +81,11 @@ If your Canvas instance doesn't support configuration by URL:
 ### Link shows wrong name
 - The tool should appear as **ASL Express Flashcards** in the course nav. If it shows something else, re-add the tool using the XML in this project.
 
+### 401 when saving Teacher Settings (e.g. PUT /api/course-settings)
+- The LTI session must be present for API calls. On platforms like Render.com that run **multiple instances**, the default in-memory session store does not persist across instances: the LTI launch may hit instance A (session set) while the next request hits instance B (no session) → 401.
+- **Fix:** Configure a shared session store (e.g. Redis with `connect-redis`). Set `SESSION_SECRET` and your Redis URL; use the same store for all instances.
+- **Check:** In the Bridge Debug Log, a line like `Last API: PUT /api/course-settings → 401 FAILED` confirms this issue.
+
 ---
 
 ## Custom Domain

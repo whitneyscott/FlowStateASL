@@ -38,7 +38,7 @@ interface TeacherSettingsProps {
 }
 
 export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }: TeacherSettingsProps) {
-  const { setSproutVideo, setLastFunction } = useDebug();
+  const { setSproutVideo, setLastFunction, setLastApiResult } = useDebug();
   const [allPlaylists, setAllPlaylists] = useState<Array<{ id: string; title: string }>>([]);
   const [selectedCurriculums, setSelectedCurriculums] = useState<string[]>([]);
   const [selectedUnits, setSelectedUnits] = useState<string[]>([]);
@@ -141,6 +141,7 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
     if (!teacher || !hasLti) return;
     setSaving(true);
     setSavedFeedback(false);
+    setLastFunction('PUT /api/course-settings');
     console.log('[Teacher Save] Sending:', { selectedCurriculums, selectedUnits });
     try {
       const res = await fetch('/api/course-settings', {
@@ -152,6 +153,7 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
           selectedUnits,
         }),
       });
+      setLastApiResult('PUT /api/course-settings', res.status, res.ok);
       console.log('[Teacher Save] Response:', res.status, res.ok ? 'OK' : 'FAILED');
       onConfigChange?.();
       setSavedFeedback(true);
