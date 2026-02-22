@@ -242,7 +242,8 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   }, [currentIndex, firstSide, showingAnswer, mode, showTimer, secDisplay, revealAnswer, items, isPaused]);
 
   useEffect(() => {
-    if (mode !== 'tutorial' || !tutorialAutoAdvance || showingAnswer || !currentItem) return;
+    const item = items[currentIndex];
+    if (mode !== 'tutorial' || !tutorialAutoAdvance || showingAnswer || !item) return;
     if (firstSide === 'english') {
       revealAnswer();
       return;
@@ -250,7 +251,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     if (firstSide === 'asl' && canAdvance) {
       revealAnswer();
     }
-  }, [mode, tutorialAutoAdvance, showingAnswer, firstSide, canAdvance, currentItem, revealAnswer]);
+  }, [mode, tutorialAutoAdvance, showingAnswer, firstSide, canAdvance, items, currentIndex, revealAnswer]);
 
   const submitGrade = async () => {
     if (!currentPlaylist) return;
