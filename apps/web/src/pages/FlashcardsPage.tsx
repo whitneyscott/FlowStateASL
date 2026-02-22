@@ -437,7 +437,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     if (mode !== 'tutorial' || !tutorialAutoAdvance || !showingAnswer || !item) return;
     const answerHasVideo = firstSide === 'english' && item.embed;
     if (answerHasVideo) {
-      if (canAdvance) {
+      if (videoCompletedRef.current) {
         recordScore(true);
       }
       return;
