@@ -253,6 +253,26 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     }
   }, [mode, tutorialAutoAdvance, showingAnswer, firstSide, canAdvance, items, currentIndex, revealAnswer]);
 
+  useEffect(() => {
+    const item = items[currentIndex];
+    if (mode !== 'tutorial' || !tutorialAutoAdvance || !showingAnswer || !item) return;
+    const answerHasVideo = firstSide === 'english' && item.embed;
+    if (answerHasVideo) {
+      if (canAdvance) {
+        recordScore(true);
+      }
+      return;
+    }
+    const displayMs = secDisplay * 1000;
+    autoTimerRef.current = setTimeout(() => recordScore(true), displayMs);
+    return () => {
+      if (autoTimerRef.current) {
+        clearTimeout(autoTimerRef.current);
+        autoTimerRef.current = null;
+      }
+    };
+  }, [mode, tutorialAutoAdvance, showingAnswer, firstSide, canAdvance, secDisplay, items, currentIndex, recordScore]);
+
   const submitGrade = async () => {
     if (!currentPlaylist) return;
     setSubmitting(true);
@@ -766,14 +786,16 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                         </div>
                       )}
                       {mode === 'tutorial' ? (
-                        <button
-                          type="button"
-                          className={`flashcards-btn flashcards-btn-correct${!canAdvance ? ' flashcards-btn-disabled' : ''}`}
-                          onClick={() => canAdvance && recordScore(true)}
-                          disabled={!canAdvance}
-                        >
-                          Next
-                        </button>
+                        !tutorialAutoAdvance && (
+                          <button
+                            type="button"
+                            className={`flashcards-btn flashcards-btn-correct${!canAdvance ? ' flashcards-btn-disabled' : ''}`}
+                            onClick={() => canAdvance && recordScore(true)}
+                            disabled={!canAdvance}
+                          >
+                            Next
+                          </button>
+                        )
                       ) : (
                         <div className="flashcards-controls">
                           <button
