@@ -55,6 +55,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   const [screeningCriteria, setScreeningCriteria] = useState(5);
   const [firstSide, setFirstSide] = useState<FirstSide>('english');
   const [playlistIndex, setPlaylistIndex] = useState(-1);
+  const [canAdvance, setCanAdvance] = useState(false);
   const [screeningOverlay, setScreeningOverlay] = useState<{
     type: 'mastery' | 'frustration';
     title: string;
@@ -286,6 +287,53 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     const newUrl = `${url}${sep}autoPlay=true&showControls=false`;
     return embed.replace(srcMatch[0], `src="${newUrl}"`);
   };
+
+  const extractVideoId = (embed: string): string | null => {
+    const m = embed.match(/embed\/([a-zA-Z0-9]+)/);
+    return m ? m[1] : null;
+  };
+
+  const hasVideoOnScreen = currentItem && (
+    (firstSide === 'english' && showingAnswer && currentItem.embed) ||
+    (firstSide === 'asl' && !showingAnswer && currentItem.embed)
+  );
+
+  useEffect(() => {
+    if (hasVideoOnScreen) {
+      setCanAdvance(false);
+    } else {
+      setCanAdvance(true);
+    }
+  }, [currentIndex, showingAnswer, firstSide, currentItem?.title, currentItem?.embed]);
+
+  useEffect(() => {
+    const handler = (e: MessageEvent) => {
+      const d = e?.data;
+      if (!d) return;
+      const type = typeof d === 'object' && d !== null && 'type' in d ? String(d.type) : null;
+      const event = typeof d === 'object' && d !== null && 'event' in d ? String(d.event) : null;
+      if (type === 'completed' || type === 'ended' || event === 'completed' || event === 'ended') {
+        setCanAdvance(true);
+      }
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, []);
+
+  useEffect(() => {
+    if (!hasVideoOnScreen || !currentItem?.embed) return;
+    const vid = extractVideoId(currentItem.embed);
+    if (!vid || typeof (window as unknown as { SV?: unknown }).SV === 'undefined') return;
+    const t = setTimeout(() => {
+      try {
+        const SV = (window as unknown as { SV: { Player: new (opts: { videoId: string }) => { bind: (ev: string, fn: () => void) => void } } }).SV;
+        const player = new SV.Player({ videoId: vid });
+        player.bind('completed', () => setCanAdvance(true));
+      } catch {
+      }
+    }, 100);
+    return () => clearTimeout(t);
+  }, [currentIndex, showingAnswer, firstSide, currentItem?.embed]);
 
   return (
     <div className="flashcards-page">
@@ -532,8 +580,9 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                         </div>
                         <button
                           type="button"
-                          className="flashcards-btn flashcards-btn-flip"
+                          className={`flashcards-btn flashcards-btn-flip${mode === 'tutorial' && !canAdvance ? ' flashcards-btn-disabled' : ''}`}
                           onClick={revealAnswer}
+                          disabled={mode === 'tutorial' && !canAdvance}
                         >
                           Show Answer
                         </button>
@@ -560,8 +609,9 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                       {mode === 'tutorial' ? (
                         <button
                           type="button"
-                          className="flashcards-btn flashcards-btn-correct"
-                          onClick={() => recordScore(true)}
+                          className={`flashcards-btn flashcards-btn-correct${!canAdvance ? ' flashcards-btn-disabled' : ''}`}
+                          onClick={() => canAdvance && recordScore(true)}
+                          disabled={!canAdvance}
                         >
                           Next
                         </button>

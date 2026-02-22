@@ -158,3 +158,24 @@
   cursor: pointer;
   font-size: 13px;
 }
+
+.teacher-settings-spinner {
+  width: 48px;
+  height: 48px;
+  border: 4px solid #52525b;
+  border-top-color: #34d399;
+  border-radius: 50%;
+  animation: teacher-settings-spin 1s linear infinite;
+}
+
+@keyframes teacher-settings-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.teacher-settings-loading-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}

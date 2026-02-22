@@ -267,6 +267,12 @@
   cursor: not-allowed;
 }
 
+.flashcards-btn-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
 .flashcards-btn-secondary {
   background: #52525b;
   color: white;

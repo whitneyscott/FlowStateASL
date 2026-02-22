@@ -2,13 +2,13 @@
 
 ## Stage 1: Core Logic & Player Enforcement
 
-⬜ SproutVideo IFrame Bridge: Implement window.addEventListener('message') in the Viewer to capture the completed/ended signals.
+✅ SproutVideo IFrame Bridge: Implement window.addEventListener('message') in the Viewer to capture the completed/ended signals.
 
-⬜ Video Playback Enforcement: Create canAdvance state. Disable the "Next" button and prevent auto-advance in "Tutorial Mode" until the signal is received.
+✅ Video Playback Enforcement: Create canAdvance state. Disable the "Next" button and prevent auto-advance in "Tutorial Mode" until the signal is received.
 
-⬜ Clean Architecture: Move all spinner, layout, and disabled-state styling into .css files. (Zero inline styles, no comments).
+✅ Clean Architecture: Move all spinner, layout, and disabled-state styling into .css files. (Zero inline styles, no comments).
 
-⬜ Loading Spinner: Create .spinner class and display it in TeacherSettings.tsx while data is fetching.
+✅ Loading Spinner: Create .spinner class and display it in TeacherSettings.tsx while data is fetching.
 
 ## Stage 2: Interface & Navigation Restoration
 

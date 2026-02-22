@@ -160,7 +160,10 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
   if (loading && allPlaylists.length === 0 && !error) {
     return (
       <div className="teacher-settings-loading">
-        <p>Loading playlists...</p>
+        <div className="teacher-settings-loading-inner">
+          <div className="teacher-settings-spinner" />
+          <p>Loading playlists...</p>
+        </div>
       </div>
     );
   }
