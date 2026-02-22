@@ -66,6 +66,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   } | null>(null);
   const [viewAsPlaylist, setViewAsPlaylist] = useState(false);
   const [singleVersionPerAnswer, setSingleVersionPerAnswer] = useState(false);
+  const [tutorialAutoAdvance, setTutorialAutoAdvance] = useState(true);
 
   const loadPlaylists = useCallback(async () => {
     setPlaylistsLoading(true);
@@ -239,6 +240,17 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
       }
     };
   }, [currentIndex, firstSide, showingAnswer, mode, showTimer, secDisplay, revealAnswer, items, isPaused]);
+
+  useEffect(() => {
+    if (mode !== 'tutorial' || !tutorialAutoAdvance || showingAnswer || !currentItem) return;
+    if (firstSide === 'english') {
+      revealAnswer();
+      return;
+    }
+    if (firstSide === 'asl' && canAdvance) {
+      revealAnswer();
+    }
+  }, [mode, tutorialAutoAdvance, showingAnswer, firstSide, canAdvance, currentItem, revealAnswer]);
 
   const submitGrade = async () => {
     if (!currentPlaylist) return;
@@ -517,6 +529,16 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                   <option value="screening">Screening</option>
                 </select>
               </label>
+              {mode === 'tutorial' && (
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={tutorialAutoAdvance}
+                    onChange={(e) => setTutorialAutoAdvance(e.target.checked)}
+                  />
+                  Auto-advance
+                </label>
+              )}
               {mode === 'screening' && (
                 <label>
                   Crit:{' '}
@@ -662,7 +684,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                           {currentItem.title}
                         </p>
                         <div className="flashcards-controls">
-                          {!showRehearsalTimer && (
+                          {!showRehearsalTimer && !(mode === 'tutorial' && tutorialAutoAdvance) && (
                             <button
                               type="button"
                               className="flashcards-btn flashcards-btn-flip"
@@ -695,14 +717,16 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                           )}
                         </div>
                         <div className="flashcards-controls">
-                          <button
-                            type="button"
-                            className={`flashcards-btn flashcards-btn-flip${mode === 'tutorial' && !canAdvance ? ' flashcards-btn-disabled' : ''}`}
-                            onClick={revealAnswer}
-                            disabled={mode === 'tutorial' && !canAdvance}
-                          >
-                            Show Answer
-                          </button>
+                          {!(mode === 'tutorial' && tutorialAutoAdvance) && (
+                            <button
+                              type="button"
+                              className={`flashcards-btn flashcards-btn-flip${mode === 'tutorial' && !canAdvance ? ' flashcards-btn-disabled' : ''}`}
+                              onClick={revealAnswer}
+                              disabled={mode === 'tutorial' && !canAdvance}
+                            >
+                              Show Answer
+                            </button>
+                          )}
                           <button
                             type="button"
                             className="flashcards-btn flashcards-btn-secondary"
