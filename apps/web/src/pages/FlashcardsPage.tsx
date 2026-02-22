@@ -251,7 +251,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   useEffect(() => {
     const item = items[currentIndex];
     if (mode !== 'tutorial' || !tutorialAutoAdvance || showingAnswer || !item) return;
-    if (firstSide === 'asl' && canAdvance) {
+    if (firstSide === 'asl' && videoCompletedRef.current) {
       revealAnswer();
     }
   }, [mode, tutorialAutoAdvance, showingAnswer, firstSide, canAdvance, items, currentIndex, revealAnswer]);
