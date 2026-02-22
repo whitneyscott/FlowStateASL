@@ -613,7 +613,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
 
             <div className="flashcards-status-bar">
               <span>
-                Progress: {score.correct} / {score.total}{' '}
+                Progress: {mode === 'tutorial' ? score.details.length : score.correct} / {score.total || items.length}{' '}
                 {mode === 'screening' && streak !== 0 && (
                   <span
                     className={
