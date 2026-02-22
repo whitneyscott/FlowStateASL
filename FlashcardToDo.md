@@ -1,63 +1,49 @@
 # Flashcard To-Do
 
-## Phase 1: Infrastructure & Stability (The "Grand Vision" Foundation)
+## Stage 1: Core Logic & Player Enforcement
 
-⬜ Migrate to Render: Move NestJS backend and React frontend to resolve 403 errors and enable automated deployments.
+⬜ SproutVideo IFrame Bridge: Implement window.addEventListener('message') in the Viewer to capture the completed/ended signals.
 
-⬜ Clean Architecture: Ensure zero inline styles; move all spinner, layout, and disabled-state styling to respective .css files. (No code comments).
+⬜ Video Playback Enforcement: Create canAdvance state. Disable the "Next" button and prevent auto-advance in "Tutorial Mode" until the signal is received.
 
-⬜ Dashboard Conversion: Convert to a dashboard interface and deeplink to the TWA modules tool.
+⬜ Clean Architecture: Move all spinner, layout, and disabled-state styling into .css files. (Zero inline styles, no comments).
 
-## Phase 2: Teacher UI & Global Settings
+⬜ Loading Spinner: Create .spinner class and display it in TeacherSettings.tsx while data is fetching.
 
-⬜ Teacher Settings Module: Create settings interface (matching Prompt Manager style).
+## Stage 2: Interface & Navigation Restoration
 
-⬜ Curriculum/Playlist selection.
+⬜ Reset & Pause: Restore the "Reset Deck" button and add "Pause/Replay" to Tutorial and Rehearsal modes.
 
-⬜ "Require Full Playback" toggle (Labeling: "Show" / "Hide" only).
+⬜ Topic Header: Put the Playlist title at the top of the Deck while it's in use.
 
-⬜ Logic to decide how to award points.
+⬜ Playlist View: Add "View as Playlist" toggle to the initial selection window.
 
-⬜ "View as Student" Toggle: Implement teacher preview mode (Labeling: "Show" / "Hide" only).
+⬜ Change Deck Optimization: Cache the list of playlists so "Change Deck" doesn't trigger a full reload.
 
-⬜ Loading Logic: Implement CSS Spinner in TeacherSettings.css. Apply spinner in TeacherSettings.tsx while loading is true; hide controls during fetch.
+⬜ Video Display Logic: Add option to present only one version if multiple videos have the same English answer.
 
-## Phase 3: Flashcard Viewer & UX (The "Gym")
+## Stage 3: Teacher Settings & Permissions
 
-⬜ SproutVideo IFrame Bridge: Implement window.addEventListener('message') to capture completed/ended signals.
+⬜ "View as Student" Toggle: Hide teacher dropdowns and apply student visibility rules when active.
 
-⬜ Video Playback Enforcement: Implement canAdvance state (initially false). Disable "Next" button and block auto-advance in Tutorial Mode until canAdvance is true.
+⬜ Settings Labeling: Ensure all toggles use ONLY "Show" and "Hide."
 
-⬜ UI Restoration: Restore "Reset Deck" button. Add "Pause" and "Replay" buttons to Tutorial and Rehearsal modes.
+⬜ Curriculum Fallback: Restore using the module's title for suggestions but fallback to dropdowns.
 
-⬜ Playlist Navigation: Add "View as Playlist" toggle at the opening selection window. Put the Topic (Playlist title) at the top of the Deck during use. Cache playlist list to prevent full reloads when choosing "Change Deck."
+⬜ Point Awards: Add teacher setting to decide how to award points.
 
-⬜ Smart Display: Add option to present only one version if multiple videos have the same English answer.
+## Stage 4: Progress Tracking & Submission
 
-## Phase 4: Data Persistence & Progress Tracking
+⬜ Canvas Integration: Logic to check for the "Flashcard Progress" assignment. Create it if missing.
 
-⬜ Canvas Progress Integration: Check for/create "Flashcard Progress" assignment in Canvas for the student.
+⬜ Data Storage: Implement saving to Canvas comments using the established JSON schema (Browser Session + UUID).
 
-⬜ Store Progress in Comments: Use the Dual-ID schema (Browser Session + UUID).
+⬜ Tutorial Scoring: Ensure Tutorial mode does not award 100% credit.
 
-⬜ LTI 1.3 Migration: Move data storage from Comments to AGS Metadata.
+## Stage 5: Expressive Mode & AI
 
-## Phase 5: Expressive Assessment & AI
+⬜ Expressive Recorder: Add recorder, AI scoring, rubric scoring, and timestamped annotations.
 
-⬜ Expressive Test Features: Teacher options for number of items and filtering. Add Recorder for student signing. Add Rubric scoring and timestamped annotations.
+⬜ AI Activation: Implement Exact match, Embeddings, and the Reranker.
 
-⬜ AI Logic Activation: Exact match -> Embeddings -> Reranker. AI scoring for expressive tests.
-
-⬜ Tool Unification: Merge Flashcards and Prompt Recorder to allow English-to-ASL recording.
-
-## Phase 6: Future Implementations (Linguistic Refinement)
-
-⬜ Linguistic Buffer: Add "Slow-Mo Closure" replay (last 2 seconds at 0.75x).
-
-⬜ Deck Search: Add "Quick Find" search bar to the Dashboard.
-
-⬜ Confidence Rating: Implement 1–5 star metacognition tracking.
-
-⬜ Teacher Heatmap: Aggregate error arrays for classroom-wide analytics.
-
-⬜ Dynamic Mastery: Replace 100% Tutorial credit with a "Progress to Mastery" threshold.
+⬜ Typed Input: Add autoscoring (Strict, then Fuzzy/AI assisted).
