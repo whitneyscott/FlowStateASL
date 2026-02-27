@@ -103,13 +103,18 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
           }
         }
         if (cancelled) return;
+        console.log('[TeacherSettings] GET course-settings: context.courseId=', context?.courseId, 'context.userId=', context?.userId);
         const [pRes, csRes] = await Promise.all([
           fetch('/api/flashcard/all-playlists', { credentials: 'include' }),
           fetch('/api/course-settings', { credentials: 'include' }),
         ]);
         if (cancelled) return;
         const list = await pRes.json().catch(() => []);
-        const cs = await csRes.json().catch(() => null);
+        const csRaw = await csRes.text().catch(() => '');
+        const cs = (() => { try { return JSON.parse(csRaw); } catch { return null; } })();
+        if (!csRes.ok) {
+          console.warn('[TeacherSettings] GET course-settings failed:', csRes.status, csRes.statusText, 'body=', csRaw?.slice(0, 200));
+        }
         if (!pRes.ok) {
           setError(`HTTP ${pRes.status}`);
           if (!cancelled) setLoading(false);
@@ -142,7 +147,7 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
     setSaving(true);
     setSavedFeedback(false);
     setLastFunction('PUT /api/course-settings');
-    console.log('[Teacher Save] Sending:', { selectedCurriculums, selectedUnits });
+    console.log('[Teacher Save] Sending:', { selectedCurriculums, selectedUnits }, 'context.courseId=', context?.courseId);
     try {
       const res = await fetch('/api/course-settings', {
         method: 'PUT',
@@ -153,8 +158,9 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
           selectedUnits,
         }),
       });
+      const resBody = await res.text().catch(() => '');
       setLastApiResult('PUT /api/course-settings', res.status, res.ok);
-      console.log('[Teacher Save] Response:', res.status, res.ok ? 'OK' : 'FAILED');
+      console.log('[Teacher Save] Response:', res.status, res.ok ? 'OK' : 'FAILED', res.ok ? '' : 'body=' + resBody?.slice(0, 200));
       onConfigChange?.();
       setSavedFeedback(true);
       setTimeout(() => setSavedFeedback(false), 2000);

@@ -117,6 +117,9 @@ export class LtiController {
         }
         return tokenCtx;
       }
+      console.warn('[LTI] lti_token present but consumeLtiToken returned null (token unknown/expired, possible multi-instance)');
+    } else {
+      console.log('[LTI] context fallback: no session.ltiContext, no lti_token');
     }
     return {
       courseId: '',

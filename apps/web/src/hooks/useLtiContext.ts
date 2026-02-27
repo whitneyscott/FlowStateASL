@@ -21,6 +21,12 @@ export function useLtiContext() {
         return res.json();
       })
       .then((data) => {
+        console.log('[useLtiContext] loaded:', {
+          source: ltiToken ? 'lti_token' : 'session',
+          courseId: data?.courseId,
+          userId: data?.userId,
+          hasContext: !!(data?.courseId && data?.userId !== 'standalone'),
+        });
         setContext(data);
         setError(null);
         if (ltiToken) {
