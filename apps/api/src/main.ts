@@ -1,8 +1,8 @@
 import 'reflect-metadata';
 import express from 'express';
 import { join } from 'path';
-import { createClient } from 'redis';
-import { RedisStore } from 'connect-redis';
+import { Pool } from 'pg';
+import connectPgSimple from 'connect-pg-simple';
 import { NestFactory } from '@nestjs/core';
 import { ExpressAdapter } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
@@ -15,27 +15,30 @@ async function bootstrap() {
   const isProduction = process.env.NODE_ENV === 'production';
   const port = process.env.PORT ?? 3000;
 
-  const sessionConfig: session.SessionOptions = {
-    secret: process.env.SESSION_SECRET ?? 'dev-secret-change-in-production',
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      secure: isProduction,
-      sameSite: isProduction ? 'none' : 'lax',
-    },
-  };
+  const PgSession = connectPgSimple(session);
+  const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: isProduction ? { rejectUnauthorized: false } : false,
+  });
+  pool.on('error', (err) => console.error('[Session] PG pool error', err));
 
-  const redisUrl = process.env.REDIS_URL?.trim();
-  if (redisUrl) {
-    const redisClient = createClient({ url: redisUrl });
-    redisClient.on('error', (err) => console.error('[Redis]', err));
-    await redisClient.connect();
-    const redisStore = new RedisStore({ client: redisClient });
-    sessionConfig.store = redisStore;
-    console.log('[Session] Using Redis store');
-  }
-
-  expressApp.use(session(sessionConfig));
+  expressApp.use(
+    session({
+      store: new PgSession({
+        pool,
+        createTableIfMissing: true,
+      }),
+      secret: process.env.SESSION_SECRET ?? 'dev-secret-change-in-production',
+      resave: false,
+      saveUninitialized: false,
+      cookie: {
+        secure: isProduction,
+        sameSite: isProduction ? 'none' : 'lax',
+        httpOnly: true,
+      },
+    }),
+  );
+  console.log('[Session] Using PostgreSQL store');
 
   if (isProduction) {
     const webRoot = join(__dirname, '..', '..', 'web');
