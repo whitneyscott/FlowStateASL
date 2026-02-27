@@ -38,7 +38,7 @@ interface TeacherSettingsProps {
 }
 
 export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }: TeacherSettingsProps) {
-  const { setSproutVideo, setLastFunction, setLastApiResult } = useDebug();
+  const { setSproutVideo, setLastFunction, setLastApiResult, setLastApiError } = useDebug();
   const [allPlaylists, setAllPlaylists] = useState<Array<{ id: string; title: string }>>([]);
   const [selectedCurriculums, setSelectedCurriculums] = useState<string[]>([]);
   const [selectedUnits, setSelectedUnits] = useState<string[]>([]);
@@ -103,7 +103,7 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
           }
         }
         if (cancelled) return;
-        console.log('[TeacherSettings] GET course-settings: context.courseId=', context?.courseId, 'context.userId=', context?.userId);
+        setLastFunction('GET /api/course-settings');
         const [pRes, csRes] = await Promise.all([
           fetch('/api/flashcard/all-playlists', { credentials: 'include' }),
           fetch('/api/course-settings', { credentials: 'include' }),
@@ -112,8 +112,11 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
         const list = await pRes.json().catch(() => []);
         const csRaw = await csRes.text().catch(() => '');
         const cs = (() => { try { return JSON.parse(csRaw); } catch { return null; } })();
+        setLastApiResult('GET /api/course-settings', csRes.status, csRes.ok);
         if (!csRes.ok) {
-          console.warn('[TeacherSettings] GET course-settings failed:', csRes.status, csRes.statusText, 'body=', csRaw?.slice(0, 200));
+          let errMsg = String(csRes.status);
+          try { const j = JSON.parse(csRaw); errMsg = j?.message ?? errMsg; } catch { errMsg = csRaw?.slice(0, 80) ?? errMsg; }
+          setLastApiError('GET /api/course-settings', csRes.status, errMsg);
         }
         if (!pRes.ok) {
           setError(`HTTP ${pRes.status}`);
@@ -160,7 +163,11 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
       });
       const resBody = await res.text().catch(() => '');
       setLastApiResult('PUT /api/course-settings', res.status, res.ok);
-      console.log('[Teacher Save] Response:', res.status, res.ok ? 'OK' : 'FAILED', res.ok ? '' : 'body=' + resBody?.slice(0, 200));
+      if (!res.ok) {
+        let errMsg = String(res.status);
+        try { const j = JSON.parse(resBody); errMsg = j?.message ?? errMsg; } catch { errMsg = resBody?.slice(0, 80) ?? errMsg; }
+        setLastApiError('PUT /api/course-settings', res.status, errMsg);
+      }
       onConfigChange?.();
       setSavedFeedback(true);
       setTimeout(() => setSavedFeedback(false), 2000);

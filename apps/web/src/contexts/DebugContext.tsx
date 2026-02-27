@@ -5,12 +5,14 @@ interface DebugState {
   sproutVideoPlaylistsRetrieved: number | null;
   lastFunctionCalled: string | null;
   lastApiResult: { endpoint: string; status: number; ok: boolean } | null;
+  lastApiError: { endpoint: string; status: number; message: string } | null;
 }
 
 interface DebugContextValue extends DebugState {
   setSproutVideo: (accessed: boolean, playlistsRetrieved: number | null) => void;
   setLastFunction: (fn: string) => void;
   setLastApiResult: (endpoint: string, status: number, ok: boolean) => void;
+  setLastApiError: (endpoint: string, status: number, message: string) => void;
 }
 
 const initial: DebugState = {
@@ -18,6 +20,7 @@ const initial: DebugState = {
   sproutVideoPlaylistsRetrieved: null,
   lastFunctionCalled: null,
   lastApiResult: null,
+  lastApiError: null,
 };
 
 const DebugContext = createContext<DebugContextValue | null>(null);
@@ -34,11 +37,15 @@ export function DebugProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const setLastApiResult = useCallback((endpoint: string, status: number, ok: boolean) => {
-    setState((s) => ({ ...s, lastApiResult: { endpoint, status, ok } }));
+    setState((s) => ({ ...s, lastApiResult: { endpoint, status, ok }, lastApiError: ok ? s.lastApiError : null }));
+  }, []);
+
+  const setLastApiError = useCallback((endpoint: string, status: number, message: string) => {
+    setState((s) => ({ ...s, lastApiError: { endpoint, status, message } }));
   }, []);
 
   return (
-    <DebugContext.Provider value={{ ...state, setSproutVideo, setLastFunction, setLastApiResult }}>
+    <DebugContext.Provider value={{ ...state, setSproutVideo, setLastFunction, setLastApiResult, setLastApiError }}>
       {children}
     </DebugContext.Provider>
   );
@@ -51,8 +58,10 @@ export function useDebug() {
     sproutVideoPlaylistsRetrieved: null,
     lastFunctionCalled: null,
     lastApiResult: null,
+    lastApiError: null,
     setSproutVideo: () => {},
     setLastFunction: () => {},
     setLastApiResult: () => {},
+    setLastApiError: () => {},
   };
 }

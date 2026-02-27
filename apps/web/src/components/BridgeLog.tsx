@@ -9,7 +9,7 @@ interface BridgeLogProps {
 }
 
 export function BridgeLog({ context, loading, error }: BridgeLogProps) {
-  const { sproutVideoAccessed, sproutVideoPlaylistsRetrieved, lastFunctionCalled, lastApiResult } = useDebug();
+  const { sproutVideoAccessed, sproutVideoPlaylistsRetrieved, lastFunctionCalled, lastApiResult, lastApiError } = useDebug();
   const [lastServerError, setLastServerError] = useState<{ endpoint: string; message: string } | null>(null);
   const [lines, setLines] = useState<string[]>(['Initializing...']);
 
@@ -82,12 +82,16 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
     if (lastApiResult) {
       newLines.push(`Last API: ${lastApiResult.endpoint} → ${lastApiResult.status} ${lastApiResult.ok ? 'OK' : 'FAILED'}`);
     }
+    if (lastApiError) {
+      newLines.push(`API Error: ${lastApiError.endpoint} ${lastApiError.status} - ${lastApiError.message}`);
+      newLines.push('  (Likely multi-instance: session not shared across Render instances)');
+    }
     if (lastServerError) {
       newLines.push(`Last error (500): ${lastServerError.endpoint}`);
       newLines.push(`  → ${lastServerError.message}`);
     }
     setLines(newLines);
-  }, [context, loading, error, sproutVideoAccessed, sproutVideoPlaylistsRetrieved, lastFunctionCalled, lastApiResult, lastServerError]);
+  }, [context, loading, error, sproutVideoAccessed, sproutVideoPlaylistsRetrieved, lastFunctionCalled, lastApiResult, lastApiError, lastServerError]);
 
   const text = ['BRIDGE DEBUG LOG:', ...lines].join('\n');
 
