@@ -46,7 +46,8 @@ export class LtiController {
     if (req.session) {
       req.session.ltiContext = ctx;
       req.session.save((err) => {
-        if (err) console.error('[LTI] session save failed', err);
+        if (err) console.error('[LTI] launch session save failed', err);
+        else console.log('[LTI] launch session saved, sessionId=', req.sessionID?.slice(0, 16));
         const base = process.env.FRONTEND_URL ?? '';
         const url = `${base}/flashcards?lti_token=${token}`;
         console.log('[LTI] redirecting to', url.replace(token, '***'));
@@ -113,7 +114,12 @@ export class LtiController {
         console.log('[LTI] context from token', { courseId: tokenCtx.courseId });
         if (req.session) {
           req.session.ltiContext = tokenCtx;
-          req.session.save(() => {});
+          req.session.save((err) => {
+            if (err) console.error('[LTI] session save failed after lti_token', err);
+            else console.log('[LTI] session saved with ltiContext, sessionId=', req.sessionID?.slice(0, 16));
+          });
+        } else {
+          console.warn('[LTI] lti_token success but req.session is null - no cookie will be set');
         }
         return tokenCtx;
       }
