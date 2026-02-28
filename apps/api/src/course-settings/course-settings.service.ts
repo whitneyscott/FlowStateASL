@@ -229,6 +229,8 @@ export class CourseSettingsService {
         })),
       });
       if (p.updated_at) playlistUpdatedAt[p.id] = p.updated_at;
+      // Throttle: wait 250ms before next SproutVideo request to avoid 429 rate limit
+      await new Promise((r) => setTimeout(r, 250));
     }
 
     const payload: AssignmentDescriptionData = {
