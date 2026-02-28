@@ -110,13 +110,25 @@ export class SproutVideoService {
       const data = (await res.json()) as { videos?: string[] };
       const videoIds = data.videos ?? [];
       const items: SproutVideoItem[] = [];
-      for (const vid of videoIds) {
-        const vRes = await fetch(
-          `https://api.sproutvideo.com/v1/videos/${vid}`,
-          { headers: { 'SproutVideo-Api-Key': apiKey } },
-        );
-        if (!vRes.ok) continue;
-        const vData = (await vRes.json()) as { title?: string; embed_code?: string };
+      const delayMs = 200;
+      for (let i = 0; i < videoIds.length; i++) {
+        if (i > 0) await new Promise((r) => setTimeout(r, delayMs));
+        const vid = videoIds[i];
+        let vRes: Response;
+        let backoff = delayMs;
+        const maxRetries = 3;
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+          vRes = await fetch(
+            `https://api.sproutvideo.com/v1/videos/${vid}`,
+            { headers: { 'SproutVideo-Api-Key': apiKey } },
+          );
+          if (vRes.ok) break;
+          if (vRes.status !== 429 || attempt === maxRetries) break;
+          await new Promise((r) => setTimeout(r, backoff));
+          backoff *= 2;
+        }
+        if (!vRes!.ok) continue;
+        const vData = (await vRes!.json()) as { title?: string; embed_code?: string };
         items.push({
           title: String(vData.title ?? 'Vocabulary Item'),
           embed: String(vData.embed_code ?? ''),
