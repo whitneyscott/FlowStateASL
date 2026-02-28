@@ -14,7 +14,7 @@ export class AssessmentSessionEntity {
   @Column({ name: 'resource_link_id', default: '' }) resourceLinkId: string;
   @Column('text', { name: 'prompt_snapshot_html', nullable: true }) promptSnapshotHtml: string | null;
   @Column('text', { name: 'selected_cards_html', nullable: true }) selectedCardsHtml: string | null;
-  @Column('simple-array', { name: 'deck_ids' }) deckIds: string[];
+  @Column('text', { name: 'deck_ids', array: true }) deckIds: string[];
   @Column({ name: 'word_count', default: 0 }) wordCount: number;
   @Column({ default: 0 }) score: number;
   @Column({ name: 'score_total', default: 0 }) scoreTotal: number;
