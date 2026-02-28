@@ -485,9 +485,9 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
           playlistTitle: currentPlaylist.title,
         }),
       });
-      const data = (await res.json().catch(() => ({}))) as { synced?: boolean; error?: string };
+      const data = (await res.json().catch(() => ({}))) as { synced?: boolean; error?: string; message?: string };
       if (!res.ok || data.synced === false) {
-        const msg = data.error || `Save failed (${res.status})`;
+        const msg = data.message || data.error || `Save failed (${res.status})`;
         setSaveError(msg);
         submittedForSessionRef.current = false;
       } else {

@@ -26,11 +26,18 @@ export class SubmissionController {
     @Res({ passthrough: true }) res: Response,
     @Body() dto: SubmitFlashcardDto,
   ): Promise<{ synced: boolean; error?: string }> {
-    const ctx = req.session!.ltiContext! as LtiContext;
-    const result = await this.submission.submitFlashcard(ctx, dto);
-    if (result.synced) {
-      res.status(HttpStatus.CREATED);
+    try {
+      const ctx = req.session!.ltiContext! as LtiContext;
+      const result = await this.submission.submitFlashcard(ctx, dto);
+      if (result.synced) {
+        res.status(HttpStatus.CREATED);
+      }
+      return result;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[Submission POST] unhandled error:', msg);
+      res.status(HttpStatus.ACCEPTED);
+      return { synced: false, error: msg };
     }
-    return result;
   }
 }
