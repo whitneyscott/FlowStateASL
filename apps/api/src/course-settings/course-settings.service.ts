@@ -5,17 +5,17 @@ import { Repository } from 'typeorm';
 import { CanvasService } from '../canvas/canvas.service';
 import { SproutVideoService } from '../sproutvideo/sproutvideo.service';
 import type { SproutPlaylist } from '../sproutvideo/interfaces/sprout-playlist.interface';
-import type { SproutVideoItem } from '../sproutvideo/interfaces/sprout-video-item.interface';
 import { CourseSettingsEntity } from './entities/course-settings.entity';
 
 interface AssignmentDescriptionData {
   v?: number;
+  sproutAccountId?: string;
   selectedCurriculums?: string[];
   selectedUnits?: string[];
   filteredPlaylists?: Array<{
     id: string;
     title: string;
-    items?: Array<{ title: string; embed: string }>;
+    items?: Array<{ id?: string; title: string; embed?: string }>;
   }>;
   updatedAt?: string;
   playlistUpdatedAt?: Record<string, string>;
@@ -76,7 +76,8 @@ export class CourseSettingsService {
   ): Promise<{
     selectedCurriculums: string[];
     selectedUnits: string[];
-    filteredPlaylists?: Array<{ id: string; title: string; items?: Array<{ title: string; embed: string }> }>;
+    filteredPlaylists?: Array<{ id: string; title: string; items?: Array<{ id?: string; title: string; embed?: string }> }>;
+    sproutAccountId?: string;
     progressAssignmentId: string | null;
     hasCanvasToken: boolean;
     needsUpdate?: boolean;
@@ -148,6 +149,7 @@ export class CourseSettingsService {
         selectedCurriculums,
         selectedUnits,
         filteredPlaylists,
+        sproutAccountId: parsed.sproutAccountId ?? undefined,
         progressAssignmentId: assignmentId,
         hasCanvasToken,
         needsUpdate,
@@ -210,47 +212,31 @@ export class CourseSettingsService {
     const allPlaylists = await this.sproutVideo.fetchAllPlaylists();
     const filtered = filterPlaylistsByCurriculumUnits(allPlaylists, selectedCurriculums, selectedUnits);
 
+    const sproutAccountId = this.config.get<string>('SPROUT_ACCOUNT_ID') ?? undefined;
     const filteredPlaylists: Array<{
       id: string;
       title: string;
-      items: Array<{ title: string; embed: string }>;
+      items: Array<{ id: string; title: string }>;
     }> = [];
     const playlistUpdatedAt: Record<string, string> = {};
 
-    let baseDelayMs = 500;
     for (const p of filtered) {
       if (this.sproutVideo.isBlacklisted(String(p.title ?? ''))) continue;
-      let items: SproutVideoItem[] | null = null;
-      let delay = baseDelayMs;
-      const maxRetries = 4;
-      for (let attempt = 0; attempt <= maxRetries; attempt++) {
-        try {
-          items = (await this.sproutVideo.getPlaylistItems('', p.id)) as SproutVideoItem[];
-          break;
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e);
-          const is429 = msg.includes('429');
-          if (!is429 || attempt === maxRetries) throw e;
-          await new Promise((r) => setTimeout(r, delay));
-          delay *= 2;
-          baseDelayMs = Math.min(baseDelayMs + 100, 2000);
-        }
-      }
-      if (!items) throw new Error('Failed to load playlist items');
+      const videoIds = Array.isArray(p.videos) ? p.videos : [];
       filteredPlaylists.push({
         id: p.id,
         title: String(p.title ?? ''),
-        items: items.map((it) => ({
-          title: String(it.title ?? 'Vocabulary Item'),
-          embed: String(it.embed ?? ''),
+        items: videoIds.map((vid) => ({
+          id: String(vid),
+          title: 'Vocabulary Item',
         })),
       });
       if (p.updated_at) playlistUpdatedAt[p.id] = p.updated_at;
-      await new Promise((r) => setTimeout(r, baseDelayMs));
     }
 
     const payload: AssignmentDescriptionData = {
       v: 1,
+      sproutAccountId: sproutAccountId ?? undefined,
       selectedCurriculums: selectedCurriculums ?? [],
       selectedUnits: selectedUnits ?? [],
       filteredPlaylists,

@@ -5,7 +5,7 @@ import { TeacherSettings } from '../components/TeacherSettings';
 import './FlashcardsPage.css';
 
 type PlaylistItem = { title: string; id?: string };
-type VideoItem = { title: string; embed?: string };
+type VideoItem = { title: string; embed?: string; id?: string };
 
 type Mode = 'rehearsal' | 'tutorial' | 'screening';
 type FirstSide = 'english' | 'asl';
@@ -32,7 +32,7 @@ const LAST_SESSION_KEY = (courseId: string) => `flashcards-last-${courseId}`;
 const HUB_CACHE_KEY = (courseId: string) => `flashcards-hub-${courseId}`;
 const HUB_CACHE_TTL_MS = 5 * 60 * 1000;
 
-type CachedPlaylist = { id: string; title: string; items?: Array<{ title: string; embed: string }> };
+type CachedPlaylist = { id: string; title: string; items?: Array<{ id?: string; title: string; embed?: string }> };
 
 interface FlashcardsPageProps {
   context: LtiContext;
@@ -47,7 +47,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   const isCourseNavigation = !!(context?.courseId && !hasRealAssignment);
   const [playlists, setPlaylists] = useState<PlaylistItem[]>([]);
   const [playlistsLoading, setPlaylistsLoading] = useState(true);
-  const [courseSettings, setCourseSettings] = useState<{ selectedCurriculums: string[]; selectedUnits: string[] } | null>(null);
+  const [courseSettings, setCourseSettings] = useState<{ selectedCurriculums: string[]; selectedUnits: string[]; sproutAccountId?: string } | null>(null);
   const [allPlaylistsHub, setAllPlaylistsHub] = useState<Array<{ id: string; title: string }>>([]);
   const [filteredPlaylistsWithItems, setFilteredPlaylistsWithItems] = useState<CachedPlaylist[]>([]);
   const [hubSelectedUnit, setHubSelectedUnit] = useState('');
@@ -122,10 +122,10 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
       if (cached) {
         const parsed = JSON.parse(cached) as { cs: unknown; pl: CachedPlaylist[]; ts: number };
         if (Date.now() - (parsed.ts ?? 0) < HUB_CACHE_TTL_MS && Array.isArray(parsed.pl)) {
-          const cs = parsed.cs as { selectedCurriculums?: string[]; selectedUnits?: string[] } | null;
+          const cs = parsed.cs as { selectedCurriculums?: string[]; selectedUnits?: string[]; sproutAccountId?: string } | null;
           setCourseSettings(
             cs && typeof cs === 'object'
-              ? { selectedCurriculums: cs.selectedCurriculums ?? [], selectedUnits: cs.selectedUnits ?? [] }
+              ? { selectedCurriculums: cs.selectedCurriculums ?? [], selectedUnits: cs.selectedUnits ?? [], sproutAccountId: cs.sproutAccountId }
               : null,
           );
           const hub = parsed.pl.map((p) => ({ id: p.id, title: p.title }));
@@ -145,7 +145,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
       setLastApiResult('GET /api/course-settings', csRes.status, csRes.ok);
       const cs = await csRes.json().catch(() => null);
       console.log('[Student loadHubData] courseId:', courseId, 'courseSettings from API:', cs);
-      const csState = cs ? { selectedCurriculums: cs.selectedCurriculums ?? [], selectedUnits: cs.selectedUnits ?? [] } : null;
+      const csState = cs ? { selectedCurriculums: cs.selectedCurriculums ?? [], selectedUnits: cs.selectedUnits ?? [], sproutAccountId: cs.sproutAccountId } : null;
       let pl: CachedPlaylist[] = Array.isArray(cs?.filteredPlaylists) ? cs.filteredPlaylists : [];
       if (pl.length === 0 && csState) {
         const plRes = await fetch('/api/flashcard/all-playlists', { credentials: 'include' });
@@ -258,7 +258,13 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     setView(goToPlaylistView ? 'playlist' : 'study');
 
     const cached = filteredPlaylistsWithItems.find((p) => p.id === id);
-    if (cached?.items && cached.items.length > 0) {
+    const sproutAccountId = courseSettings?.sproutAccountId;
+    const buildEmbed = (videoId: string) =>
+      sproutAccountId
+        ? `<iframe src="https://videos.sproutvideo.com/embed/${sproutAccountId}/${videoId}" class="sproutvideo-player" width="640" height="360" frameborder="0" allowfullscreen></iframe>`
+        : undefined;
+    const cachedHasEmbeds = cached?.items?.some((it) => it.embed);
+    if (cached?.items && cached.items.length > 0 && cachedHasEmbeds) {
       let list = cached.items.map((it) => ({ title: it.title, embed: it.embed }));
       if (singleVersionPerAnswer) {
         const seen = new Set<string>();
@@ -280,7 +286,13 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
         { credentials: 'include' },
       );
       const data = await res.json();
-      let list = Array.isArray(data) ? data : [];
+      let list: VideoItem[] = Array.isArray(data) ? data : [];
+      if (sproutAccountId) {
+        list = list.map((it) => ({
+          ...it,
+          embed: it.embed || (it.id ? buildEmbed(it.id) : undefined),
+        }));
+      }
       if (singleVersionPerAnswer) {
         const seen = new Set<string>();
         list = list.filter((item: VideoItem) => {
@@ -540,8 +552,8 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   };
 
   const extractVideoId = (embed: string): string | null => {
-    const m = embed.match(/embed\/([a-zA-Z0-9]+)/);
-    return m ? m[1] : null;
+    const m = embed.match(/embed\/[^/]+\/([a-zA-Z0-9]+)/);
+    return m ? m[1] : embed.match(/embed\/([a-zA-Z0-9]+)/)?.[1] ?? null;
   };
 
   const hasVideoOnScreen = currentItem && (
@@ -591,8 +603,8 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   }, [handleVideoCompleted]);
 
   useEffect(() => {
-    if (!hasVideoOnScreen || !currentItem?.embed) return;
-    const vid = extractVideoId(currentItem.embed);
+    if (!hasVideoOnScreen || (!currentItem?.embed && !currentItem?.id)) return;
+    const vid = currentItem.id ?? (currentItem.embed ? extractVideoId(currentItem.embed) : null);
     if (!vid || typeof (window as unknown as { SV?: unknown }).SV === 'undefined') return;
     const t = setTimeout(() => {
       try {
