@@ -48,7 +48,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   const [hubSelectedUnit, setHubSelectedUnit] = useState('');
   const [hubSelectedSection, setHubSelectedSection] = useState('');
   const [lastSession, setLastSession] = useState<{ unit: string } | null>(null);
-  const [view, setView] = useState<'menu' | 'study' | 'results'>('menu');
+  const [view, setView] = useState<'menu' | 'study' | 'results' | 'playlist'>('menu');
   const [currentPlaylist, setCurrentPlaylist] = useState<{
     id: string;
     title: string;
@@ -203,8 +203,9 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     setStreak(0);
     setBenchmarkNagDismissed(false);
     setShowingAnswer(false);
-    setView('study');
     setScreeningOverlay(null);
+    const goToPlaylistView = viewAsPlaylist;
+    setView(goToPlaylistView ? 'playlist' : 'study');
     try {
       const res = await fetch(
         `/api/flashcard/items?playlist_id=${encodeURIComponent(id)}`,
@@ -577,7 +578,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                 {playlistsLoading ? (
                   <div className="flashcards-loading">
                     <div className="flashcards-spinner" />
-                    <p>Loading...</p>
+                    <p>Loading units and sections...</p>
                   </div>
                 ) : (
                   <>
@@ -1053,6 +1054,38 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                 onClick={returnToMenu}
               >
                 Change Deck
+              </button>
+            </div>
+          </div>
+        )}
+
+        {view === 'playlist' && (
+          <div className="flashcards-playlist-view">
+            {currentPlaylist && (
+              <h2 className="flashcards-topic-header">{currentPlaylist.title}</h2>
+            )}
+            <div className="flashcards-playlist-view-list">
+              {items.map((item, idx) => (
+                <div key={idx} className="flashcards-playlist-view-item">
+                  <p className="flashcards-playlist-view-title">
+                    {idx + 1}. {item.title}
+                  </p>
+                  {item.embed && (
+                    <div
+                      className="flashcards-video-wrap"
+                      dangerouslySetInnerHTML={{ __html: item.embed }}
+                    />
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className="flashcards-secondary-controls">
+              <button
+                type="button"
+                className="flashcards-btn-nav"
+                onClick={returnToMenu}
+              >
+                Back to Menu
               </button>
             </div>
           </div>

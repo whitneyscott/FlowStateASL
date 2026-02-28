@@ -18,13 +18,19 @@
 
 ✅ Playlist View: Add "View as Playlist" toggle to the initial selection window.
 
+✅ "View as Playlist": Connect toggle to an actual playlist view for students.
+
 ✅ Change Deck Optimization: Cache the list of playlists so "Change Deck" doesn't trigger a full reload.
 
 ✅ Video Display Logic: Add option to present only one version if multiple videos have the same English answer.
 
+✅ Students: Add spinner when available units and sections are loading.
+
 ## Stage 3: Teacher Settings & Permissions
 
 ⬜ "View as Student" Toggle: Hide teacher dropdowns and apply student visibility rules when active.
+
+⬜ Teacher Settings: Add Canvas API token field so we can stop using hard-coded env token.
 
 ⬜ Settings Labeling: Ensure all toggles use ONLY "Show" and "Hide."
 
