@@ -32,7 +32,10 @@ export class CourseSettingsController {
       cookieHeader: req.headers.cookie ? 'present' : 'MISSING',
     });
     if (!ctx?.courseId) return null;
-    const result = await this.courseSettings.get(ctx.courseId);
+    const result = await this.courseSettings.get(ctx.courseId, {
+      isTeacher: this.ltiService.isTeacherRole(ctx.roles ?? ''),
+      canvasDomain: ctx.canvasDomain,
+    });
     console.log('[CourseSettings GET] courseId:', ctx.courseId, 'result:', JSON.stringify(result));
     return result;
   }

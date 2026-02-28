@@ -320,6 +320,40 @@ export class CanvasService {
     return String(data.id ?? '');
   }
 
+  async getAssignment(
+    courseId: string,
+    assignmentId: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<{ description?: string } | null> {
+    const domain = this.getDomain(domainOverride);
+    const url = `https://${domain}/api/v1/courses/${courseId}/assignments/${assignmentId}`;
+    const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { description?: string };
+    return { description: data.description };
+  }
+
+  async updateAssignmentDescription(
+    courseId: string,
+    assignmentId: string,
+    description: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<void> {
+    const domain = this.getDomain(domainOverride);
+    const url = `https://${domain}/api/v1/courses/${courseId}/assignments/${assignmentId}`;
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: this.getAuthHeaders(tokenOverride),
+      body: JSON.stringify({ assignment: { description } }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Canvas update assignment description failed: ${res.status} ${text}`);
+    }
+  }
+
   async ensureFlashcardProgressAssignment(
     courseId: string,
     domainOverride?: string,

@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { CanvasModule } from '../canvas/canvas.module';
+import { SproutVideoModule } from '../sproutvideo/sproutvideo.module';
 import { LtiModule } from '../lti/lti.module';
 import { CourseSettingsController } from './course-settings.controller';
 import { CourseSettingsService } from './course-settings.service';
@@ -10,6 +11,7 @@ import { CourseSettingsEntity } from './entities/course-settings.entity';
   imports: [
     TypeOrmModule.forFeature([CourseSettingsEntity]),
     CanvasModule,
+    SproutVideoModule,
     LtiModule,
   ],
   controllers: [CourseSettingsController],

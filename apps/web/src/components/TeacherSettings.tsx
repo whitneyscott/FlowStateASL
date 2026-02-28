@@ -50,6 +50,8 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
   const [loading, setLoading] = useState(true);
   const [playlistTotal, setPlaylistTotal] = useState<number | null>(null);
   const [canvasApiTokenInput, setCanvasApiTokenInput] = useState('');
+  const [needsUpdate, setNeedsUpdate] = useState(false);
+  const [showSaveModal, setShowSaveModal] = useState(false);
 
   const teacher = context && isTeacher(context.roles);
   const hasLti = context && context.courseId && context.userId !== 'standalone';
@@ -135,6 +137,7 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
         }
         setHasCanvasToken(!!cs?.hasCanvasToken);
         setCanvasApiTokenInput('');
+        setNeedsUpdate(!!cs?.needsUpdate);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load');
       } finally {
@@ -153,6 +156,7 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
     if (!teacher || !hasLti) return;
     setSaving(true);
     setSavedFeedback(false);
+    setShowSaveModal(true);
     setLastFunction('PUT /api/course-settings');
     console.log('[Teacher Save] Sending:', { selectedCurriculums, selectedUnits }, 'context.courseId=', context?.courseId);
     try {
@@ -178,9 +182,11 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
       }
       onConfigChange?.();
       setSavedFeedback(true);
+      setNeedsUpdate(false);
       setTimeout(() => setSavedFeedback(false), 2000);
     } finally {
       setSaving(false);
+      setShowSaveModal(false);
     }
   };
 
@@ -268,6 +274,16 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
           />
         </div>
         <div className="teacher-settings-actions">
+          {needsUpdate && (
+            <button
+              type="button"
+              className="teacher-settings-btn teacher-settings-btn-update"
+              onClick={handleSave}
+              disabled={saving}
+            >
+              Update playlists
+            </button>
+          )}
           <button
             type="button"
             className="teacher-settings-btn"
@@ -279,9 +295,13 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
           {savedFeedback && <span className="teacher-settings-saved">Saved!</span>}
         </div>
       </div>
-      {saving && (
-        <div className="teacher-settings-overlay">
-          <div className="teacher-settings-spinner" />
+      {showSaveModal && saving && (
+        <div className="teacher-settings-overlay teacher-settings-save-modal">
+          <div className="teacher-settings-save-modal-content">
+            <div className="teacher-settings-spinner" />
+            <p>Configuring decks for best student experience...</p>
+            <p className="teacher-settings-save-modal-note">This may take 30–60 seconds.</p>
+          </div>
         </div>
       )}
       {allPlaylists.length > 0 && (

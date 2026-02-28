@@ -253,3 +253,42 @@
 .teacher-settings {
   position: relative;
 }
+
+.teacher-settings-save-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.7);
+  border-radius: 0;
+}
+
+.teacher-settings-save-modal-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 32px;
+  background: #27272a;
+  border: 1px solid #52525b;
+  border-radius: 12px;
+  max-width: 360px;
+}
+
+.teacher-settings-save-modal-content p {
+  margin: 0;
+  color: #e4e4e7;
+  font-size: 16px;
+}
+
+.teacher-settings-save-modal-note {
+  font-size: 14px !important;
+  color: #a1a1aa !important;
+}
+
+.teacher-settings-btn-update {
+  background: #0d9488;
+}
+
+.teacher-settings-btn-update:hover:not(:disabled) {
+  background: #14b8a6;
+}

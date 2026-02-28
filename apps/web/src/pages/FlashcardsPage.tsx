@@ -29,6 +29,10 @@ function segments(title: string): string[] {
 }
 
 const LAST_SESSION_KEY = (courseId: string) => `flashcards-last-${courseId}`;
+const HUB_CACHE_KEY = (courseId: string) => `flashcards-hub-${courseId}`;
+const HUB_CACHE_TTL_MS = 5 * 60 * 1000;
+
+type CachedPlaylist = { id: string; title: string; items?: Array<{ title: string; embed: string }> };
 
 interface FlashcardsPageProps {
   context: LtiContext;
@@ -45,6 +49,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   const [playlistsLoading, setPlaylistsLoading] = useState(true);
   const [courseSettings, setCourseSettings] = useState<{ selectedCurriculums: string[]; selectedUnits: string[] } | null>(null);
   const [allPlaylistsHub, setAllPlaylistsHub] = useState<Array<{ id: string; title: string }>>([]);
+  const [filteredPlaylistsWithItems, setFilteredPlaylistsWithItems] = useState<CachedPlaylist[]>([]);
   const [hubSelectedUnit, setHubSelectedUnit] = useState('');
   const [hubSelectedSection, setHubSelectedSection] = useState('');
   const [lastSession, setLastSession] = useState<{ unit: string } | null>(null);
@@ -115,14 +120,17 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     try {
       const cached = sessionStorage.getItem(cacheKey);
       if (cached) {
-        const parsed = JSON.parse(cached) as { cs: unknown; pl: Array<{ id?: string; title: string }>; ts: number };
+        const parsed = JSON.parse(cached) as { cs: unknown; pl: CachedPlaylist[]; ts: number };
         if (Date.now() - (parsed.ts ?? 0) < HUB_CACHE_TTL_MS && Array.isArray(parsed.pl)) {
+          const cs = parsed.cs as { selectedCurriculums?: string[]; selectedUnits?: string[] } | null;
           setCourseSettings(
-            parsed.cs && typeof parsed.cs === 'object' && 'selectedCurriculums' in parsed.cs
-              ? { selectedCurriculums: (parsed.cs.selectedCurriculums as string[]) ?? [], selectedUnits: (parsed.cs.selectedUnits as string[]) ?? [] }
+            cs && typeof cs === 'object'
+              ? { selectedCurriculums: cs.selectedCurriculums ?? [], selectedUnits: cs.selectedUnits ?? [] }
               : null,
           );
-          setAllPlaylistsHub(parsed.pl);
+          const hub = parsed.pl.map((p) => ({ id: p.id, title: p.title }));
+          setAllPlaylistsHub(hub);
+          setFilteredPlaylistsWithItems(parsed.pl);
           if (parsed.pl.length > 0) setSproutVideo(true, parsed.pl.length);
           setPlaylistsLoading(false);
           return;
@@ -132,23 +140,28 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     }
     setPlaylistsLoading(true);
     try {
-      setLastFunction('GET /api/course-settings + all-playlists');
-      const [csRes, plRes] = await Promise.all([
-        fetch('/api/course-settings', { credentials: 'include' }),
-        fetch('/api/flashcard/all-playlists', { credentials: 'include' }),
-      ]);
+      setLastFunction('GET /api/course-settings');
+      const csRes = await fetch('/api/course-settings', { credentials: 'include' });
       setLastApiResult('GET /api/course-settings', csRes.status, csRes.ok);
       const cs = await csRes.json().catch(() => null);
-      const pl = await plRes.json().catch(() => []);
-      const list = Array.isArray(pl) ? pl : [];
       console.log('[Student loadHubData] courseId:', courseId, 'courseSettings from API:', cs);
       const csState = cs ? { selectedCurriculums: cs.selectedCurriculums ?? [], selectedUnits: cs.selectedUnits ?? [] } : null;
-      const hub = list.map((p: { id?: string; title: string }) => ({ id: p.id ?? p.title, title: p.title }));
+      let pl: CachedPlaylist[] = Array.isArray(cs?.filteredPlaylists) ? cs.filteredPlaylists : [];
+      if (pl.length === 0 && csState) {
+        const plRes = await fetch('/api/flashcard/all-playlists', { credentials: 'include' });
+        const allPl = await plRes.json().catch(() => []);
+        pl = (Array.isArray(allPl) ? allPl : []).map((p: { id?: string; title: string }) => ({
+          id: p.id ?? p.title,
+          title: p.title,
+        }));
+      }
+      const hub = pl.map((p) => ({ id: p.id, title: p.title }));
       setCourseSettings(csState);
       setAllPlaylistsHub(hub);
-      if (list.length > 0) setSproutVideo(true, list.length);
+      setFilteredPlaylistsWithItems(pl);
+      if (pl.length > 0) setSproutVideo(true, pl.length);
       try {
-        sessionStorage.setItem(cacheKey, JSON.stringify({ cs: csState, pl: hub, ts: Date.now() }));
+        sessionStorage.setItem(cacheKey, JSON.stringify({ cs: csState, pl, ts: Date.now() }));
       } catch {
       }
       const stored = localStorage.getItem(LAST_SESSION_KEY(courseId));
@@ -243,6 +256,24 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     setScreeningOverlay(null);
     const goToPlaylistView = viewAsPlaylist;
     setView(goToPlaylistView ? 'playlist' : 'study');
+
+    const cached = filteredPlaylistsWithItems.find((p) => p.id === id);
+    if (cached?.items && cached.items.length > 0) {
+      let list = cached.items.map((it) => ({ title: it.title, embed: it.embed }));
+      if (singleVersionPerAnswer) {
+        const seen = new Set<string>();
+        list = list.filter((item: VideoItem) => {
+          const key = (item.title || '').toLowerCase().trim();
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+      }
+      setOriginalItems(list);
+      setItems([...list]);
+      return;
+    }
+
     try {
       const res = await fetch(
         `/api/flashcard/items?playlist_id=${encodeURIComponent(id)}`,
@@ -602,7 +633,14 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
             {teacherMode && !viewAsStudent && (
               <TeacherSettings
                 context={context}
-                onConfigChange={() => {}}
+                onConfigChange={() => {
+                  if (context?.courseId) {
+                    try {
+                      sessionStorage.removeItem(HUB_CACHE_KEY(context.courseId));
+                    } catch {}
+                    if (viewAsStudent) loadHubData();
+                  }
+                }}
                 onFilteredPlaylists={handleFilteredPlaylists}
               />
             )}

@@ -59,15 +59,27 @@ export class SproutVideoService {
     const perPage = 100;
     let hasMore = true;
     while (hasMore) {
-      const url = `https://api.sproutvideo.com/v1/playlists?per_page=${perPage}&page=${page}`;
+      const url = `https://api.sproutvideo.com/v1/playlists?order_by=updated_at&order_dir=desc&per_page=${perPage}&page=${page}`;
       const res = await fetch(url, {
         headers: { 'SproutVideo-Api-Key': apiKey },
       });
       if (!res.ok) throw new Error(`SproutVideo API error: ${res.status}`);
-      const data = (await res.json()) as { playlists?: Array<{ id: string; title: string }> };
+      const data = (await res.json()) as {
+        playlists?: Array<{
+          id: string;
+          title: string;
+          videos?: string[];
+          updated_at?: string;
+        }>;
+      };
       const playlists = data.playlists ?? [];
       for (const p of playlists) {
-        all.push({ id: String(p.id), title: String(p.title ?? '') });
+        all.push({
+          id: String(p.id),
+          title: String(p.title ?? ''),
+          videos: Array.isArray(p.videos) ? p.videos.map(String) : [],
+          updated_at: typeof p.updated_at === 'string' ? p.updated_at : undefined,
+        });
       }
       hasMore = playlists.length === perPage;
       page++;
