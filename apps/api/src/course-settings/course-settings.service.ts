@@ -217,9 +217,26 @@ export class CourseSettingsService {
     }> = [];
     const playlistUpdatedAt: Record<string, string> = {};
 
+    let baseDelayMs = 500;
     for (const p of filtered) {
       if (this.sproutVideo.isBlacklisted(String(p.title ?? ''))) continue;
-      const items = (await this.sproutVideo.getPlaylistItems('', p.id)) as SproutVideoItem[];
+      let items: SproutVideoItem[] | null = null;
+      let delay = baseDelayMs;
+      const maxRetries = 4;
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+          items = (await this.sproutVideo.getPlaylistItems('', p.id)) as SproutVideoItem[];
+          break;
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          const is429 = msg.includes('429');
+          if (!is429 || attempt === maxRetries) throw e;
+          await new Promise((r) => setTimeout(r, delay));
+          delay *= 2;
+          baseDelayMs = Math.min(baseDelayMs + 100, 2000);
+        }
+      }
+      if (!items) throw new Error('Failed to load playlist items');
       filteredPlaylists.push({
         id: p.id,
         title: String(p.title ?? ''),
@@ -229,8 +246,7 @@ export class CourseSettingsService {
         })),
       });
       if (p.updated_at) playlistUpdatedAt[p.id] = p.updated_at;
-      // Throttle: wait 250ms before next SproutVideo request to avoid 429 rate limit
-      await new Promise((r) => setTimeout(r, 250));
+      await new Promise((r) => setTimeout(r, baseDelayMs));
     }
 
     const payload: AssignmentDescriptionData = {
