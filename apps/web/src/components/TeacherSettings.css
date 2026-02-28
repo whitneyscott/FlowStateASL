@@ -183,8 +183,35 @@
 .teacher-settings-canvas-token {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   min-width: 280px;
+}
+
+.teacher-settings-token-prompt {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.teacher-settings-token-help {
+  margin: 0;
+  font-size: 14px;
+  color: #fcd34d;
+  background: rgba(252, 211, 77, 0.12);
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(252, 211, 77, 0.4);
+}
+
+.teacher-settings-token-link {
+  color: #34d399;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.teacher-settings-token-link:hover {
+  color: #6ee7b7;
 }
 
 .teacher-settings-input {

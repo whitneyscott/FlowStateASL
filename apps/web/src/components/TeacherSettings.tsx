@@ -158,7 +158,6 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
     setSavedFeedback(false);
     setShowSaveModal(true);
     setLastFunction('PUT /api/course-settings');
-    console.log('[Teacher Save] Sending:', { selectedCurriculums, selectedUnits }, 'context.courseId=', context?.courseId);
     try {
       const body: { selectedCurriculums: string[]; selectedUnits: string[]; canvasApiToken?: string } = {
         selectedCurriculums,
@@ -184,11 +183,18 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
       setSavedFeedback(true);
       setNeedsUpdate(false);
       setTimeout(() => setSavedFeedback(false), 2000);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Save failed';
+      setLastApiError('PUT /api/course-settings', 0, msg);
     } finally {
       setSaving(false);
       setShowSaveModal(false);
     }
   };
+
+  const canvasTokenUrl = context?.canvasDomain
+    ? `https://${context.canvasDomain}/profile/settings`
+    : null;
 
   if (!teacher || !hasLti) return null;
   if (loading && allPlaylists.length === 0 && !error) {
@@ -264,14 +270,32 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
           </div>
         </div>
         <div className="teacher-settings-canvas-token">
-          <span className="teacher-settings-label">Canvas API Token</span>
-          <input
-            type="password"
-            className="teacher-settings-input"
-            placeholder={hasCanvasToken ? 'Enter new token to replace' : 'Enter Canvas API token (optional)'}
-            value={canvasApiTokenInput}
-            onChange={(e) => setCanvasApiTokenInput(e.target.value)}
-          />
+          <div className="teacher-settings-token-prompt">
+            <span className="teacher-settings-label">Canvas API Token (required to save)</span>
+            {!hasCanvasToken && canvasTokenUrl && (
+              <p className="teacher-settings-token-help">
+                Generate an access token in Canvas:{' '}
+                <a
+                  href={canvasTokenUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="teacher-settings-token-link"
+                >
+                  Open Token Settings
+                </a>
+              </p>
+            )}
+          </div>
+          <form onSubmit={(e) => { e.preventDefault(); handleSave(); }} autoComplete="off">
+            <input
+              type="password"
+              className="teacher-settings-input"
+              placeholder={hasCanvasToken ? 'Enter new token to replace' : 'Enter Canvas API token (required)'}
+              value={canvasApiTokenInput}
+              onChange={(e) => setCanvasApiTokenInput(e.target.value)}
+              autoComplete="off"
+            />
+          </form>
         </div>
         <div className="teacher-settings-actions">
           {needsUpdate && (

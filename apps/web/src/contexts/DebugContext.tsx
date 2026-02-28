@@ -37,7 +37,7 @@ export function DebugProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const setLastApiResult = useCallback((endpoint: string, status: number, ok: boolean) => {
-    setState((s) => ({ ...s, lastApiResult: { endpoint, status, ok }, lastApiError: ok ? s.lastApiError : null }));
+    setState((s) => ({ ...s, lastApiResult: { endpoint, status, ok }, lastApiError: ok ? null : s.lastApiError }));
   }, []);
 
   const setLastApiError = useCallback((endpoint: string, status: number, message: string) => {
