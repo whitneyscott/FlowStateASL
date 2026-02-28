@@ -35,22 +35,28 @@ export class SubmissionService {
     ctx: LtiContext,
     dto: SubmitFlashcardDto,
   ): Promise<void> {
+    const progressAssignmentId =
+      await this.courseSettings.getProgressAssignmentId(
+        ctx.courseId,
+        ctx.canvasDomain,
+      );
+    const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId);
+    const commentText = buildProgressJson(dto);
     try {
-      const progressAssignmentId =
-        await this.courseSettings.getProgressAssignmentId(
-          ctx.courseId,
-          ctx.canvasDomain,
-        );
-      const commentText = buildProgressJson(dto);
+      await this.canvas.putSubmissionComment(
+        ctx.courseId,
+        progressAssignmentId,
+        ctx.userId,
+        commentText,
+        ctx.canvasDomain,
+        token,
+      );
+    } catch (putErr) {
+      console.warn(
+        '[saveProgressToCanvas] putSubmissionComment failed, trying createSubmissionWithComment',
+        { courseId: ctx.courseId, assignmentId: progressAssignmentId, userId: ctx.userId },
+      );
       try {
-        await this.canvas.putSubmissionComment(
-          ctx.courseId,
-          progressAssignmentId,
-          ctx.userId,
-          commentText,
-          ctx.canvasDomain,
-        );
-      } catch {
         await this.canvas.createSubmissionWithComment(
           ctx.courseId,
           progressAssignmentId,
@@ -58,10 +64,13 @@ export class SubmissionService {
           'Flashcard progress',
           commentText,
           ctx.canvasDomain,
+          token,
         );
+      } catch (createErr) {
+        const msg = createErr instanceof Error ? createErr.message : String(createErr);
+        console.error('[saveProgressToCanvas] failed:', msg);
+        throw createErr;
       }
-    } catch {
-      // Non-fatal: progress save best-effort; do not block LTI sync
     }
   }
 
@@ -117,11 +126,21 @@ export class SubmissionService {
 
     if (!isGraded) {
       await this.sessionRepo.delete(row.id);
-      await this.saveProgressToCanvas(ctx, dto);
-      return { synced: true };
+      try {
+        await this.saveProgressToCanvas(ctx, dto);
+        return { synced: true };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { synced: false, error: msg };
+      }
     }
 
-    await this.saveProgressToCanvas(ctx, dto);
+    try {
+      await this.saveProgressToCanvas(ctx, dto);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { synced: false, error: msg };
+    }
 
     const { lisOutcomeServiceUrl, lisResultSourcedid } = ctx;
     if (!lisOutcomeServiceUrl || !lisResultSourcedid) {

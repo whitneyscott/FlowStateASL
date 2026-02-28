@@ -265,6 +265,11 @@ export class CourseSettingsService {
     );
   }
 
+  async getEffectiveCanvasToken(courseId: string): Promise<string | null> {
+    const row = await this.repo.findOne({ where: { courseId } });
+    return row?.canvasApiToken ?? this.config.get<string>('CANVAS_API_TOKEN') ?? null;
+  }
+
   async getProgressAssignmentId(
     courseId: string,
     canvasDomain?: string,

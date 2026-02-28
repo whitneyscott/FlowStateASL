@@ -507,6 +507,12 @@
   color: #34d399;
 }
 
+.flashcards-save-error {
+  color: #f87171;
+  font-size: 0.875rem;
+  margin: 8px 0;
+}
+
 .flashcards-results-score {
   font-size: 3rem;
 }

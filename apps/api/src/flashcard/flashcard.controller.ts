@@ -69,7 +69,9 @@ export class FlashcardController {
 
   @Get('items')
   async getItems(@Query('playlist_id') playlistId: string) {
-    return this.flashcard.getPlaylistItems(playlistId ?? '');
+    const id = String(playlistId ?? '').trim();
+    if (!id) return [];
+    return this.flashcard.getPlaylistItems(id);
   }
 
   @Get('playlist-count')
@@ -80,6 +82,22 @@ export class FlashcardController {
     } catch {
       return { total: 0 };
     }
+  }
+
+  @Get('progress')
+  async getProgress(
+    @Req() req: Request,
+    @Query('deck_ids') deckIdsParam?: string,
+  ) {
+    const ctx = req.session?.ltiContext;
+    if (!ctx?.courseId || !ctx?.userId) return {};
+    const deckIds = deckIdsParam?.split(',').map((s) => s.trim()).filter(Boolean);
+    return this.flashcard.getDeckProgress(
+      ctx.courseId,
+      ctx.userId,
+      ctx.canvasDomain,
+      deckIds?.length ? deckIds : undefined,
+    );
   }
 
   @Get('all-playlists')

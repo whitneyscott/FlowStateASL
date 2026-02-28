@@ -1,8 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { SproutVideoService } from '../sproutvideo/sproutvideo.service';
 import { CanvasService } from '../canvas/canvas.service';
+import { CourseSettingsService } from '../course-settings/course-settings.service';
+import { SproutVideoService } from '../sproutvideo/sproutvideo.service';
 import { FlashcardConfigEntity } from './entities/flashcard-config.entity';
 
 @Injectable()
@@ -10,6 +11,7 @@ export class FlashcardService {
   constructor(
     private readonly sproutVideo: SproutVideoService,
     private readonly canvas: CanvasService,
+    private readonly courseSettings: CourseSettingsService,
     @InjectRepository(FlashcardConfigEntity)
     private readonly configRepo: Repository<FlashcardConfigEntity>,
   ) {}
@@ -68,6 +70,55 @@ export class FlashcardService {
       unit: row.unit,
       section: row.section,
     };
+  }
+
+  async getDeckProgress(
+    courseId: string,
+    userId: string,
+    canvasDomain?: string,
+    deckIds?: string[],
+  ): Promise<Record<string, { completed: number }>> {
+    const result: Record<string, { completed: number }> = {};
+    const byDeck: Record<string, { completed: number; submittedAt: number }> = {};
+    try {
+      const progressAssignmentId =
+        await this.courseSettings.getProgressAssignmentId(courseId, canvasDomain);
+      const token = await this.courseSettings.getEffectiveCanvasToken(courseId);
+      const sub = await this.canvas.getSubmissionWithComments(
+        courseId,
+        progressAssignmentId,
+        userId,
+        canvasDomain,
+        token,
+      );
+      if (!sub?.comments?.length) return result;
+      for (const c of sub.comments) {
+        const raw = c.comment?.trim();
+        if (!raw) continue;
+        try {
+          const parsed = JSON.parse(raw) as { deckIds?: string[]; scoreTotal?: number; submittedAt?: string };
+          const ids = Array.isArray(parsed.deckIds) ? parsed.deckIds : [];
+          const completed = typeof parsed.scoreTotal === 'number' ? parsed.scoreTotal : 0;
+          const submittedAt = parsed.submittedAt ? new Date(parsed.submittedAt).getTime() : 0;
+          for (const deckId of ids) {
+            const id = String(deckId);
+            if (deckIds && deckIds.length > 0 && !deckIds.includes(id)) continue;
+            const existing = byDeck[id];
+            if (!existing || submittedAt > existing.submittedAt) {
+              byDeck[id] = { completed, submittedAt };
+            }
+          }
+        } catch {
+          // ignore non-JSON comments
+        }
+      }
+      for (const id of Object.keys(byDeck)) {
+        result[id] = { completed: byDeck[id].completed };
+      }
+    } catch {
+      // best-effort
+    }
+    return result;
   }
 
   async saveConfig(

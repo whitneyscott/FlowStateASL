@@ -65,6 +65,8 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   const [showingAnswer, setShowingAnswer] = useState(false);
   const [streak, setStreak] = useState(0);
   const [benchmarkNagDismissed, setBenchmarkNagDismissed] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [deckProgress, setDeckProgress] = useState<Record<string, { completed: number }>>({});
   const submittedForSessionRef = useRef(false);
 
   const [secDisplay, setSecDisplay] = useState(3);
@@ -246,6 +248,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
 
   const selectPlaylist = async (id: string, title: string, idx: number) => {
     submittedForSessionRef.current = false;
+    setSaveError(null);
     setCurrentPlaylist({ id, title });
     setPlaylistIndex(idx);
     setCurrentIndex(-1);
@@ -257,7 +260,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     const goToPlaylistView = viewAsPlaylist;
     setView(goToPlaylistView ? 'playlist' : 'study');
 
-    const cached = filteredPlaylistsWithItems.find((p) => p.id === id);
+    const cached = filteredPlaylistsWithItems.find((p) => String(p.id) === String(id));
     const sproutAccountId = courseSettings?.sproutAccountId;
     const buildEmbed = (videoId: string) =>
       sproutAccountId
@@ -277,6 +280,16 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
       }
       setOriginalItems(list);
       setItems([...list]);
+      try {
+        const progRes = await fetch(
+          `/api/flashcard/progress?deck_ids=${encodeURIComponent(id)}`,
+          { credentials: 'include' },
+        );
+        const prog = (await progRes.json().catch(() => ({}))) as Record<string, { completed: number }>;
+        setDeckProgress(prog);
+      } catch {
+        setDeckProgress({});
+      }
       return;
     }
 
@@ -304,8 +317,19 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
       }
       setOriginalItems(list);
       setItems([...list]);
+      try {
+        const progRes = await fetch(
+          `/api/flashcard/progress?deck_ids=${encodeURIComponent(id)}`,
+          { credentials: 'include' },
+        );
+        const prog = (await progRes.json().catch(() => ({}))) as Record<string, { completed: number }>;
+        setDeckProgress(prog);
+      } catch {
+        setDeckProgress({});
+      }
     } catch {
       setItems([]);
+      setDeckProgress({});
     }
   };
 
@@ -437,7 +461,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
 
   const silentSubmitProgress = useCallback(async () => {
     if (!currentPlaylist || submittedForSessionRef.current) return;
-    submittedForSessionRef.current = true;
+    setSaveError(null);
     if (context?.courseId) {
       const [,, u] = segments(currentPlaylist.title);
       if (u) {
@@ -448,7 +472,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
       }
     }
     try {
-      await fetch('/api/submission', {
+      const res = await fetch('/api/submission', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -461,7 +485,18 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
           playlistTitle: currentPlaylist.title,
         }),
       });
-    } catch {
+      const data = (await res.json().catch(() => ({}))) as { synced?: boolean; error?: string };
+      if (!res.ok || data.synced === false) {
+        const msg = data.error || `Save failed (${res.status})`;
+        setSaveError(msg);
+        submittedForSessionRef.current = false;
+      } else {
+        submittedForSessionRef.current = true;
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setSaveError(msg);
+      submittedForSessionRef.current = false;
     }
   }, [context?.courseId, currentPlaylist, score.correct, score.total, mode]);
 
@@ -910,7 +945,9 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
 
             <div className="flashcards-status-bar">
               <span>
-                Progress: {mode === 'tutorial' ? score.details.length : score.correct} / {score.total || items.length}{' '}
+                Progress: {currentIndex < 0
+                  ? `${Math.min(deckProgress[currentPlaylist?.id ?? '']?.completed ?? 0, items.length)} of ${items.length} cards`
+                  : `${mode === 'tutorial' ? score.details.length : score.correct} / ${score.total || items.length}`}{' '}
                 {mode === 'screening' && streak !== 0 && (
                   <span
                     className={
@@ -924,7 +961,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                 )}
               </span>
               <span>
-                Item {currentIndex + 1} of {items.length}
+                {currentIndex < 0 ? '' : `Item ${currentIndex + 1} of ${items.length}`}
               </span>
             </div>
 
@@ -1197,6 +1234,11 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
               {score.correct}/{score.total} ({percentage}%)
             </p>
             <p className="flashcards-benchmark-note">Suggested minimum score: 85%</p>
+            {saveError && (
+              <p className="flashcards-save-error" role="alert">
+                Could not save progress: {saveError}
+              </p>
+            )}
             <div className="flashcards-results-btns">
               <button
                 type="button"

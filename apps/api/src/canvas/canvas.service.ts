@@ -447,7 +447,7 @@ export class CanvasService {
       {
         submissionTypes: ['online_text_entry'],
         pointsPossible: 0,
-        published: false,
+        published: true,
         description: 'Stores flashcard study progress and deck configuration (auto-created by ASL Express)',
         assignmentGroupId,
         omitFromFinalGrade: true,
@@ -457,19 +457,35 @@ export class CanvasService {
     );
   }
 
+  async getSubmissionWithComments(
+    courseId: string,
+    assignmentId: string,
+    userId: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<{ comments?: Array<{ comment?: string }> } | null> {
+    const domain = this.getDomain(domainOverride);
+    const url = `https://${domain}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}?include[]=submission_comments`;
+    const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { submission_comments?: Array<{ comment?: string }> };
+    return { comments: data.submission_comments ?? [] };
+  }
+
   async putSubmissionComment(
     courseId: string,
     assignmentId: string,
     userId: string,
     commentText: string,
     domainOverride?: string,
+    tokenOverride?: string | null,
   ): Promise<void> {
     const domain = this.getDomain(domainOverride);
     const url = `https://${domain}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}`;
     const body = { comment: { text_comment: commentText } };
     const res = await fetch(url, {
       method: 'PUT',
-      headers: this.getAuthHeaders(),
+      headers: this.getAuthHeaders(tokenOverride),
       body: JSON.stringify(body),
     });
     if (!res.ok) {
@@ -485,6 +501,7 @@ export class CanvasService {
     bodyText: string,
     commentText: string,
     domainOverride?: string,
+    tokenOverride?: string | null,
   ): Promise<void> {
     const domain = this.getDomain(domainOverride);
     const url = `https://${domain}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions`;
@@ -498,7 +515,7 @@ export class CanvasService {
     };
     const res = await fetch(url, {
       method: 'POST',
-      headers: this.getAuthHeaders(),
+      headers: this.getAuthHeaders(tokenOverride),
       body: JSON.stringify(body),
     });
     if (!res.ok) {
