@@ -84,7 +84,6 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
     }
     if (lastApiError) {
       newLines.push(`API Error: ${lastApiError.endpoint} ${lastApiError.status} - ${lastApiError.message}`);
-      newLines.push('  (Likely multi-instance: session not shared across Render instances)');
     }
     if (lastServerError) {
       newLines.push(`Last error (500): ${lastServerError.endpoint}`);

@@ -15,6 +15,8 @@ async function bootstrap() {
   const isProduction = process.env.NODE_ENV === 'production';
   const port = process.env.PORT ?? 3000;
 
+  expressApp.set('trust proxy', 1);
+
   const PgSession = connectPgSimple(session);
   const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
@@ -35,6 +37,7 @@ async function bootstrap() {
         secure: isProduction,
         sameSite: isProduction ? 'none' : 'lax',
         httpOnly: true,
+        maxAge: 24 * 60 * 60 * 1000,
       },
     }),
   );
@@ -76,8 +79,9 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, new ExpressAdapter(expressApp));
   app.useGlobalFilters(new DebugExceptionFilter());
   app.setGlobalPrefix('api');
+  const corsOrigin = process.env.CORS_ORIGIN ?? (isProduction ? 'https://flowstateasl.onrender.com' : 'http://localhost:4200');
   app.enableCors({
-    origin: process.env.CORS_ORIGIN ?? 'http://localhost:4200',
+    origin: corsOrigin,
     credentials: true,
   });
 
