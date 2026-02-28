@@ -266,21 +266,78 @@ export class CanvasService {
     }
   }
 
+  async findAssignmentByTitle(
+    courseId: string,
+    assignmentTitle: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<string | null> {
+    const domain = this.getDomain(domainOverride);
+    let page = 1;
+    const perPage = 100;
+    let hasMore = true;
+    while (hasMore) {
+      const url = `https://${domain}/api/v1/courses/${courseId}/assignments?per_page=${perPage}&page=${page}`;
+      const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
+      if (!res.ok) return null;
+      const data = (await res.json()) as Array<{ id: number; name?: string }>;
+      const list = data ?? [];
+      const found = list.find(
+        (a) => String(a.name ?? '').trim() === assignmentTitle.trim(),
+      );
+      if (found) return String(found.id);
+      hasMore = list.length === perPage;
+      page++;
+    }
+    return null;
+  }
+
+  /** @deprecated Use findAssignmentByTitle */
   async findAssignmentByName(
     courseId: string,
     assignmentName: string,
     domainOverride?: string,
     tokenOverride?: string | null,
   ): Promise<string | null> {
+    return this.findAssignmentByTitle(courseId, assignmentName, domainOverride, tokenOverride);
+  }
+
+  async ensureAssignmentGroup(
+    courseId: string,
+    groupName: string,
+    groupWeight: number,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<number> {
     const domain = this.getDomain(domainOverride);
-    const url = `https://${domain}/api/v1/courses/${courseId}/assignments?per_page=100`;
-    const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
-    if (!res.ok) return null;
-    const data = (await res.json()) as Array<{ id: number; name?: string }>;
-    const found = (data ?? []).find(
-      (a) => String(a.name ?? '').trim() === assignmentName.trim(),
+    const listUrl = `https://${domain}/api/v1/courses/${courseId}/assignment_groups`;
+    const listRes = await fetch(listUrl, { headers: this.getAuthHeaders(tokenOverride) });
+    if (!listRes.ok) {
+      const text = await listRes.text();
+      throw new Error(`Canvas list assignment groups failed: ${listRes.status} ${text}`);
+    }
+    const groups = (await listRes.json()) as Array<{ id: number; name?: string }>;
+    const existing = (groups ?? []).find(
+      (g) => String(g.name ?? '').trim() === groupName.trim(),
     );
-    return found ? String(found.id) : null;
+    if (existing) return existing.id;
+
+    const createUrl = `https://${domain}/api/v1/courses/${courseId}/assignment_groups`;
+    const createRes = await fetch(createUrl, {
+      method: 'POST',
+      headers: this.getAuthHeaders(tokenOverride),
+      body: JSON.stringify({
+        assignment_group: { name: groupName, group_weight: groupWeight },
+      }),
+    });
+    if (!createRes.ok) {
+      const text = await createRes.text();
+      throw new Error(`Canvas create assignment group failed: ${createRes.status} ${text}`);
+    }
+    const created = (await createRes.json()) as { id?: number };
+    const id = created.id ?? 0;
+    if (!id) throw new Error('Canvas did not return assignment group id');
+    return id;
   }
 
   async createAssignment(
@@ -291,6 +348,8 @@ export class CanvasService {
       pointsPossible?: number;
       published?: boolean;
       description?: string;
+      assignmentGroupId?: number;
+      omitFromFinalGrade?: boolean;
       tokenOverride?: string | null;
     } = {},
     domainOverride?: string,
@@ -298,7 +357,7 @@ export class CanvasService {
     const domain = this.getDomain(domainOverride);
     const tokenOverride = options.tokenOverride;
     const url = `https://${domain}/api/v1/courses/${courseId}/assignments`;
-    const body = {
+    const body: Record<string, unknown> = {
       assignment: {
         name,
         submission_types: options.submissionTypes ?? ['online_text_entry'],
@@ -307,6 +366,13 @@ export class CanvasService {
         description: options.description ?? '',
       },
     };
+    const assignment = body.assignment as Record<string, unknown>;
+    if (typeof options.assignmentGroupId === 'number') {
+      assignment.assignment_group_id = options.assignmentGroupId;
+    }
+    if (options.omitFromFinalGrade === true) {
+      assignment.omit_from_final_grade = true;
+    }
     const res = await fetch(url, {
       method: 'POST',
       headers: this.getAuthHeaders(tokenOverride),
@@ -359,21 +425,32 @@ export class CanvasService {
     domainOverride?: string,
     tokenOverride?: string | null,
   ): Promise<string> {
-    const existing = await this.findAssignmentByName(
+    const existing = await this.findAssignmentByTitle(
       courseId,
       'Flashcard Progress',
       domainOverride,
       tokenOverride,
     );
     if (existing) return existing;
+
+    const assignmentGroupId = await this.ensureAssignmentGroup(
+      courseId,
+      'Flashcard Progress',
+      0,
+      domainOverride,
+      tokenOverride,
+    );
+
     return this.createAssignment(
       courseId,
       'Flashcard Progress',
       {
         submissionTypes: ['online_text_entry'],
         pointsPossible: 0,
-        published: true,
-        description: 'Stores flashcard study progress (auto-created by ASL Express)',
+        published: false,
+        description: 'Stores flashcard study progress and deck configuration (auto-created by ASL Express)',
+        assignmentGroupId,
+        omitFromFinalGrade: true,
         tokenOverride,
       },
       domainOverride,

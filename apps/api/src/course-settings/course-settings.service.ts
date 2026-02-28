@@ -25,6 +25,28 @@ function segments(title: string): string[] {
   return title.split('.').map((p) => p.trim()).filter(Boolean);
 }
 
+/** Extract JSON from Canvas assignment description (may be HTML-wrapped or escaped) */
+function parseAssignmentDescription(description: string): AssignmentDescriptionData | null {
+  const trimmed = description?.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = JSON.parse(trimmed) as AssignmentDescriptionData;
+    if (parsed && typeof parsed === 'object') return parsed;
+  } catch {
+    // Canvas may return HTML-wrapped content; try to extract JSON
+    const jsonMatch = trimmed.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      try {
+        const parsed = JSON.parse(jsonMatch[0]) as AssignmentDescriptionData;
+        if (parsed && typeof parsed === 'object') return parsed;
+      } catch {
+        // ignore
+      }
+    }
+  }
+  return null;
+}
+
 function filterPlaylistsByCurriculumUnits(
   playlists: SproutPlaylist[],
   selectedCurriculums: string[],
@@ -66,7 +88,19 @@ export class CourseSettingsService {
     const tokenOverride = row.canvasApiToken ?? this.config.get<string>('CANVAS_API_TOKEN') ?? null;
     const domainOverride = options?.canvasDomain ?? this.config.get<string>('CANVAS_DOMAIN');
 
-    if (!row.progressAssignmentId) {
+    let assignmentId: string | null = null;
+    try {
+      assignmentId = await this.canvas.findAssignmentByTitle(
+        courseId,
+        'Flashcard Progress',
+        domainOverride,
+        tokenOverride,
+      );
+    } catch {
+      assignmentId = row.progressAssignmentId ?? null;
+    }
+
+    if (!assignmentId) {
       return {
         selectedCurriculums: Array.isArray(row.selectedCurriculums) ? row.selectedCurriculums : [],
         selectedUnits: Array.isArray(row.selectedUnits) ? row.selectedUnits : [],
@@ -78,7 +112,7 @@ export class CourseSettingsService {
     try {
       const assignment = await this.canvas.getAssignment(
         courseId,
-        row.progressAssignmentId,
+        assignmentId,
         domainOverride,
         tokenOverride,
       );
@@ -86,17 +120,17 @@ export class CourseSettingsService {
         return {
           selectedCurriculums: Array.isArray(row.selectedCurriculums) ? row.selectedCurriculums : [],
           selectedUnits: Array.isArray(row.selectedUnits) ? row.selectedUnits : [],
-          progressAssignmentId: row.progressAssignmentId,
+          progressAssignmentId: assignmentId,
           hasCanvasToken,
         };
       }
 
-      const parsed = JSON.parse(assignment.description) as AssignmentDescriptionData;
-      if (!parsed || typeof parsed !== 'object') {
+      const parsed = parseAssignmentDescription(assignment.description);
+      if (!parsed) {
         return {
           selectedCurriculums: Array.isArray(row.selectedCurriculums) ? row.selectedCurriculums : [],
           selectedUnits: Array.isArray(row.selectedUnits) ? row.selectedUnits : [],
-          progressAssignmentId: row.progressAssignmentId,
+          progressAssignmentId: assignmentId,
           hasCanvasToken,
         };
       }
@@ -114,7 +148,7 @@ export class CourseSettingsService {
         selectedCurriculums,
         selectedUnits,
         filteredPlaylists,
-        progressAssignmentId: row.progressAssignmentId,
+        progressAssignmentId: assignmentId,
         hasCanvasToken,
         needsUpdate,
       };
@@ -122,7 +156,7 @@ export class CourseSettingsService {
       return {
         selectedCurriculums: Array.isArray(row.selectedCurriculums) ? row.selectedCurriculums : [],
         selectedUnits: Array.isArray(row.selectedUnits) ? row.selectedUnits : [],
-        progressAssignmentId: row.progressAssignmentId,
+        progressAssignmentId: assignmentId,
         hasCanvasToken,
       };
     }
@@ -158,6 +192,11 @@ export class CourseSettingsService {
       canvasApiToken !== undefined
         ? (canvasApiToken?.trim() || null)
         : (row?.canvasApiToken ?? this.config.get<string>('CANVAS_API_TOKEN') ?? null);
+    if (!effectiveToken) {
+      throw new Error(
+        'Canvas API token is required to save deck configuration. Please enter your Canvas API token in the Canvas API Token field.',
+      );
+    }
     const progressAssignmentId = await this.canvas.ensureFlashcardProgressAssignment(
       courseId,
       canvasDomain,
