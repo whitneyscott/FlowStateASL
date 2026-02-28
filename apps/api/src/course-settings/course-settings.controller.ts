@@ -40,7 +40,7 @@ export class CourseSettingsController {
   @Put()
   async save(
     @Req() req: Request,
-    @Body() body: { selectedCurriculums?: string[]; selectedUnits?: string[] },
+    @Body() body: { selectedCurriculums?: string[]; selectedUnits?: string[]; canvasApiToken?: string },
   ) {
     const ctx = req.session?.ltiContext as LtiContext | undefined;
     console.log('[CourseSettings PUT] session:', {
@@ -61,6 +61,7 @@ export class CourseSettingsController {
       body.selectedCurriculums ?? [],
       body.selectedUnits ?? [],
       ctx.canvasDomain,
+      body.canvasApiToken,
     );
   }
 }

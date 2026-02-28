@@ -16,8 +16,8 @@ export class CanvasUploadChunkError extends Error {
 export class CanvasService {
   constructor(private readonly config: ConfigService) {}
 
-  private getAuthHeaders(): Record<string, string> {
-    const token = this.config.get('CANVAS_API_TOKEN');
+  private getAuthHeaders(tokenOverride?: string | null): Record<string, string> {
+    const token = tokenOverride ?? this.config.get('CANVAS_API_TOKEN');
     if (!token) throw new Error('Canvas not configured');
     return {
       Authorization: `Bearer ${token}`,
@@ -270,10 +270,11 @@ export class CanvasService {
     courseId: string,
     assignmentName: string,
     domainOverride?: string,
+    tokenOverride?: string | null,
   ): Promise<string | null> {
     const domain = this.getDomain(domainOverride);
     const url = `https://${domain}/api/v1/courses/${courseId}/assignments?per_page=100`;
-    const res = await fetch(url, { headers: this.getAuthHeaders() });
+    const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
     if (!res.ok) return null;
     const data = (await res.json()) as Array<{ id: number; name?: string }>;
     const found = (data ?? []).find(
@@ -290,10 +291,12 @@ export class CanvasService {
       pointsPossible?: number;
       published?: boolean;
       description?: string;
+      tokenOverride?: string | null;
     } = {},
     domainOverride?: string,
   ): Promise<string> {
     const domain = this.getDomain(domainOverride);
+    const tokenOverride = options.tokenOverride;
     const url = `https://${domain}/api/v1/courses/${courseId}/assignments`;
     const body = {
       assignment: {
@@ -306,7 +309,7 @@ export class CanvasService {
     };
     const res = await fetch(url, {
       method: 'POST',
-      headers: this.getAuthHeaders(),
+      headers: this.getAuthHeaders(tokenOverride),
       body: JSON.stringify(body),
     });
     if (!res.ok) {
@@ -320,11 +323,13 @@ export class CanvasService {
   async ensureFlashcardProgressAssignment(
     courseId: string,
     domainOverride?: string,
+    tokenOverride?: string | null,
   ): Promise<string> {
     const existing = await this.findAssignmentByName(
       courseId,
       'Flashcard Progress',
       domainOverride,
+      tokenOverride,
     );
     if (existing) return existing;
     return this.createAssignment(
@@ -335,6 +340,7 @@ export class CanvasService {
         pointsPossible: 0,
         published: true,
         description: 'Stores flashcard study progress (auto-created by ASL Express)',
+        tokenOverride,
       },
       domainOverride,
     );

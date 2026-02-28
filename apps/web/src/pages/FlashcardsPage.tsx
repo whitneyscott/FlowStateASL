@@ -81,6 +81,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     message: string;
   } | null>(null);
   const [viewAsPlaylist, setViewAsPlaylist] = useState(false);
+  const [viewAsStudent, setViewAsStudent] = useState(false);
   const [singleVersionPerAnswer, setSingleVersionPerAnswer] = useState(false);
   const [tutorialAutoAdvance, setTutorialAutoAdvance] = useState(true);
 
@@ -135,8 +136,9 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   }, [context?.courseId, isCourseNavigation]);
 
   useEffect(() => {
-    if (!teacherMode && isCourseNavigation) loadHubData();
-  }, [teacherMode, isCourseNavigation, loadHubData]);
+    const shouldLoadHub = (teacherMode && viewAsStudent && isCourseNavigation) || (!teacherMode && isCourseNavigation);
+    if (shouldLoadHub) loadHubData();
+  }, [teacherMode, viewAsStudent, isCourseNavigation, loadHubData]);
 
   const hubFilteredPlaylists = useCallback(() => {
     const cs = courseSettings;
@@ -180,12 +182,13 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   )].sort();
 
   useEffect(() => {
-    if (!teacherMode && isCourseNavigation) {
+    const useHubData = (teacherMode && viewAsStudent && isCourseNavigation) || (!teacherMode && isCourseNavigation);
+    if (useHubData) {
       const filtered = hubFilteredPlaylists();
       const items = filtered.map((p) => ({ title: p.title, id: p.id }));
       setPlaylists(items);
     }
-  }, [teacherMode, isCourseNavigation, hubFilteredPlaylists]);
+  }, [teacherMode, viewAsStudent, isCourseNavigation, hubFilteredPlaylists]);
 
   const handleFilteredPlaylists = useCallback((list: Array<{ id: string; title: string }>) => {
     setPlaylistsLoading(false);
@@ -562,15 +565,27 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
       <div className="flashcards-container">
         {view === 'menu' && (
           <div className="flashcards-menu">
-            <TeacherSettings
-              context={context}
-              onConfigChange={() => {}}
-              onFilteredPlaylists={handleFilteredPlaylists}
-            />
+            {teacherMode && !viewAsStudent && (
+              <TeacherSettings
+                context={context}
+                onConfigChange={() => {}}
+                onFilteredPlaylists={handleFilteredPlaylists}
+              />
+            )}
             <h1 className="flashcards-title">TWA Vocabulary</h1>
+            {teacherMode && isCourseNavigation && (
+              <label className="flashcards-view-as-student">
+                <input
+                  type="checkbox"
+                  checked={viewAsStudent}
+                  onChange={(e) => setViewAsStudent(e.target.checked)}
+                />
+                View as Student
+              </label>
+            )}
             {!teacherMode && !isCourseNavigation ? (
               <p className="flashcards-teacher-msg">Your teacher will configure the deck for this course.</p>
-            ) : !teacherMode && isCourseNavigation ? (
+            ) : (viewAsStudent && teacherMode) || (!teacherMode && isCourseNavigation) ? (
               <>
                 {lastSession && (
                   <p className="flashcards-welcome-back">Welcome back! Last session: Unit {lastSession.unit}</p>

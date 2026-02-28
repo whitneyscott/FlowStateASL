@@ -49,6 +49,7 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
   const [savedFeedback, setSavedFeedback] = useState(false);
   const [loading, setLoading] = useState(true);
   const [playlistTotal, setPlaylistTotal] = useState<number | null>(null);
+  const [canvasApiTokenInput, setCanvasApiTokenInput] = useState('');
 
   const teacher = context && isTeacher(context.roles);
   const hasLti = context && context.courseId && context.userId !== 'standalone';
@@ -57,6 +58,7 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
     ? allPlaylists
     : allPlaylists.filter((p) => !hasAssessmentTerm(p.title));
 
+  const [hasCanvasToken, setHasCanvasToken] = useState(false);
   const curricula = [...new Set(displayPlaylists.map((p) => segments(p.title)[0]).filter(Boolean))].sort();
   const allUnits = [...new Set(
     displayPlaylists
@@ -131,6 +133,8 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
         if (cs?.selectedUnits) {
           setSelectedUnits(Array.isArray(cs.selectedUnits) ? cs.selectedUnits : []);
         }
+        setHasCanvasToken(!!cs?.hasCanvasToken);
+        setCanvasApiTokenInput('');
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load');
       } finally {
@@ -152,14 +156,18 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
     setLastFunction('PUT /api/course-settings');
     console.log('[Teacher Save] Sending:', { selectedCurriculums, selectedUnits }, 'context.courseId=', context?.courseId);
     try {
+      const body: { selectedCurriculums: string[]; selectedUnits: string[]; canvasApiToken?: string } = {
+        selectedCurriculums,
+        selectedUnits,
+      };
+      if (canvasApiTokenInput.trim()) {
+        body.canvasApiToken = canvasApiTokenInput.trim();
+      }
       const res = await fetch('/api/course-settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({
-          selectedCurriculums,
-          selectedUnits,
-        }),
+        body: JSON.stringify(body),
       });
       const resBody = await res.text().catch(() => '');
       setLastApiResult('PUT /api/course-settings', res.status, res.ok);
@@ -248,6 +256,16 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
               </label>
             ))}
           </div>
+        </div>
+        <div className="teacher-settings-canvas-token">
+          <span className="teacher-settings-label">Canvas API Token</span>
+          <input
+            type="password"
+            className="teacher-settings-input"
+            placeholder={hasCanvasToken ? 'Enter new token to replace' : 'Enter Canvas API token (optional)'}
+            value={canvasApiTokenInput}
+            onChange={(e) => setCanvasApiTokenInput(e.target.value)}
+          />
         </div>
         <div className="teacher-settings-actions">
           <button

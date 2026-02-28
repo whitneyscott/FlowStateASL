@@ -180,6 +180,33 @@
   gap: 16px;
 }
 
+.teacher-settings-canvas-token {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 280px;
+}
+
+.teacher-settings-input {
+  width: 100%;
+  max-width: 320px;
+  padding: 12px 16px;
+  background: #18181b;
+  border: 1px solid #52525b;
+  border-radius: 8px;
+  color: white;
+  font-size: 14px;
+}
+
+.teacher-settings-input::placeholder {
+  color: #71717a;
+}
+
+.teacher-settings-input:focus {
+  outline: none;
+  border-color: #34d399;
+}
+
 .teacher-settings-multiselect-row {
   flex-wrap: wrap;
 }

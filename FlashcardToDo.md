@@ -28,11 +28,9 @@
 
 ## Stage 3: Teacher Settings & Permissions
 
-⬜ "View as Student" Toggle: Hide teacher dropdowns and apply student visibility rules when active.
+✅ "View as Student" Toggle: Hide teacher dropdowns and apply student visibility rules when active.
 
-⬜ Teacher Settings: Add Canvas API token field so we can stop using hard-coded env token.
-
-⬜ Settings Labeling: Ensure all toggles use ONLY "Show" and "Hide."
+✅ Teacher Settings: Add Canvas API token field so we can stop using hard-coded env token.
 
 ⬜ Curriculum Fallback: Restore using the module's title for suggestions but fallback to dropdowns.
 
