@@ -6,6 +6,7 @@ interface DebugState {
   lastFunctionCalled: string | null;
   lastApiResult: { endpoint: string; status: number; ok: boolean } | null;
   lastApiError: { endpoint: string; status: number; message: string } | null;
+  lastSubmissionDetails: string | null;
 }
 
 interface DebugContextValue extends DebugState {
@@ -13,6 +14,7 @@ interface DebugContextValue extends DebugState {
   setLastFunction: (fn: string) => void;
   setLastApiResult: (endpoint: string, status: number, ok: boolean) => void;
   setLastApiError: (endpoint: string, status: number, message: string) => void;
+  setLastSubmissionDetails: (details: string | null) => void;
 }
 
 const initial: DebugState = {
@@ -21,6 +23,7 @@ const initial: DebugState = {
   lastFunctionCalled: null,
   lastApiResult: null,
   lastApiError: null,
+  lastSubmissionDetails: null,
 };
 
 const DebugContext = createContext<DebugContextValue | null>(null);
@@ -44,8 +47,12 @@ export function DebugProvider({ children }: { children: ReactNode }) {
     setState((s) => ({ ...s, lastApiError: { endpoint, status, message } }));
   }, []);
 
+  const setLastSubmissionDetails = useCallback((details: string | null) => {
+    setState((s) => ({ ...s, lastSubmissionDetails: details }));
+  }, []);
+
   return (
-    <DebugContext.Provider value={{ ...state, setSproutVideo, setLastFunction, setLastApiResult, setLastApiError }}>
+    <DebugContext.Provider value={{ ...state, setSproutVideo, setLastFunction, setLastApiResult, setLastApiError, setLastSubmissionDetails }}>
       {children}
     </DebugContext.Provider>
   );
@@ -59,9 +66,11 @@ export function useDebug() {
     lastFunctionCalled: null,
     lastApiResult: null,
     lastApiError: null,
+    lastSubmissionDetails: null,
     setSproutVideo: () => {},
     setLastFunction: () => {},
     setLastApiResult: () => {},
     setLastApiError: () => {},
+    setLastSubmissionDetails: () => {},
   };
 }

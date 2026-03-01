@@ -25,7 +25,7 @@ export class SubmissionController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
     @Body() dto: SubmitFlashcardDto,
-  ): Promise<{ synced: boolean; error?: string }> {
+  ): Promise<{ synced: boolean; error?: string; debug?: { progressSaved: boolean; gradeSent?: boolean; details: string } }> {
     try {
       const ctx = req.session!.ltiContext! as LtiContext;
       const result = await this.submission.submitFlashcard(ctx, dto);
@@ -37,7 +37,11 @@ export class SubmissionController {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[Submission POST] unhandled error:', msg);
       res.status(HttpStatus.ACCEPTED);
-      return { synced: false, error: msg };
+      return {
+        synced: false,
+        error: msg,
+        debug: { progressSaved: false, details: `Progress failed to save. Reason: ${msg}` },
+      };
     }
   }
 }

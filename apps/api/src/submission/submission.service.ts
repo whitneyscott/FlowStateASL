@@ -87,6 +87,7 @@ export class SubmissionService {
   async submitFlashcard(ctx: LtiContext, dto: SubmitFlashcardDto): Promise<{
     synced: boolean;
     error?: string;
+    debug?: { progressSaved: boolean; gradeSent?: boolean; details: string };
   }> {
     const { points, isGraded } = this.calculateGrade(dto);
     const assignmentId = ctx.assignmentId || ctx.resourceLinkId || '0';
@@ -128,10 +129,14 @@ export class SubmissionService {
       await this.sessionRepo.delete(row.id);
       try {
         await this.saveProgressToCanvas(ctx, dto);
-        return { synced: true };
+        return { synced: true, debug: { progressSaved: true, details: 'Progress saved to Flashcard Progress assignment.' } };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        return { synced: false, error: msg };
+        return {
+          synced: false,
+          error: msg,
+          debug: { progressSaved: false, details: `Progress failed to save. Reason: ${msg}` },
+        };
       }
     }
 
@@ -139,18 +144,26 @@ export class SubmissionService {
       await this.saveProgressToCanvas(ctx, dto);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      return { synced: false, error: msg };
+      return {
+        synced: false,
+        error: msg,
+        debug: {
+          progressSaved: false,
+          details: `Progress failed to save. Reason: ${msg} Check that the Canvas API token is configured in Teacher Settings or CANVAS_API_TOKEN env, and that the Flashcard Progress assignment exists and is published.`,
+        },
+      };
     }
 
     const { lisOutcomeServiceUrl, lisResultSourcedid } = ctx;
     if (!lisOutcomeServiceUrl || !lisResultSourcedid) {
-      await this.sessionRepo.update(row.id, {
-        syncStatus: 'failed',
-        syncErrorMessage: 'LTI grade passback not configured for this launch',
-      });
+      await this.sessionRepo.delete(row.id);
       return {
-        synced: false,
-        error: 'LTI grade passback not configured for this launch',
+        synced: true,
+        debug: {
+          progressSaved: true,
+          gradeSent: false,
+          details: 'Progress saved to Flashcard Progress assignment. Grade not sent: lis_outcome_service_url and lis_result_sourcedid were not in the LTI launch. Canvas sends these only when the tool is launched from an External Tool assignment. To fix: Add the flashcards tool as an External Tool assignment in your Canvas course and launch from that assignment link (instead of Course Navigation).',
+        },
       };
     }
 
@@ -162,14 +175,21 @@ export class SubmissionService {
         dto.scoreTotal,
       );
       await this.sessionRepo.delete(row.id);
-      return { synced: true };
+      return { synced: true, debug: { progressSaved: true, gradeSent: true, details: 'Progress saved. Grade sent to assignment.' } };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       await this.sessionRepo.update(row.id, {
         syncStatus: 'failed',
         syncErrorMessage: msg,
       });
-      return { synced: false, error: msg };
+      return {
+        synced: true,
+        debug: {
+          progressSaved: true,
+          gradeSent: false,
+          details: `Progress saved. Grade failed to send: ${msg}`,
+        },
+      };
     }
   }
 }

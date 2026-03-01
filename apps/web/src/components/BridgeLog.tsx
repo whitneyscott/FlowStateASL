@@ -9,7 +9,7 @@ interface BridgeLogProps {
 }
 
 export function BridgeLog({ context, loading, error }: BridgeLogProps) {
-  const { sproutVideoAccessed, sproutVideoPlaylistsRetrieved, lastFunctionCalled, lastApiResult, lastApiError } = useDebug();
+  const { sproutVideoAccessed, sproutVideoPlaylistsRetrieved, lastFunctionCalled, lastApiResult, lastApiError, lastSubmissionDetails } = useDebug();
   const [lastServerError, setLastServerError] = useState<{ endpoint: string; message: string } | null>(null);
   const [lines, setLines] = useState<string[]>(['Initializing...']);
 
@@ -89,8 +89,11 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
       newLines.push(`Last error (500): ${lastServerError.endpoint}`);
       newLines.push(`  → ${lastServerError.message}`);
     }
+    if (lastSubmissionDetails) {
+      newLines.push('Submission details:', lastSubmissionDetails);
+    }
     setLines(newLines);
-  }, [context, loading, error, sproutVideoAccessed, sproutVideoPlaylistsRetrieved, lastFunctionCalled, lastApiResult, lastApiError, lastServerError]);
+  }, [context, loading, error, sproutVideoAccessed, sproutVideoPlaylistsRetrieved, lastFunctionCalled, lastApiResult, lastApiError, lastSubmissionDetails, lastServerError]);
 
   const text = ['BRIDGE DEBUG LOG:', ...lines].join('\n');
 

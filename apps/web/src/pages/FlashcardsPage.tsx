@@ -39,7 +39,7 @@ interface FlashcardsPageProps {
 }
 
 export default function FlashcardsPage({ context }: FlashcardsPageProps) {
-  const { setLastFunction, setSproutVideo, setLastApiResult } = useDebug();
+  const { setLastFunction, setSproutVideo, setLastApiResult, setLastApiError, setLastSubmissionDetails } = useDebug();
   const teacherMode = context && isTeacher(context.roles) && context.courseId && context.userId !== 'standalone';
   const hasRealAssignment = context?.assignmentId && 
     context.assignmentId !== '' && 
@@ -462,6 +462,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   const silentSubmitProgress = useCallback(async () => {
     if (!currentPlaylist || submittedForSessionRef.current) return;
     setSaveError(null);
+    setLastSubmissionDetails(null);
     if (context?.courseId) {
       const [,, u] = segments(currentPlaylist.title);
       if (u) {
@@ -471,6 +472,8 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
         }
       }
     }
+    const endpoint = 'POST /api/submission';
+    setLastFunction(endpoint);
     try {
       const res = await fetch('/api/submission', {
         method: 'POST',
@@ -485,20 +488,30 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
           playlistTitle: currentPlaylist.title,
         }),
       });
-      const data = (await res.json().catch(() => ({}))) as { synced?: boolean; error?: string; message?: string };
-      if (!res.ok || data.synced === false) {
-        const msg = data.message || data.error || `Save failed (${res.status})`;
-        setSaveError(msg);
+      const data = (await res.json().catch(() => ({}))) as {
+        synced?: boolean;
+        error?: string;
+        message?: string;
+        debug?: { progressSaved?: boolean; gradeSent?: boolean; details: string };
+      };
+      const ok = res.ok && data.synced !== false;
+      setLastApiResult(endpoint, res.status, ok);
+      if (data.debug?.details) setLastSubmissionDetails(data.debug.details);
+      if (!ok) {
+        setLastApiError(endpoint, res.status, data.message || data.error || `Save failed (${res.status})`);
+        setSaveError(data.message || data.error || `Save failed (${res.status})`);
         submittedForSessionRef.current = false;
       } else {
         submittedForSessionRef.current = true;
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      setLastApiError(endpoint, 0, msg);
+      setLastApiResult(endpoint, 0, false);
       setSaveError(msg);
       submittedForSessionRef.current = false;
     }
-  }, [context?.courseId, currentPlaylist, score.correct, score.total, mode]);
+  }, [context?.courseId, currentPlaylist, score.correct, score.total, mode, setLastFunction, setLastApiResult, setLastApiError, setLastSubmissionDetails]);
 
   useEffect(() => {
     if (view === 'results' && currentPlaylist) {
