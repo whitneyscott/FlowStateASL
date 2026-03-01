@@ -121,34 +121,18 @@ export class SubmissionService {
     }
     const bodyJson = JSON.stringify({ results });
 
-    if (!existing) {
-      await this.canvas.createSubmissionWithBodyAndComment(
-        ctx.courseId,
-        progressAssignmentId,
-        ctx.userId,
-        bodyJson,
-        commentText,
-        ctx.canvasDomain,
-        token,
-      );
-    } else {
-      await this.canvas.putSubmissionComment(
-        ctx.courseId,
-        progressAssignmentId,
-        ctx.userId,
-        commentText,
-        ctx.canvasDomain,
-        token,
-      );
-      await this.canvas.putSubmissionBody(
-        ctx.courseId,
-        progressAssignmentId,
-        ctx.userId,
-        bodyJson,
-        ctx.canvasDomain,
-        token,
-      );
-    }
+    // Canvas PUT does NOT support submission[body]—only POST create does.
+    // For existing submissions, POST creates a new attempt with our body.
+    // Always use POST to ensure body is persisted (Comment-First pattern).
+    await this.canvas.createSubmissionWithBodyAndComment(
+      ctx.courseId,
+      progressAssignmentId,
+      ctx.userId,
+      bodyJson,
+      commentText,
+      ctx.canvasDomain,
+      token,
+    );
 
     // Verify: re-fetch submission and confirm our data is present
     const verified = await this.canvas.getSubmission(
