@@ -4,6 +4,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { CanvasService } from '../canvas/canvas.service';
 import { SproutVideoService } from '../sproutvideo/sproutvideo.service';
+import { PlaylistCacheService } from '../sproutvideo/playlist-cache.service';
 import type { SproutPlaylist } from '../sproutvideo/interfaces/sprout-playlist.interface';
 import { CourseSettingsEntity } from './entities/course-settings.entity';
 
@@ -67,6 +68,7 @@ export class CourseSettingsService {
     private readonly repo: Repository<CourseSettingsEntity>,
     private readonly canvas: CanvasService,
     private readonly sproutVideo: SproutVideoService,
+    private readonly playlistCache: PlaylistCacheService,
     private readonly config: ConfigService,
   ) {}
 
@@ -168,18 +170,7 @@ export class CourseSettingsService {
     _courseId: string,
     cachedPlaylistUpdatedAt: Record<string, string>,
   ): Promise<boolean> {
-    const playlistIds = new Set(Object.keys(cachedPlaylistUpdatedAt));
-    if (playlistIds.size === 0) return false;
-
-    const playlists = await this.sproutVideo.fetchAllPlaylists();
-    for (const p of playlists) {
-      if (!playlistIds.has(p.id)) continue;
-      const updatedAt = p.updated_at;
-      if (!updatedAt) continue;
-      const cached = cachedPlaylistUpdatedAt[p.id];
-      if (cached && new Date(updatedAt).getTime() > new Date(cached).getTime()) return true;
-    }
-    return false;
+    return this.playlistCache.checkNeedsUpdate(cachedPlaylistUpdatedAt);
   }
 
   async save(
@@ -209,7 +200,7 @@ export class CourseSettingsService {
         ? (canvasApiToken?.trim() || null)
         : (row?.canvasApiToken ?? null);
 
-    const allPlaylists = await this.sproutVideo.fetchAllPlaylists();
+    const allPlaylists = await this.playlistCache.getAllPlaylistsWithVideos();
     const filtered = filterPlaylistsByCurriculumUnits(allPlaylists, selectedCurriculums, selectedUnits);
 
     const sproutAccountId = this.config.get<string>('SPROUT_ACCOUNT_ID') ?? undefined;

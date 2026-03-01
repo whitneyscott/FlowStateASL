@@ -4,12 +4,14 @@ import { Repository } from 'typeorm';
 import { CanvasService } from '../canvas/canvas.service';
 import { CourseSettingsService } from '../course-settings/course-settings.service';
 import { SproutVideoService } from '../sproutvideo/sproutvideo.service';
+import { PlaylistCacheService } from '../sproutvideo/playlist-cache.service';
 import { FlashcardConfigEntity } from './entities/flashcard-config.entity';
 
 @Injectable()
 export class FlashcardService {
   constructor(
     private readonly sproutVideo: SproutVideoService,
+    private readonly playlistCache: PlaylistCacheService,
     private readonly canvas: CanvasService,
     private readonly courseSettings: CourseSettingsService,
     @InjectRepository(FlashcardConfigEntity)
@@ -17,7 +19,9 @@ export class FlashcardService {
   ) {}
 
   async getPlaylists(filter: string) {
-    return this.sproutVideo.getPlaylistItems(filter);
+    const searchTerms = this.sproutVideo.getSmartVersions(filter);
+    if (searchTerms.length === 0) return [];
+    return this.playlistCache.getPlaylistsForFilter(searchTerms);
   }
 
   async getPlaylistsByHierarchy(
@@ -28,14 +32,14 @@ export class FlashcardService {
     const parts = [curriculum, unit, section].filter(Boolean);
     const filter = parts.join('.');
     if (!filter) return [];
-    const playlists = await this.sproutVideo.fetchAllPlaylists();
-    console.log('[SproutVideo] playlists: filter=', filter, ', retrieved:', playlists.length);
     const searchTerms = this.sproutVideo.getSmartVersions(filter);
     if (searchTerms.length === 0) return [];
-    return this.sproutVideo.filterPlaylists(playlists, searchTerms);
+    return this.playlistCache.getPlaylistsForFilter(searchTerms);
   }
 
   async getPlaylistItems(playlistId: string) {
+    const cached = await this.playlistCache.getPlaylistItems(playlistId);
+    if (cached !== null) return cached;
     return this.sproutVideo.getPlaylistItems('', playlistId);
   }
 
@@ -49,11 +53,14 @@ export class FlashcardService {
   }
 
   async getAllPlaylists() {
-    return this.sproutVideo.getPlaylists();
+    const playlists = await this.playlistCache.getAllPlaylists();
+    return playlists
+      .filter((p) => !this.sproutVideo.isBlacklisted(p.title))
+      .map((p) => ({ id: p.id, title: p.title }));
   }
 
   async getPlaylistCount(): Promise<number> {
-    return this.sproutVideo.getPlaylistCount();
+    return this.playlistCache.getPlaylistCount();
   }
 
   async getConfig(

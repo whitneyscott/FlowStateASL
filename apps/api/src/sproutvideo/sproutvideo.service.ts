@@ -52,13 +52,23 @@ export class SproutVideoService {
   }
 
   async fetchAllPlaylists(): Promise<SproutPlaylist[]> {
+    return this.fetchPlaylistsUpdatedSince(null);
+  }
+
+  /**
+   * Fetch playlists ordered by updated_at desc. If lastSyncAt is set, only returns
+   * playlists with updated_at > lastSyncAt (incremental sync). Stops paginating
+   * when we hit playlists older than lastSyncAt to minimize API calls.
+   */
+  async fetchPlaylistsUpdatedSince(lastSyncAt: Date | null): Promise<SproutPlaylist[]> {
     const apiKey = this.config.get('SPROUT_KEY');
     if (!apiKey) throw new Error('SproutVideo not configured');
     const all: SproutPlaylist[] = [];
     let page = 1;
     const perPage = 100;
-    let hasMore = true;
-    while (hasMore) {
+    const lastMs = lastSyncAt ? lastSyncAt.getTime() : null;
+
+    while (true) {
       const url = `https://api.sproutvideo.com/v1/playlists?order_by=updated_at&order_dir=desc&per_page=${perPage}&page=${page}`;
       const res = await fetch(url, {
         headers: { 'SproutVideo-Api-Key': apiKey },
@@ -73,15 +83,22 @@ export class SproutVideoService {
         }>;
       };
       const playlists = data.playlists ?? [];
+
       for (const p of playlists) {
+        const updatedAt = typeof p.updated_at === 'string' ? p.updated_at : undefined;
+        if (lastMs !== null && updatedAt) {
+          const pMs = new Date(updatedAt).getTime();
+          if (pMs <= lastMs) return all;
+        }
         all.push({
           id: String(p.id),
           title: String(p.title ?? ''),
           videos: Array.isArray(p.videos) ? p.videos.map(String) : [],
-          updated_at: typeof p.updated_at === 'string' ? p.updated_at : undefined,
+          updated_at: updatedAt,
         });
       }
-      hasMore = playlists.length === perPage;
+
+      if (playlists.length < perPage) break;
       page++;
     }
     return all;

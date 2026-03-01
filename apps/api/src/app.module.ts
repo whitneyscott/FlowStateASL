@@ -1,4 +1,5 @@
 import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
+import { ScheduleModule } from '@nestjs/schedule';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ServeStaticModule } from '@nestjs/serve-static';
@@ -17,6 +18,9 @@ import { BlockedAttemptEntity } from './assessment/entities/blocked-attempt.enti
 import { AssessmentSessionEntity } from './assessment/entities/assessment-session.entity';
 import { FlashcardConfigEntity } from './flashcard/entities/flashcard-config.entity';
 import { CourseSettingsEntity } from './course-settings/entities/course-settings.entity';
+import { SproutPlaylistEntity } from './sproutvideo/entities/sprout-playlist.entity';
+import { SproutPlaylistVideoEntity } from './sproutvideo/entities/sprout-playlist-video.entity';
+import { SyncMetadataEntity } from './sproutvideo/entities/sync-metadata.entity';
 
 const isProduction = process.env.NODE_ENV === 'production';
 const webRoot = join(__dirname, '..', '..', 'web');
@@ -24,6 +28,7 @@ const webRoot = join(__dirname, '..', '..', 'web');
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    ScheduleModule.forRoot(),
     ...(isProduction
       ? [
           ServeStaticModule.forRoot({
@@ -48,6 +53,9 @@ const webRoot = join(__dirname, '..', '..', 'web');
           AssessmentSessionEntity,
           FlashcardConfigEntity,
           CourseSettingsEntity,
+          SproutPlaylistEntity,
+          SproutPlaylistVideoEntity,
+          SyncMetadataEntity,
         ],
         migrations: [__dirname + '/migrations/*{.ts,.js}'],
         migrationsRun: false,
