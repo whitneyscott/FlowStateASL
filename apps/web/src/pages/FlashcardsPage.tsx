@@ -66,6 +66,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   const [streak, setStreak] = useState(0);
   const [benchmarkNagDismissed, setBenchmarkNagDismissed] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveLog, setSaveLog] = useState<string[]>([]);
   const [deckProgress, setDeckProgress] = useState<Record<string, { completed: number }>>({});
   const submittedForSessionRef = useRef(false);
 
@@ -249,6 +250,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   const selectPlaylist = async (id: string, title: string, idx: number) => {
     submittedForSessionRef.current = false;
     setSaveError(null);
+    setSaveLog([]);
     setCurrentPlaylist({ id, title });
     setPlaylistIndex(idx);
     setCurrentIndex(-1);
@@ -463,6 +465,19 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     if (!currentPlaylist || submittedForSessionRef.current) return;
     setSaveError(null);
     setLastSubmissionDetails(null);
+    const payload = {
+      score: score.correct,
+      scoreTotal: score.total,
+      deckIds: [currentPlaylist.id],
+      wordCount: 0,
+      mode,
+      playlistTitle: currentPlaylist.title,
+    };
+    setSaveLog([
+      'Sending to POST /api/submission:',
+      `  deck: ${currentPlaylist.title} (${currentPlaylist.id})`,
+      `  score: ${score.correct}/${score.total}, mode: ${mode}`,
+    ]);
     if (context?.courseId) {
       const [,, u] = segments(currentPlaylist.title);
       if (u) {
@@ -479,14 +494,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({
-          score: score.correct,
-          scoreTotal: score.total,
-          deckIds: [currentPlaylist.id],
-          wordCount: 0,
-          mode,
-          playlistTitle: currentPlaylist.title,
-        }),
+        body: JSON.stringify(payload),
       });
       const data = (await res.json().catch(() => ({}))) as {
         synced?: boolean;
@@ -497,6 +505,20 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
       const ok = res.ok && data.synced !== false;
       setLastApiResult(endpoint, res.status, ok);
       if (data.debug?.details) setLastSubmissionDetails(data.debug.details);
+
+      const logLines = (prev: string[]) => [
+        ...prev,
+        `Response: HTTP ${res.status}, synced=${data.synced ?? '?'}`,
+        ...(ok
+          ? [`SUCCESS: ${data.debug?.details ?? 'Progress saved.'}`]
+          : [
+              `FAILED: ${data.error || data.message || `Save failed (${res.status})`}`,
+              `Details: ${data.debug?.details ?? 'None'}`,
+              'Check: Flashcard Progress assignment must exist and be published. Canvas API token required (Teacher Settings or CANVAS_API_TOKEN).',
+            ]),
+      ];
+      setSaveLog(logLines);
+
       if (!ok) {
         setLastApiError(endpoint, res.status, data.message || data.error || `Save failed (${res.status})`);
         setSaveError(data.message || data.error || `Save failed (${res.status})`);
@@ -509,6 +531,12 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
       setLastApiError(endpoint, 0, msg);
       setLastApiResult(endpoint, 0, false);
       setSaveError(msg);
+      setSaveLog((prev) => [
+        ...prev,
+        `Response: network/parse error`,
+        `FAILED: ${msg}`,
+        'Check: Ensure you are launched from Canvas LTI and the API is reachable.',
+      ]);
       submittedForSessionRef.current = false;
     }
   }, [context?.courseId, currentPlaylist, score.correct, score.total, mode, setLastFunction, setLastApiResult, setLastApiError, setLastSubmissionDetails]);
@@ -1247,10 +1275,18 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
               {score.correct}/{score.total} ({percentage}%)
             </p>
             <p className="flashcards-benchmark-note">Suggested minimum score: 85%</p>
-            {saveError && (
-              <p className="flashcards-save-error" role="alert">
-                Could not save progress: {saveError}
-              </p>
+            {saveLog.length > 0 && (
+              <div className="flashcards-save-log" role="log" aria-live="polite">
+                <div className="flashcards-save-log-title">Progress save status</div>
+                <pre className="flashcards-save-log-content">
+                  {saveLog.join('\n')}
+                </pre>
+                {saveError && (
+                  <p className="flashcards-save-error" role="alert">
+                    Could not save progress: {saveError}
+                  </p>
+                )}
+              </div>
             )}
             <div className="flashcards-results-btns">
               <button

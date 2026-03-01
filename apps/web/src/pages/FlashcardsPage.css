@@ -507,6 +507,30 @@
   color: #34d399;
 }
 
+.flashcards-save-log {
+  background: #27272a;
+  border: 1px solid #3f3f46;
+  border-radius: 8px;
+  padding: 12px;
+  font-family: ui-monospace, monospace;
+  font-size: 0.8rem;
+}
+
+.flashcards-save-log-title {
+  color: #a1a1aa;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.flashcards-save-log-content {
+  margin: 0;
+  color: #e4e4e7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
 .flashcards-save-error {
   color: #f87171;
   font-size: 0.875rem;
