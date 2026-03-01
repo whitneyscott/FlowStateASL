@@ -457,6 +457,71 @@ export class CanvasService {
     );
   }
 
+  async getSubmission(
+    courseId: string,
+    assignmentId: string,
+    userId: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<{ body?: string } | null> {
+    const domain = this.getDomain(domainOverride);
+    const url = `https://${domain}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}`;
+    const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { body?: string };
+    return { body: data.body };
+  }
+
+  async createSubmissionWithBody(
+    courseId: string,
+    assignmentId: string,
+    userId: string,
+    bodyText: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<void> {
+    const domain = this.getDomain(domainOverride);
+    const url = `https://${domain}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions`;
+    const body = {
+      submission: {
+        submission_type: 'online_text_entry',
+        body: bodyText,
+        user_id: parseInt(userId, 10) || userId,
+      },
+    };
+    const res = await fetch(url + '?as_user_id=' + encodeURIComponent(userId), {
+      method: 'POST',
+      headers: this.getAuthHeaders(tokenOverride),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Canvas create submission with body failed: ${res.status} ${text}`);
+    }
+  }
+
+  async putSubmissionBody(
+    courseId: string,
+    assignmentId: string,
+    userId: string,
+    bodyText: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<void> {
+    const domain = this.getDomain(domainOverride);
+    const url = `https://${domain}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}`;
+    const body = { submission: { body: bodyText } };
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: this.getAuthHeaders(tokenOverride),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Canvas put submission body failed: ${res.status} ${text}`);
+    }
+  }
+
   async getSubmissionWithComments(
     courseId: string,
     assignmentId: string,

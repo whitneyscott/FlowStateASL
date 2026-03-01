@@ -8,6 +8,65 @@ import { CourseSettingsService } from '../course-settings/course-settings.servic
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
 import type { SubmitFlashcardDto } from './dto/submit-flashcard.dto';
 
+export function calculateRehearsalThreshold(deckSize: number): number {
+  return Math.max(Math.ceil(deckSize * 0.85), deckSize - 1);
+}
+
+type DeckResult = {
+  sessionId: string;
+  browserSession: string;
+  mode: 'tutorial' | 'rehearsal' | 'screening';
+  score: number;
+  scoreTotal: number;
+  playlistTitle: string;
+  rehearsalBestScore: string | null;
+};
+
+type SubmissionBodyResults = Record<string, DeckResult>;
+
+function parseSubmissionBody(raw: string | null | undefined): { results: SubmissionBodyResults; wasMalformed: boolean } {
+  const trimmed = raw?.trim();
+  if (!trimmed) return { results: {}, wasMalformed: false };
+  try {
+    const parsed = JSON.parse(trimmed) as { results?: SubmissionBodyResults };
+    if (parsed && typeof parsed === 'object' && parsed.results && typeof parsed.results === 'object' && !Array.isArray(parsed.results)) {
+      return { results: parsed.results, wasMalformed: false };
+    }
+  } catch {
+    // fall through
+  }
+  return { results: {}, wasMalformed: true };
+}
+
+function mergeDeckResult(existing: DeckResult | undefined, dto: SubmitFlashcardDto): DeckResult {
+  const raw = (dto.mode ?? 'rehearsal').toLowerCase();
+  const mode: 'tutorial' | 'rehearsal' | 'screening' =
+    raw === 'tutorial' || raw === 'screening' ? raw : 'rehearsal';
+  const score = dto.score ?? 0;
+  const scoreTotal = dto.scoreTotal ?? 0;
+  const playlistTitle = dto.playlistTitle ?? '';
+
+  let rehearsalBestScore: string | null = existing?.rehearsalBestScore ?? null;
+  if (mode === 'rehearsal' && scoreTotal > 0) {
+    const storedScore = existing?.rehearsalBestScore
+      ? parseFloat(existing.rehearsalBestScore.split('/')[0] ?? '0')
+      : -1;
+    if (score > storedScore) {
+      rehearsalBestScore = `${score}/${scoreTotal}`;
+    }
+  }
+
+  return {
+    sessionId: randomUUID(),
+    browserSession: Date.now().toString(36),
+    mode,
+    score,
+    scoreTotal,
+    playlistTitle,
+    rehearsalBestScore,
+  };
+}
+
 function buildProgressJson(dto: SubmitFlashcardDto): string {
   const payload = {
     sessionId: randomUUID(),
@@ -41,6 +100,8 @@ export class SubmissionService {
         ctx.canvasDomain,
       );
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId);
+
+    // 1. Comment storage (existing, keep in parallel)
     const commentText = buildProgressJson(dto);
     try {
       await this.canvas.putSubmissionComment(
@@ -71,6 +132,50 @@ export class SubmissionService {
         console.error('[saveProgressToCanvas] failed:', msg);
         throw createErr;
       }
+    }
+
+    // 2. Submission body storage (new, run in parallel until verified)
+    try {
+      const existing = await this.canvas.getSubmission(
+        ctx.courseId,
+        progressAssignmentId,
+        ctx.userId,
+        ctx.canvasDomain,
+        token,
+      );
+      const parsed = parseSubmissionBody(existing?.body);
+      if (parsed.wasMalformed) {
+        console.warn('[saveProgressToCanvas] submission body malformed, starting fresh');
+      }
+      const results = { ...parsed.results };
+      for (const deckId of dto.deckIds ?? []) {
+        const id = String(deckId);
+        results[id] = mergeDeckResult(results[id], dto);
+      }
+      const bodyJson = JSON.stringify({ results });
+      if (existing) {
+        await this.canvas.putSubmissionBody(
+          ctx.courseId,
+          progressAssignmentId,
+          ctx.userId,
+          bodyJson,
+          ctx.canvasDomain,
+          token,
+        );
+      } else {
+        await this.canvas.createSubmissionWithBody(
+          ctx.courseId,
+          progressAssignmentId,
+          ctx.userId,
+          bodyJson,
+          ctx.canvasDomain,
+          token,
+        );
+      }
+    } catch (bodyErr) {
+      const msg = bodyErr instanceof Error ? bodyErr.message : String(bodyErr);
+      console.warn('[saveProgressToCanvas] submission body save failed:', msg);
+      throw bodyErr;
     }
   }
 
@@ -154,42 +259,11 @@ export class SubmissionService {
       };
     }
 
-    const { lisOutcomeServiceUrl, lisResultSourcedid } = ctx;
-    if (!lisOutcomeServiceUrl || !lisResultSourcedid) {
-      await this.sessionRepo.delete(row.id);
-      return {
-        synced: true,
-        debug: {
-          progressSaved: true,
-          gradeSent: false,
-          details: 'Progress saved to Flashcard Progress assignment. Grade not sent: lis_outcome_service_url and lis_result_sourcedid were not in the LTI launch. Canvas sends these only when the tool is launched from an External Tool assignment. To fix: Add the flashcards tool as an External Tool assignment in your Canvas course and launch from that assignment link (instead of Course Navigation).',
-        },
-      };
-    }
+    await this.sessionRepo.delete(row.id);
 
-    try {
-      await this.canvas.submitGrade(
-        lisOutcomeServiceUrl,
-        lisResultSourcedid,
-        dto.score,
-        dto.scoreTotal,
-      );
-      await this.sessionRepo.delete(row.id);
-      return { synced: true, debug: { progressSaved: true, gradeSent: true, details: 'Progress saved. Grade sent to assignment.' } };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      await this.sessionRepo.update(row.id, {
-        syncStatus: 'failed',
-        syncErrorMessage: msg,
-      });
-      return {
-        synced: true,
-        debug: {
-          progressSaved: true,
-          gradeSent: false,
-          details: `Progress saved. Grade failed to send: ${msg}`,
-        },
-      };
-    }
+    // TODO: Replace with rubric criterion scoring once gate assignments and rubric system are implemented.
+    // submitGrade(lisOutcomeServiceUrl, lisResultSourcedid, dto.score, dto.scoreTotal) — STUBBED OUT
+
+    return { synced: true, debug: { progressSaved: true, gradeSent: false, details: 'Progress saved to Flashcard Progress assignment (comments and submission body).' } };
   }
 }
