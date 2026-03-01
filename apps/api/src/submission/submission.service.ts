@@ -114,7 +114,8 @@ export class SubmissionService {
       console.warn('[saveProgressToCanvas] submission body malformed, starting fresh');
     }
     const results = { ...parsed.results };
-    for (const deckId of dto.deckIds ?? []) {
+    const deckIdsToSave = dto.deckIds ?? [];
+    for (const deckId of deckIdsToSave) {
       const id = String(deckId);
       results[id] = mergeDeckResult(results[id], dto);
     }
@@ -130,25 +131,47 @@ export class SubmissionService {
         ctx.canvasDomain,
         token,
       );
-      return;
+    } else {
+      await this.canvas.putSubmissionComment(
+        ctx.courseId,
+        progressAssignmentId,
+        ctx.userId,
+        commentText,
+        ctx.canvasDomain,
+        token,
+      );
+      await this.canvas.putSubmissionBody(
+        ctx.courseId,
+        progressAssignmentId,
+        ctx.userId,
+        bodyJson,
+        ctx.canvasDomain,
+        token,
+      );
     }
 
-    await this.canvas.putSubmissionComment(
+    // Verify: re-fetch submission and confirm our data is present
+    const verified = await this.canvas.getSubmission(
       ctx.courseId,
       progressAssignmentId,
       ctx.userId,
-      commentText,
       ctx.canvasDomain,
       token,
     );
-    await this.canvas.putSubmissionBody(
-      ctx.courseId,
-      progressAssignmentId,
-      ctx.userId,
-      bodyJson,
-      ctx.canvasDomain,
-      token,
-    );
+    if (!verified?.body?.trim()) {
+      throw new Error(
+        `Verification failed: submission for user ${ctx.userId} on Flashcard Progress assignment (${progressAssignmentId}) has no body. ` +
+        'Check Canvas: Course > Assignments > Flashcard Progress > SpeedGrader for this student.',
+      );
+    }
+    const verifiedParsed = parseSubmissionBody(verified.body);
+    const hasOurDeck = deckIdsToSave.some((id) => verifiedParsed.results[String(id)]);
+    if (!hasOurDeck) {
+      throw new Error(
+        `Verification failed: saved data not found for deck(s) ${deckIdsToSave.join(', ')}. ` +
+        `Assignment ${progressAssignmentId}, user ${ctx.userId}. Canvas may not persist submission body via PUT.`,
+      );
+    }
   }
 
   calculateGrade(dto: SubmitFlashcardDto): { points: number; isGraded: boolean } {
