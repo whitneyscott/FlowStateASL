@@ -500,6 +500,40 @@ export class CanvasService {
     }
   }
 
+  /**
+   * Create submission with body and comment in one POST (Comment-First pattern).
+   * Mirrors submit_prompt_first.php: preserves data atomically with as_user_id.
+   */
+  async createSubmissionWithBodyAndComment(
+    courseId: string,
+    assignmentId: string,
+    userId: string,
+    bodyText: string,
+    commentText: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<void> {
+    const domain = this.getDomain(domainOverride);
+    const url = `https://${domain}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions`;
+    const body = {
+      submission: {
+        submission_type: 'online_text_entry',
+        body: bodyText,
+        user_id: parseInt(userId, 10) || userId,
+      },
+      comment: { text_comment: commentText },
+    };
+    const res = await fetch(url + '?as_user_id=' + encodeURIComponent(userId), {
+      method: 'POST',
+      headers: this.getAuthHeaders(tokenOverride),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Canvas create submission with body and comment failed: ${res.status} ${text}`);
+    }
+  }
+
   async putSubmissionBody(
     courseId: string,
     assignmentId: string,
@@ -559,6 +593,10 @@ export class CanvasService {
     }
   }
 
+  /**
+   * @deprecated Does not use as_user_id; submissions do not appear for students.
+   * Use createSubmissionWithBodyAndComment instead.
+   */
   async createSubmissionWithComment(
     courseId: string,
     assignmentId: string,

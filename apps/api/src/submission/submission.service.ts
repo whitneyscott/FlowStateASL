@@ -101,82 +101,54 @@ export class SubmissionService {
       );
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId);
 
-    // 1. Comment storage (existing, keep in parallel)
     const commentText = buildProgressJson(dto);
-    try {
-      await this.canvas.putSubmissionComment(
+    const existing = await this.canvas.getSubmission(
+      ctx.courseId,
+      progressAssignmentId,
+      ctx.userId,
+      ctx.canvasDomain,
+      token,
+    );
+    const parsed = parseSubmissionBody(existing?.body);
+    if (parsed.wasMalformed) {
+      console.warn('[saveProgressToCanvas] submission body malformed, starting fresh');
+    }
+    const results = { ...parsed.results };
+    for (const deckId of dto.deckIds ?? []) {
+      const id = String(deckId);
+      results[id] = mergeDeckResult(results[id], dto);
+    }
+    const bodyJson = JSON.stringify({ results });
+
+    if (!existing) {
+      await this.canvas.createSubmissionWithBodyAndComment(
         ctx.courseId,
         progressAssignmentId,
         ctx.userId,
+        bodyJson,
         commentText,
         ctx.canvasDomain,
         token,
       );
-    } catch (putErr) {
-      console.warn(
-        '[saveProgressToCanvas] putSubmissionComment failed, trying createSubmissionWithComment',
-        { courseId: ctx.courseId, assignmentId: progressAssignmentId, userId: ctx.userId },
-      );
-      try {
-        await this.canvas.createSubmissionWithComment(
-          ctx.courseId,
-          progressAssignmentId,
-          ctx.userId,
-          'Flashcard progress',
-          commentText,
-          ctx.canvasDomain,
-          token,
-        );
-      } catch (createErr) {
-        const msg = createErr instanceof Error ? createErr.message : String(createErr);
-        console.error('[saveProgressToCanvas] failed:', msg);
-        throw createErr;
-      }
+      return;
     }
 
-    // 2. Submission body storage (new, run in parallel until verified)
-    try {
-      const existing = await this.canvas.getSubmission(
-        ctx.courseId,
-        progressAssignmentId,
-        ctx.userId,
-        ctx.canvasDomain,
-        token,
-      );
-      const parsed = parseSubmissionBody(existing?.body);
-      if (parsed.wasMalformed) {
-        console.warn('[saveProgressToCanvas] submission body malformed, starting fresh');
-      }
-      const results = { ...parsed.results };
-      for (const deckId of dto.deckIds ?? []) {
-        const id = String(deckId);
-        results[id] = mergeDeckResult(results[id], dto);
-      }
-      const bodyJson = JSON.stringify({ results });
-      if (existing) {
-        await this.canvas.putSubmissionBody(
-          ctx.courseId,
-          progressAssignmentId,
-          ctx.userId,
-          bodyJson,
-          ctx.canvasDomain,
-          token,
-        );
-      } else {
-        await this.canvas.createSubmissionWithBody(
-          ctx.courseId,
-          progressAssignmentId,
-          ctx.userId,
-          bodyJson,
-          ctx.canvasDomain,
-          token,
-        );
-      }
-    } catch (bodyErr) {
-      const msg = bodyErr instanceof Error ? bodyErr.message : String(bodyErr);
-      console.warn('[saveProgressToCanvas] submission body save failed:', msg);
-      throw bodyErr;
-    }
+    await this.canvas.putSubmissionComment(
+      ctx.courseId,
+      progressAssignmentId,
+      ctx.userId,
+      commentText,
+      ctx.canvasDomain,
+      token,
+    );
+    await this.canvas.putSubmissionBody(
+      ctx.courseId,
+      progressAssignmentId,
+      ctx.userId,
+      bodyJson,
+      ctx.canvasDomain,
+      token,
+    );
   }
 
   calculateGrade(dto: SubmitFlashcardDto): { points: number; isGraded: boolean } {
