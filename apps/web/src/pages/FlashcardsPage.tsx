@@ -69,6 +69,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   const [saveLog, setSaveLog] = useState<string[]>([]);
   const [deckProgress, setDeckProgress] = useState<Record<string, { completed: number }>>({});
   const [deckItemsLoading, setDeckItemsLoading] = useState(false);
+  const [deckLoadError, setDeckLoadError] = useState<string | null>(null);
   const [deckTotalFromCache, setDeckTotalFromCache] = useState<number | null>(null);
   const submittedForSessionRef = useRef(false);
 
@@ -261,6 +262,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     setBenchmarkNagDismissed(false);
     setShowingAnswer(false);
     setScreeningOverlay(null);
+    setDeckLoadError(null);
     const goToPlaylistView = viewAsPlaylist;
     setView(goToPlaylistView ? 'playlist' : 'study');
 
@@ -273,6 +275,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
         : undefined;
     const cachedHasEmbeds = cached?.items?.some((it) => it.embed);
     if (cached?.items && cached.items.length > 0 && cachedHasEmbeds) {
+      setDeckLoadError(null);
       setDeckItemsLoading(false);
       let list = cached.items.map((it) => ({ title: it.title, embed: it.embed }));
       if (singleVersionPerAnswer) {
@@ -305,7 +308,18 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
         `/api/flashcard/items?playlist_id=${encodeURIComponent(id)}`,
         { credentials: 'include' },
       );
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const message =
+          typeof data === 'object' && data !== null && 'message' in data
+            ? String((data as { message?: string }).message ?? 'Deck is not available yet.')
+            : 'Deck is not available yet. Please try again shortly.';
+        setDeckLoadError(message);
+        setItems([]);
+        setOriginalItems([]);
+        setDeckProgress({});
+        return;
+      }
       let list: VideoItem[] = Array.isArray(data) ? data : [];
       if (sproutAccountId) {
         list = list.map((it) => ({
@@ -324,6 +338,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
       }
       setOriginalItems(list);
       setItems([...list]);
+      setDeckLoadError(null);
       try {
         const progRes = await fetch(
           `/api/flashcard/progress?deck_ids=${encodeURIComponent(id)}`,
@@ -335,7 +350,9 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
         setDeckProgress({});
       }
     } catch {
+      setDeckLoadError('Unable to load this deck right now. Please try again.');
       setItems([]);
+      setOriginalItems([]);
       setDeckProgress({});
     } finally {
       setDeckItemsLoading(false);
@@ -1100,6 +1117,11 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                     </div>
                   ) : (
                     <>
+                      {deckLoadError && (
+                        <p className="flashcards-save-error" role="alert">
+                          {deckLoadError}
+                        </p>
+                      )}
                       <p className="flashcards-vocab-display">READY?</p>
                       <button
                         type="button"

@@ -12,6 +12,10 @@ const BLACKLIST = ['exam', 'test', 'sentence'];
 export class SproutVideoService {
   constructor(private readonly config: ConfigService) {}
 
+  private async delay(ms: number): Promise<void> {
+    if (ms > 0) await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
   getSmartVersions(input: string): string[] {
     const match = input.match(/^([A-Z]+)[.\s]+([\d.]+)$/i);
     if (match) {
@@ -53,6 +57,108 @@ export class SproutVideoService {
 
   async fetchAllPlaylists(): Promise<SproutPlaylist[]> {
     return this.fetchPlaylistsUpdatedSince(null);
+  }
+
+  /**
+   * Lists all videos in a playlist using the playlist filter endpoint.
+   * This is significantly cheaper than fetching each video by ID individually.
+   */
+  async fetchVideosByPlaylistId(
+    playlistId: string,
+  ): Promise<Array<{ id: string; title: string; embed_code: string }>> {
+    const apiKey = this.config.get('SPROUT_KEY');
+    if (!apiKey) throw new Error('SproutVideo not configured');
+
+    const all: Array<{ id: string; title: string; embed_code: string }> = [];
+    const perPage = 100;
+    let page = 1;
+    const baseDelay = (() => {
+      const raw = this.config.get<string>('SPROUTVIDEO_VIDEO_FETCH_DELAY_MS');
+      const parsed = raw ? parseInt(raw, 10) : NaN;
+      return Number.isFinite(parsed) && parsed >= 0 ? parsed : 300;
+    })();
+    let dynamicDelay = baseDelay;
+    const threshold429 = (() => {
+      const raw = this.config.get<string>('SPROUTVIDEO_429_THRESHOLD');
+      const parsed = raw ? parseInt(raw, 10) : NaN;
+      return Number.isFinite(parsed) && parsed >= 1 ? parsed : 5;
+    })();
+    const window429Ms = (() => {
+      const raw = this.config.get<string>('SPROUTVIDEO_429_WINDOW_MS');
+      const parsed = raw ? parseInt(raw, 10) : NaN;
+      return Number.isFinite(parsed) && parsed >= 1000 ? parsed : 60_000;
+    })();
+    const timestamps429: number[] = [];
+
+    while (true) {
+      const url = `https://api.sproutvideo.com/v1/videos?playlist_id=${encodeURIComponent(playlistId)}&per_page=${perPage}&page=${page}`;
+      const maxRetries = 5;
+      let backoff = dynamicDelay;
+      let res: Response | null = null;
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+          res = await fetch(url, {
+            headers: { 'SproutVideo-Api-Key': apiKey },
+          });
+        } catch (err) {
+          if (attempt === maxRetries) throw err;
+          await this.delay(backoff);
+          backoff *= 2;
+          continue;
+        }
+
+        if (res.ok) break;
+        const isRetryable = res.status === 429 || (res.status >= 500 && res.status < 600);
+        if (!isRetryable || attempt === maxRetries) {
+          throw new Error(`SproutVideo API error: ${res.status}`);
+        }
+        if (res.status === 429) {
+          const now = Date.now();
+          timestamps429.push(now);
+          const cutoff = now - window429Ms;
+          while (timestamps429.length > 0 && timestamps429[0] < cutoff) timestamps429.shift();
+          if (timestamps429.length >= threshold429) {
+            dynamicDelay = Math.min(dynamicDelay * 2, 2000);
+          }
+        }
+
+        let waitMs = backoff;
+        const retryAfter = res.headers.get('Retry-After');
+        if (retryAfter) {
+          const retrySeconds = parseInt(retryAfter, 10);
+          if (Number.isFinite(retrySeconds) && retrySeconds > 0) {
+            waitMs = retrySeconds * 1000;
+          }
+        }
+        await this.delay(waitMs);
+        backoff *= 2;
+      }
+
+      if (!res || !res.ok) throw new Error('SproutVideo API error while listing videos');
+      const data = (await res.json()) as {
+        videos?: Array<{ id?: string; title?: string; embed_code?: string }>;
+        total?: number;
+        next_page?: string | null;
+      };
+
+      const videos = data.videos ?? [];
+      for (const v of videos) {
+        if (!v.id) continue;
+        all.push({
+          id: String(v.id),
+          title: String(v.title ?? 'Vocabulary Item'),
+          embed_code: String(v.embed_code ?? ''),
+        });
+      }
+
+      if (typeof data.total === 'number' && page * perPage >= data.total) break;
+      if (!data.next_page && videos.length < perPage) break;
+
+      page++;
+      await this.delay(dynamicDelay);
+    }
+
+    return all;
   }
 
   /**

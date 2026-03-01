@@ -9,7 +9,9 @@
     "serve": "nx run-many -t serve --parallel=2",
     "serve:api": "nx serve api",
     "serve:web": "nx serve web",
-    "lint": "nx run-many -t lint"
+    "lint": "nx run-many -t lint",
+    "seed:qti": "tsx --tsconfig apps/api/tsconfig.json apps/api/src/scripts/seed-qti.ts",
+    "seed:sprout:fresh": "tsx --tsconfig apps/api/tsconfig.json apps/api/src/scripts/seed-sprout-fresh.ts"
   },
   "private": true,
   "dependencies": {
@@ -21,6 +23,7 @@
     "@nestjs/serve-static": "^4.0.2",
     "@nestjs/typeorm": "^10.0.2",
     "@types/connect-pg-simple": "^7.0.3",
+    "adm-zip": "^0.5.16",
     "connect-pg-simple": "^10.0.0",
     "express-session": "^1.18.1",
     "pg": "^8.13.1",
@@ -35,6 +38,7 @@
     "@nx/js": "22.5.2",
     "@nx/vite": "22.5.2",
     "@nx/workspace": "22.5.2",
+    "@types/adm-zip": "^0.5.7",
     "@types/express-session": "^1.18.0",
     "@types/node": "^22.10.2",
     "@types/react": "^18.3.14",
@@ -45,6 +49,7 @@
     "nx": "22.5.2",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.16",
+    "tsx": "^4.21.0",
     "typescript": "^5.7.2",
     "vite": "^6.0.3"
   }

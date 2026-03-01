@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { CanvasService } from '../canvas/canvas.service';
@@ -40,7 +40,9 @@ export class FlashcardService {
   async getPlaylistItems(playlistId: string) {
     const cached = await this.playlistCache.getPlaylistItems(playlistId);
     if (cached !== null) return cached;
-    return this.sproutVideo.getPlaylistItems('', playlistId);
+    throw new NotFoundException(
+      `Playlist ${playlistId} is not available in cache yet. Please sync and try again.`,
+    );
   }
 
   async getModuleInfo(
