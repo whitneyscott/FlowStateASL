@@ -40,6 +40,8 @@ interface TeacherSettingsProps {
 export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }: TeacherSettingsProps) {
   const { setSproutVideo, setLastFunction, setLastApiResult, setLastApiError } = useDebug();
   const [allPlaylists, setAllPlaylists] = useState<Array<{ id: string; title: string }>>([]);
+  const [curricula, setCurricula] = useState<string[]>([]);
+  const [allUnits, setAllUnits] = useState<string[]>([]);
   const [selectedCurriculums, setSelectedCurriculums] = useState<string[]>([]);
   const [selectedUnits, setSelectedUnits] = useState<string[]>([]);
   const [assessmentPlaylistsVisible, setAssessmentPlaylistsVisible] = useState(true);
@@ -50,7 +52,6 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
   const [loading, setLoading] = useState(true);
   const [playlistTotal, setPlaylistTotal] = useState<number | null>(null);
   const [canvasApiTokenInput, setCanvasApiTokenInput] = useState('');
-  const [needsUpdate, setNeedsUpdate] = useState(false);
   const [showSaveModal, setShowSaveModal] = useState(false);
 
   const teacher = context && isTeacher(context.roles);
@@ -61,20 +62,41 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
     : allPlaylists.filter((p) => !hasAssessmentTerm(p.title));
 
   const [hasCanvasToken, setHasCanvasToken] = useState(false);
-  const curricula = [...new Set(displayPlaylists.map((p) => segments(p.title)[0]).filter(Boolean))].sort();
-  const allUnits = [...new Set(
-    displayPlaylists
-      .filter((p) => selectedCurriculums.length === 0 || selectedCurriculums.includes(segments(p.title)[0] ?? ''))
-      .map((p) => segments(p.title)[1])
-      .filter(Boolean)
-  )].sort();
+  const filtered = displayPlaylists;
 
-  const filtered = displayPlaylists.filter((p) => {
-    const [c, u] = segments(p.title);
-    if (selectedCurriculums.length > 0 && (!c || !selectedCurriculums.includes(c))) return false;
-    if (selectedUnits.length > 0 && (!u || !selectedUnits.includes(u))) return false;
-    return true;
-  });
+  const encodeCsv = (values: string[]): string =>
+    values
+      .map((v) => v.trim())
+      .filter(Boolean)
+      .map(encodeURIComponent)
+      .join(',');
+
+  const loadUnits = useCallback(async (curriculaInput: string[]) => {
+    const csv = encodeCsv(curriculaInput);
+    const res = await fetch(`/api/flashcard/units?curricula=${csv}`, { credentials: 'include' });
+    const data = await res.json().catch(() => []);
+    const units = Array.isArray(data) ? data.map(String) : [];
+    setAllUnits(units);
+    setSelectedUnits((prev) => prev.filter((u) => units.includes(u)));
+  }, []);
+
+  const loadPlaylists = useCallback(async (curriculaInput: string[], unitsInput: string[]) => {
+    const curriculaCsv = encodeCsv(curriculaInput);
+    const unitsCsv = encodeCsv(unitsInput);
+    const res = await fetch(
+      `/api/flashcard/teacher-playlists?curricula=${curriculaCsv}&units=${unitsCsv}`,
+      { credentials: 'include' },
+    );
+    if (!res.ok) {
+      setError(`HTTP ${res.status}`);
+      return;
+    }
+    const list = await res.json().catch(() => []);
+    const rows = Array.isArray(list) ? list : [];
+    setAllPlaylists(rows);
+    setSproutVideo(true, rows.length);
+    setError(null);
+  }, [setSproutVideo]);
 
   const toggleCurriculum = useCallback((c: string) => {
     setSelectedCurriculums((prev) =>
@@ -96,7 +118,7 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
         return;
       }
       try {
-        setLastFunction('GET /api/flashcard/all-playlists');
+        setLastFunction('GET /api/flashcard/playlist-count');
         setError(null);
         setPlaylistTotal(null);
         const countRes = await fetch('/api/flashcard/playlist-count', { credentials: 'include' });
@@ -108,12 +130,12 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
         }
         if (cancelled) return;
         setLastFunction('GET /api/course-settings');
-        const [pRes, csRes] = await Promise.all([
-          fetch('/api/flashcard/all-playlists', { credentials: 'include' }),
+        const [curriculaRes, csRes] = await Promise.all([
+          fetch('/api/flashcard/curricula', { credentials: 'include' }),
           fetch('/api/course-settings', { credentials: 'include' }),
         ]);
         if (cancelled) return;
-        const list = await pRes.json().catch(() => []);
+        const curriculaList = await curriculaRes.json().catch(() => []);
         const csRaw = await csRes.text().catch(() => '');
         const cs = (() => { try { return JSON.parse(csRaw); } catch { return null; } })();
         setLastApiResult('GET /api/course-settings', csRes.status, csRes.ok);
@@ -122,13 +144,18 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
           try { const j = JSON.parse(csRaw); errMsg = j?.message ?? errMsg; } catch { errMsg = csRaw?.slice(0, 80) ?? errMsg; }
           setLastApiError('GET /api/course-settings', csRes.status, errMsg);
         }
-        if (!pRes.ok) {
-          setError(`HTTP ${pRes.status}`);
+        if (!curriculaRes.ok) {
+          setError(`HTTP ${curriculaRes.status}`);
           if (!cancelled) setLoading(false);
           return;
         }
-        setAllPlaylists(Array.isArray(list) ? list : []);
-        setSproutVideo(true, Array.isArray(list) ? list.length : 0);
+        setCurricula(Array.isArray(curriculaList) ? curriculaList.map(String) : []);
+        const initialCurriculums = Array.isArray(cs?.selectedCurriculums) ? cs.selectedCurriculums : [];
+        const initialUnits = Array.isArray(cs?.selectedUnits) ? cs.selectedUnits : [];
+        setSelectedCurriculums(initialCurriculums);
+        setSelectedUnits(initialUnits);
+        await loadUnits(initialCurriculums);
+        await loadPlaylists(initialCurriculums, initialUnits);
         if (cs?.selectedCurriculums) {
           setSelectedCurriculums(Array.isArray(cs.selectedCurriculums) ? cs.selectedCurriculums : []);
         }
@@ -137,7 +164,6 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
         }
         setHasCanvasToken(!!cs?.hasCanvasToken);
         setCanvasApiTokenInput('');
-        setNeedsUpdate(!!cs?.needsUpdate);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load');
       } finally {
@@ -146,7 +172,21 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
     }
     load();
     return () => { cancelled = true; };
-  }, [teacher, hasLti, retryCount]);
+  }, [teacher, hasLti, retryCount, loadPlaylists, loadUnits]);
+
+  useEffect(() => {
+    if (!teacher || !hasLti) return;
+    loadUnits(selectedCurriculums).catch(() => {
+      setAllUnits([]);
+    });
+  }, [teacher, hasLti, selectedCurriculums, loadUnits]);
+
+  useEffect(() => {
+    if (!teacher || !hasLti) return;
+    loadPlaylists(selectedCurriculums, selectedUnits).catch((err) => {
+      setError(err instanceof Error ? err.message : 'Failed to load playlists');
+    });
+  }, [teacher, hasLti, selectedCurriculums, selectedUnits, loadPlaylists]);
 
   useEffect(() => {
     onFilteredPlaylists?.(filtered);
@@ -181,7 +221,6 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
       }
       onConfigChange?.();
       setSavedFeedback(true);
-      setNeedsUpdate(false);
       setTimeout(() => setSavedFeedback(false), 2000);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Save failed';
@@ -298,16 +337,6 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
           </form>
         </div>
         <div className="teacher-settings-actions">
-          {needsUpdate && (
-            <button
-              type="button"
-              className="teacher-settings-btn teacher-settings-btn-update"
-              onClick={handleSave}
-              disabled={saving}
-            >
-              Update playlists
-            </button>
-          )}
           <button
             type="button"
             className="teacher-settings-btn"

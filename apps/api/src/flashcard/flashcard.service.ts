@@ -45,15 +45,6 @@ export class FlashcardService {
     );
   }
 
-  async getModuleInfo(
-    courseId: string,
-    moduleId: string,
-    prefix?: string,
-    canvasDomain?: string,
-  ) {
-    return this.canvas.getModuleInfo(courseId, moduleId, prefix, canvasDomain);
-  }
-
   async getAllPlaylists() {
     const playlists = await this.playlistCache.getAllPlaylists();
     return playlists
@@ -63,6 +54,66 @@ export class FlashcardService {
 
   async getPlaylistCount(): Promise<number> {
     return this.playlistCache.getPlaylistCount();
+  }
+
+  async getTeacherCurricula(): Promise<string[]> {
+    return this.playlistCache.getDistinctCurricula();
+  }
+
+  async getTeacherUnits(curricula: string[]): Promise<string[]> {
+    return this.playlistCache.getDistinctUnits(curricula);
+  }
+
+  async getTeacherPlaylists(
+    curricula: string[],
+    units: string[],
+  ): Promise<Array<{ id: string; title: string }>> {
+    const rows = await this.playlistCache.getPlaylistsByCurriculaAndUnits(curricula, units);
+    return rows.filter((p) => !this.sproutVideo.isBlacklisted(p.title));
+  }
+
+  private async getStudentConstraints(courseId: string, canvasDomain?: string): Promise<{
+    selectedCurriculums: string[];
+    selectedUnits: string[];
+  }> {
+    const settings = await this.courseSettings.get(courseId, {
+      isTeacher: false,
+      canvasDomain,
+    });
+    return {
+      selectedCurriculums: settings?.selectedCurriculums ?? [],
+      selectedUnits: settings?.selectedUnits ?? [],
+    };
+  }
+
+  async getStudentUnits(courseId: string, canvasDomain?: string): Promise<string[]> {
+    const { selectedCurriculums, selectedUnits } = await this.getStudentConstraints(courseId, canvasDomain);
+    return this.playlistCache.getDistinctUnitsByConstraints(selectedCurriculums, selectedUnits);
+  }
+
+  async getStudentSections(
+    courseId: string,
+    unit: string,
+    canvasDomain?: string,
+  ): Promise<string[]> {
+    const { selectedCurriculums, selectedUnits } = await this.getStudentConstraints(courseId, canvasDomain);
+    return this.playlistCache.getDistinctSectionsByConstraints(selectedCurriculums, unit, selectedUnits);
+  }
+
+  async getStudentPlaylists(
+    courseId: string,
+    unit: string,
+    section: string,
+    canvasDomain?: string,
+  ): Promise<Array<{ id: string; title: string }>> {
+    const { selectedCurriculums, selectedUnits } = await this.getStudentConstraints(courseId, canvasDomain);
+    const rows = await this.playlistCache.getPlaylistsByHierarchy(
+      selectedCurriculums,
+      unit,
+      section,
+      selectedUnits,
+    );
+    return rows.filter((p) => !this.sproutVideo.isBlacklisted(p.title));
   }
 
   async getConfig(
@@ -88,41 +139,36 @@ export class FlashcardService {
     deckIds?: string[],
   ): Promise<Record<string, { completed: number }>> {
     const result: Record<string, { completed: number }> = {};
-    const byDeck: Record<string, { completed: number; submittedAt: number }> = {};
     try {
       const progressAssignmentId =
         await this.courseSettings.getProgressAssignmentId(courseId, canvasDomain);
       const token = await this.courseSettings.getEffectiveCanvasToken(courseId);
-      const sub = await this.canvas.getSubmissionWithComments(
+      const sub = await this.canvas.getSubmission(
         courseId,
         progressAssignmentId,
         userId,
         canvasDomain,
         token,
       );
-      if (!sub?.comments?.length) return result;
-      for (const c of sub.comments) {
-        const raw = c.comment?.trim();
-        if (!raw) continue;
-        try {
-          const parsed = JSON.parse(raw) as { deckIds?: string[]; scoreTotal?: number; submittedAt?: string };
-          const ids = Array.isArray(parsed.deckIds) ? parsed.deckIds : [];
-          const completed = typeof parsed.scoreTotal === 'number' ? parsed.scoreTotal : 0;
-          const submittedAt = parsed.submittedAt ? new Date(parsed.submittedAt).getTime() : 0;
-          for (const deckId of ids) {
-            const id = String(deckId);
-            if (deckIds && deckIds.length > 0 && !deckIds.includes(id)) continue;
-            const existing = byDeck[id];
-            if (!existing || submittedAt > existing.submittedAt) {
-              byDeck[id] = { completed, submittedAt };
-            }
-          }
-        } catch {
-          // ignore non-JSON comments
+      const rawBody = sub?.body?.trim();
+      if (!rawBody) return result;
+
+      try {
+        const parsed = JSON.parse(rawBody) as {
+          results?: Record<string, { scoreTotal?: number }>;
+        };
+        const entries = parsed?.results ?? {};
+        for (const [deckId, deckResult] of Object.entries(entries)) {
+          const id = String(deckId);
+          if (deckIds && deckIds.length > 0 && !deckIds.includes(id)) continue;
+          const completed =
+            deckResult && typeof deckResult.scoreTotal === 'number'
+              ? deckResult.scoreTotal
+              : 0;
+          result[id] = { completed };
         }
-      }
-      for (const id of Object.keys(byDeck)) {
-        result[id] = { completed: byDeck[id].completed };
+      } catch {
+        // ignore malformed body JSON
       }
     } catch {
       // best-effort

@@ -6,18 +6,31 @@ import {
   Query,
   Req,
   ForbiddenException,
+  UseGuards,
 } from '@nestjs/common';
 import { Request } from 'express';
 import { FlashcardService } from './flashcard.service';
 import { LtiService } from '../lti/lti.service';
 import { setLastError } from '../common/last-error.store';
+import { LtiLaunchGuard } from '../lti/guards/lti-launch.guard';
+import type { LtiContext } from '../common/interfaces/lti-context.interface';
 
 @Controller('flashcard')
+@UseGuards(LtiLaunchGuard)
 export class FlashcardController {
   constructor(
     private readonly flashcard: FlashcardService,
     private readonly ltiService: LtiService,
   ) {}
+
+  private requireTeacher(ctx: LtiContext | undefined): void {
+    if (!ctx?.courseId) {
+      throw new ForbiddenException('LTI context required');
+    }
+    if (!this.ltiService.isTeacherRole(ctx.roles)) {
+      throw new ForbiddenException('Teacher role required');
+    }
+  }
 
   @Get('playlists')
   async getPlaylists(
@@ -28,7 +41,6 @@ export class FlashcardController {
     @Query('section') sectionQ: string,
   ) {
     const ctx = req.session?.ltiContext;
-    const prefix = process.env.CURRICULUM_PREFIX ?? 'TWA';
     try {
       if (curriculumQ && ctx?.courseId) {
         return await this.flashcard.getPlaylistsByHierarchy(
@@ -50,15 +62,6 @@ export class FlashcardController {
             config.section,
           );
         }
-      }
-      if (!effectiveFilter && ctx?.courseId && ctx?.moduleId) {
-        const info = await this.flashcard.getModuleInfo(
-          ctx.courseId,
-          ctx.moduleId,
-          prefix,
-          ctx?.canvasDomain,
-        );
-        effectiveFilter = info.filter ?? '';
       }
       return await this.flashcard.getPlaylists(effectiveFilter);
     } catch (err) {
@@ -101,7 +104,8 @@ export class FlashcardController {
   }
 
   @Get('all-playlists')
-  async getAllPlaylists() {
+  async getAllPlaylists(@Req() req: Request) {
+    this.requireTeacher(req.session?.ltiContext as LtiContext | undefined);
     try {
       return await this.flashcard.getAllPlaylists();
     } catch (err) {
@@ -110,27 +114,100 @@ export class FlashcardController {
     }
   }
 
-  @Get('module-suggestion')
-  async getModuleSuggestion(@Req() req: Request) {
-    const ctx = req.session?.ltiContext;
-    if (!ctx?.courseId || !ctx?.moduleId) return null;
-    const prefix = process.env.CURRICULUM_PREFIX ?? 'TWA';
+  @Get('curricula')
+  async getCurricula(@Req() req: Request) {
+    this.requireTeacher(req.session?.ltiContext as LtiContext | undefined);
     try {
-      const info = await this.flashcard.getModuleInfo(
-        ctx.courseId,
-        ctx.moduleId,
-        prefix,
-        ctx?.canvasDomain,
-      );
-      return {
-        curriculum: prefix,
-        unit: info.unit ?? '',
-        section: info.section ?? '',
-        moduleName: info.module_name,
-      };
-    } catch {
-      return null;
+      return await this.flashcard.getTeacherCurricula();
+    } catch (err) {
+      setLastError('GET /api/flashcard/curricula', err);
+      throw err;
     }
+  }
+
+  @Get('units')
+  async getUnits(
+    @Req() req: Request,
+    @Query('curricula') curriculaParam?: string,
+  ) {
+    this.requireTeacher(req.session?.ltiContext as LtiContext | undefined);
+    try {
+      const curricula = (curriculaParam ?? '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      return await this.flashcard.getTeacherUnits(curricula);
+    } catch (err) {
+      setLastError('GET /api/flashcard/units', err);
+      throw err;
+    }
+  }
+
+  @Get('teacher-playlists')
+  async getTeacherPlaylists(
+    @Req() req: Request,
+    @Query('curricula') curriculaParam?: string,
+    @Query('units') unitsParam?: string,
+  ) {
+    this.requireTeacher(req.session?.ltiContext as LtiContext | undefined);
+    try {
+      const curricula = (curriculaParam ?? '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const units = (unitsParam ?? '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      return await this.flashcard.getTeacherPlaylists(curricula, units);
+    } catch (err) {
+      setLastError('GET /api/flashcard/teacher-playlists', err);
+      throw err;
+    }
+  }
+
+  @Get('student-units')
+  async getStudentUnits(@Req() req: Request) {
+    const ctx = req.session?.ltiContext;
+    if (!ctx?.courseId) {
+      throw new ForbiddenException('LTI context required');
+    }
+    return this.flashcard.getStudentUnits(ctx.courseId, ctx.canvasDomain);
+  }
+
+  @Get('student-sections')
+  async getStudentSections(
+    @Req() req: Request,
+    @Query('unit') unitParam?: string,
+  ) {
+    const ctx = req.session?.ltiContext;
+    if (!ctx?.courseId) {
+      throw new ForbiddenException('LTI context required');
+    }
+    const unit = String(unitParam ?? '').trim();
+    if (!unit) return [];
+    return this.flashcard.getStudentSections(ctx.courseId, unit, ctx.canvasDomain);
+  }
+
+  @Get('student-playlists')
+  async getStudentPlaylists(
+    @Req() req: Request,
+    @Query('unit') unitParam?: string,
+    @Query('section') sectionParam?: string,
+  ) {
+    const ctx = req.session?.ltiContext;
+    if (!ctx?.courseId) {
+      throw new ForbiddenException('LTI context required');
+    }
+    const unit = String(unitParam ?? '').trim();
+    const section = String(sectionParam ?? '').trim();
+    if (!unit || !section) return [];
+    return this.flashcard.getStudentPlaylists(
+      ctx.courseId,
+      unit,
+      section,
+      ctx.canvasDomain,
+    );
   }
 
   @Get('config')

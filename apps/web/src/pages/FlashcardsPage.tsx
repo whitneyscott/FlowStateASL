@@ -29,10 +29,6 @@ function segments(title: string): string[] {
 }
 
 const LAST_SESSION_KEY = (courseId: string) => `flashcards-last-${courseId}`;
-const HUB_CACHE_KEY = (courseId: string) => `flashcards-hub-${courseId}`;
-const HUB_CACHE_TTL_MS = 5 * 60 * 1000;
-
-type CachedPlaylist = { id: string; title: string; items?: Array<{ id?: string; title: string; embed?: string }> };
 
 interface FlashcardsPageProps {
   context: LtiContext;
@@ -49,7 +45,8 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   const [playlistsLoading, setPlaylistsLoading] = useState(true);
   const [courseSettings, setCourseSettings] = useState<{ selectedCurriculums: string[]; selectedUnits: string[]; sproutAccountId?: string } | null>(null);
   const [allPlaylistsHub, setAllPlaylistsHub] = useState<Array<{ id: string; title: string }>>([]);
-  const [filteredPlaylistsWithItems, setFilteredPlaylistsWithItems] = useState<CachedPlaylist[]>([]);
+  const [hubUnits, setHubUnits] = useState<string[]>([]);
+  const [hubSections, setHubSections] = useState<string[]>([]);
   const [hubSelectedUnit, setHubSelectedUnit] = useState('');
   const [hubSelectedSection, setHubSelectedSection] = useState('');
   const [lastSession, setLastSession] = useState<{ unit: string } | null>(null);
@@ -96,152 +93,146 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   const [singleVersionPerAnswer, setSingleVersionPerAnswer] = useState(false);
   const [tutorialAutoAdvance, setTutorialAutoAdvance] = useState(true);
 
-  const loadPlaylists = useCallback(async () => {
-    setPlaylistsLoading(true);
-    try {
-      setLastFunction('GET /api/flashcard/playlists');
-      const res = await fetch('/api/flashcard/playlists', { credentials: 'include' });
-      const data = await res.json();
-      const list = Array.isArray(data) ? data : [];
-      setPlaylists(list);
-      if (list.length > 0) setSproutVideo(true, list.length);
-    } catch {
-      setPlaylists([]);
-    } finally {
-      setPlaylistsLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!teacherMode && !isCourseNavigation) loadPlaylists();
-  }, [teacherMode, isCourseNavigation, loadPlaylists]);
-
   const loadHubData = useCallback(async () => {
-    if (!context?.courseId || !isCourseNavigation) {
+    if (!context?.courseId) {
       setPlaylistsLoading(false);
       return;
     }
     const courseId = context.courseId;
-    const cacheKey = HUB_CACHE_KEY(courseId);
-    try {
-      const cached = sessionStorage.getItem(cacheKey);
-      if (cached) {
-        const parsed = JSON.parse(cached) as { cs: unknown; pl: CachedPlaylist[]; ts: number };
-        if (Date.now() - (parsed.ts ?? 0) < HUB_CACHE_TTL_MS && Array.isArray(parsed.pl)) {
-          const cs = parsed.cs as { selectedCurriculums?: string[]; selectedUnits?: string[]; sproutAccountId?: string } | null;
-          setCourseSettings(
-            cs && typeof cs === 'object'
-              ? { selectedCurriculums: cs.selectedCurriculums ?? [], selectedUnits: cs.selectedUnits ?? [], sproutAccountId: cs.sproutAccountId }
-              : null,
-          );
-          const hub = parsed.pl.map((p) => ({ id: p.id, title: p.title }));
-          setAllPlaylistsHub(hub);
-          setFilteredPlaylistsWithItems(parsed.pl);
-          if (parsed.pl.length > 0) setSproutVideo(true, parsed.pl.length);
-          setPlaylistsLoading(false);
-          return;
-        }
-      }
-    } catch {
-    }
     setPlaylistsLoading(true);
     try {
       setLastFunction('GET /api/course-settings');
       const csRes = await fetch('/api/course-settings', { credentials: 'include' });
       setLastApiResult('GET /api/course-settings', csRes.status, csRes.ok);
       const cs = await csRes.json().catch(() => null);
-      console.log('[Student loadHubData] courseId:', courseId, 'courseSettings from API:', cs);
       const csState = cs ? { selectedCurriculums: cs.selectedCurriculums ?? [], selectedUnits: cs.selectedUnits ?? [], sproutAccountId: cs.sproutAccountId } : null;
-      let pl: CachedPlaylist[] = Array.isArray(cs?.filteredPlaylists) ? cs.filteredPlaylists : [];
-      if (pl.length === 0 && csState) {
-        const plRes = await fetch('/api/flashcard/all-playlists', { credentials: 'include' });
-        const allPl = await plRes.json().catch(() => []);
-        pl = (Array.isArray(allPl) ? allPl : []).map((p: { id?: string; title: string }) => ({
-          id: p.id ?? p.title,
-          title: p.title,
-        }));
-      }
-      const hub = pl.map((p) => ({ id: p.id, title: p.title }));
       setCourseSettings(csState);
-      setAllPlaylistsHub(hub);
-      setFilteredPlaylistsWithItems(pl);
-      if (pl.length > 0) setSproutVideo(true, pl.length);
-      try {
-        sessionStorage.setItem(cacheKey, JSON.stringify({ cs: csState, pl, ts: Date.now() }));
-      } catch {
-      }
+      setAllPlaylistsHub([]);
+      setPlaylists([]);
+      setHubSections([]);
+      setHubSelectedSection('');
+
       const stored = localStorage.getItem(LAST_SESSION_KEY(courseId));
+      let preferredUnit = '';
       if (stored) {
         try {
           const parsed = JSON.parse(stored) as { unit?: string };
-          if (parsed?.unit) setLastSession({ unit: parsed.unit });
+          if (parsed?.unit) {
+            preferredUnit = parsed.unit;
+            setLastSession({ unit: parsed.unit });
+          }
         } catch {
         }
+      }
+
+      const unitsRes = await fetch('/api/flashcard/student-units', { credentials: 'include' });
+      const units = (await unitsRes.json().catch(() => [])) as string[];
+      const normalizedUnits = Array.isArray(units) ? units.map(String) : [];
+      setHubUnits(normalizedUnits);
+      if (normalizedUnits.length > 0) {
+        const selected = preferredUnit && normalizedUnits.includes(preferredUnit)
+          ? preferredUnit
+          : normalizedUnits[0];
+        setHubSelectedUnit(selected);
+      } else {
+        setHubSelectedUnit('');
       }
     } finally {
       setPlaylistsLoading(false);
     }
-  }, [context?.courseId, isCourseNavigation]);
+  }, [context?.courseId]);
 
   useEffect(() => {
-    const shouldLoadHub = (teacherMode && viewAsStudent && isCourseNavigation) || (!teacherMode && isCourseNavigation);
+    const shouldLoadHub = teacherMode
+      ? viewAsStudent && isCourseNavigation
+      : !!context?.courseId;
     if (shouldLoadHub) {
       setPlaylistsLoading(true);
       loadHubData();
     }
-  }, [teacherMode, viewAsStudent, isCourseNavigation, loadHubData]);
-
-  const hubFilteredPlaylists = useCallback(() => {
-    if (allPlaylistsHub.length === 0) return [];
-    const cs = courseSettings ?? { selectedCurriculums: [], selectedUnits: [] };
-    return allPlaylistsHub.filter((p) => {
-      const [c, u, s] = segments(p.title);
-      if (cs.selectedUnits.length > 0 && (!u || !cs.selectedUnits.includes(u))) return false;
-      if (cs.selectedCurriculums.length > 0 && (!c || !cs.selectedCurriculums.includes(c))) return false;
-      if (hubSelectedUnit && u !== hubSelectedUnit) return false;
-      if (hubSelectedSection && s !== hubSelectedSection) return false;
-      return true;
-    });
-  }, [courseSettings, allPlaylistsHub, hubSelectedUnit, hubSelectedSection]);
-
-  const hubUnits = [...new Set(
-    allPlaylistsHub
-      .filter((p) => {
-        const [c, u] = segments(p.title);
-        if (!u) return false;
-        const cs = courseSettings ?? { selectedCurriculums: [] as string[], selectedUnits: [] as string[] };
-        if (cs.selectedCurriculums.length > 0 && (!c || !cs.selectedCurriculums.includes(c))) return false;
-        if (cs.selectedUnits.length > 0 && !cs.selectedUnits.includes(u)) return false;
-        return true;
-      })
-      .map((p) => segments(p.title)[1])
-      .filter(Boolean)
-  )].sort();
-  if (!teacherMode && isCourseNavigation) {
-    console.log('[Student hubUnits] courseSettings:', courseSettings, 'hubUnits:', hubUnits);
-  }
-
-  const hubSections = [...new Set(
-    allPlaylistsHub
-      .filter((p) => {
-        const [c, u, s] = segments(p.title);
-        if (!s || !hubSelectedUnit || u !== hubSelectedUnit) return false;
-        const cs = courseSettings ?? { selectedCurriculums: [] as string[] };
-        if (cs.selectedCurriculums.length > 0 && (!c || !cs.selectedCurriculums.includes(c))) return false;
-        return true;
-      })
-      .map((p) => segments(p.title)[2])
-      .filter(Boolean)
-  )].sort();
+  }, [teacherMode, viewAsStudent, isCourseNavigation, context?.courseId, loadHubData]);
 
   useEffect(() => {
-    const useHubData = (teacherMode && viewAsStudent && isCourseNavigation) || (!teacherMode && isCourseNavigation);
-    if (useHubData) {
-      const filtered = hubFilteredPlaylists();
-      const items = filtered.map((p) => ({ title: p.title, id: p.id }));
-      setPlaylists(items);
+    const useHubData = teacherMode
+      ? viewAsStudent && isCourseNavigation
+      : !!context?.courseId;
+    if (!useHubData) return;
+    if (!hubSelectedUnit) {
+      setHubSections([]);
+      setHubSelectedSection('');
+      setAllPlaylistsHub([]);
+      setPlaylists([]);
+      return;
     }
-  }, [teacherMode, viewAsStudent, isCourseNavigation, hubFilteredPlaylists]);
+
+    let cancelled = false;
+    const fetchSections = async () => {
+      try {
+        const res = await fetch(
+          `/api/flashcard/student-sections?unit=${encodeURIComponent(hubSelectedUnit)}`,
+          { credentials: 'include' },
+        );
+        const data = await res.json().catch(() => []);
+        if (cancelled) return;
+        const sections = Array.isArray(data) ? data.map(String) : [];
+        setHubSections(sections);
+        if (!sections.includes(hubSelectedSection)) {
+          setHubSelectedSection(sections[0] ?? '');
+        }
+      } catch {
+        if (cancelled) return;
+        setHubSections([]);
+        setHubSelectedSection('');
+      }
+    };
+    fetchSections();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [teacherMode, viewAsStudent, isCourseNavigation, context?.courseId, hubSelectedUnit, hubSelectedSection]);
+
+  useEffect(() => {
+    const useHubData = teacherMode
+      ? viewAsStudent && isCourseNavigation
+      : !!context?.courseId;
+    if (!useHubData || !hubSelectedUnit || !hubSelectedSection) {
+      setAllPlaylistsHub([]);
+      setPlaylists([]);
+      return;
+    }
+
+    let cancelled = false;
+    const fetchPlaylists = async () => {
+      setPlaylistsLoading(true);
+      try {
+        const res = await fetch(
+          `/api/flashcard/student-playlists?unit=${encodeURIComponent(hubSelectedUnit)}&section=${encodeURIComponent(hubSelectedSection)}`,
+          { credentials: 'include' },
+        );
+        const data = await res.json().catch(() => []);
+        if (cancelled) return;
+        const rows = (Array.isArray(data) ? data : []).map((p: { id?: string; title: string }) => ({
+          id: p.id ?? p.title,
+          title: p.title,
+        }));
+        setAllPlaylistsHub(rows);
+        setPlaylists(rows.map((p) => ({ id: p.id, title: p.title })));
+        setSproutVideo(true, rows.length);
+      } catch {
+        if (cancelled) return;
+        setAllPlaylistsHub([]);
+        setPlaylists([]);
+      } finally {
+        if (!cancelled) setPlaylistsLoading(false);
+      }
+    };
+    fetchPlaylists();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [teacherMode, viewAsStudent, isCourseNavigation, context?.courseId, hubSelectedUnit, hubSelectedSection]);
 
   const handleFilteredPlaylists = useCallback((list: Array<{ id: string; title: string }>) => {
     setPlaylistsLoading(false);
@@ -265,42 +256,12 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     setDeckLoadError(null);
     const goToPlaylistView = viewAsPlaylist;
     setView(goToPlaylistView ? 'playlist' : 'study');
-
-    const cached = filteredPlaylistsWithItems.find((p) => String(p.id) === String(id));
-    setDeckTotalFromCache(cached?.items?.length ?? null);
+    setDeckTotalFromCache(null);
     const sproutAccountId = courseSettings?.sproutAccountId;
     const buildEmbed = (videoId: string) =>
       sproutAccountId
         ? `<iframe src="https://videos.sproutvideo.com/embed/${sproutAccountId}/${videoId}" class="sproutvideo-player" width="640" height="360" frameborder="0" allowfullscreen></iframe>`
         : undefined;
-    const cachedHasEmbeds = cached?.items?.some((it) => it.embed);
-    if (cached?.items && cached.items.length > 0 && cachedHasEmbeds) {
-      setDeckLoadError(null);
-      setDeckItemsLoading(false);
-      let list = cached.items.map((it) => ({ title: it.title, embed: it.embed }));
-      if (singleVersionPerAnswer) {
-        const seen = new Set<string>();
-        list = list.filter((item: VideoItem) => {
-          const key = (item.title || '').toLowerCase().trim();
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
-      }
-      setOriginalItems(list);
-      setItems([...list]);
-      try {
-        const progRes = await fetch(
-          `/api/flashcard/progress?deck_ids=${encodeURIComponent(id)}`,
-          { credentials: 'include' },
-        );
-        const prog = (await progRes.json().catch(() => ({}))) as Record<string, { completed: number }>;
-        setDeckProgress(prog);
-      } catch {
-        setDeckProgress({});
-      }
-      return;
-    }
 
     setDeckItemsLoading(true);
     try {
@@ -489,6 +450,19 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     if (!currentPlaylist || submittedForSessionRef.current) return;
     setSaveError(null);
     setLastSubmissionDetails(null);
+    const incorrectItems = score.details
+      .filter((d) => d.result === 'Incorrect')
+      .map((d) => {
+        const idFromEmbed = d.originalData.embed
+          ? d.originalData.embed.match(/embed\/[^/]+\/([a-zA-Z0-9]+)/)?.[1] ??
+            d.originalData.embed.match(/embed\/([a-zA-Z0-9]+)/)?.[1] ??
+            ''
+          : '';
+        const videoId = String(d.originalData.id ?? idFromEmbed).trim();
+        const name = String(d.originalData.title ?? d.term ?? '').trim();
+        return { videoId, name };
+      })
+      .filter((item) => item.videoId.length > 0 && item.name.length > 0);
     const payload = {
       score: score.correct,
       scoreTotal: score.total,
@@ -496,6 +470,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
       wordCount: 0,
       mode,
       playlistTitle: currentPlaylist.title,
+      incorrectItems,
     };
     setSaveLog([
       'Sending to POST /api/submission:',
@@ -563,7 +538,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
       ]);
       submittedForSessionRef.current = false;
     }
-  }, [context?.courseId, currentPlaylist, score.correct, score.total, mode, setLastFunction, setLastApiResult, setLastApiError, setLastSubmissionDetails]);
+  }, [context?.courseId, currentPlaylist, score.correct, score.total, score.details, mode, setLastFunction, setLastApiResult, setLastApiError, setLastSubmissionDetails]);
 
   useEffect(() => {
     if (view === 'results' && currentPlaylist) {
@@ -748,12 +723,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
               <TeacherSettings
                 context={context}
                 onConfigChange={() => {
-                  if (context?.courseId) {
-                    try {
-                      sessionStorage.removeItem(HUB_CACHE_KEY(context.courseId));
-                    } catch {}
-                    if (viewAsStudent) loadHubData();
-                  }
+                  if (context?.courseId && viewAsStudent) loadHubData();
                 }}
                 onFilteredPlaylists={handleFilteredPlaylists}
               />
@@ -769,9 +739,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                 View as Student
               </label>
             )}
-            {!teacherMode && !isCourseNavigation ? (
-              <p className="flashcards-teacher-msg">Your teacher will configure the deck for this course.</p>
-            ) : (viewAsStudent && teacherMode) || (!teacherMode && isCourseNavigation) ? (
+            {(viewAsStudent && teacherMode) || !teacherMode ? (
               <>
                 {lastSession && (
                   <p className="flashcards-welcome-back">Welcome back! Last session: Unit {lastSession.unit}</p>

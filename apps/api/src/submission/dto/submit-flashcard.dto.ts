@@ -5,4 +5,5 @@ export class SubmitFlashcardDto {
   wordCount?: number;
   mode?: string;
   playlistTitle?: string;
+  incorrectItems?: Array<{ videoId: string; name: string }>;
 }

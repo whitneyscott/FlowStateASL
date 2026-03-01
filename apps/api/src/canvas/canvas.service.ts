@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { ModuleInfoDto } from './dto/module-info.dto';
 
 export class CanvasUploadChunkError extends Error {
   constructor(
@@ -29,46 +28,6 @@ export class CanvasService {
     const domain = (override?.trim() || this.config.get('CANVAS_DOMAIN')) as string | undefined;
     if (!domain) throw new Error('Canvas not configured');
     return domain;
-  }
-
-  buildFilterFromModuleName(moduleName: string, prefix = 'TWA'): string {
-    const match = moduleName.match(/\bunit\s+([\d.]+)/i);
-    if (!match) return '';
-    const numericPart = match[1];
-    const parts = numericPart.split('.');
-    const padded = parts.map((p) => p.padStart(2, '0'));
-    return `${prefix}.${padded.join('.')}`;
-  }
-
-  async getModuleInfo(
-    courseId: string,
-    moduleId: string,
-    prefix = 'TWA',
-    domainOverride?: string,
-  ): Promise<ModuleInfoDto> {
-    const domain = this.getDomain(domainOverride);
-    const url = `https://${domain}/api/v1/courses/${courseId}/modules/${moduleId}`;
-    const res = await fetch(url, { headers: this.getAuthHeaders() });
-    const httpCode = res.status;
-    const data = (await res.json().catch(() => ({}))) as { name?: string };
-    const moduleName = data.name ?? 'Not Found';
-    const filter = this.buildFilterFromModuleName(moduleName, prefix);
-    const match = moduleName.match(/\bunit\s+([\d.]+)/i);
-    let unit = '';
-    let section = '';
-    if (match) {
-      const parts = match[1].split('.');
-      unit = parts[0] ?? '';
-      section = parts[1] ?? '';
-    }
-    return {
-      module_name: moduleName,
-      unit,
-      section,
-      filter,
-      http_code: httpCode,
-      prefix_used: prefix,
-    };
   }
 
   async submitGrade(
@@ -292,16 +251,6 @@ export class CanvasService {
     return null;
   }
 
-  /** @deprecated Use findAssignmentByTitle */
-  async findAssignmentByName(
-    courseId: string,
-    assignmentName: string,
-    domainOverride?: string,
-    tokenOverride?: string | null,
-  ): Promise<string | null> {
-    return this.findAssignmentByTitle(courseId, assignmentName, domainOverride, tokenOverride);
-  }
-
   async ensureAssignmentGroup(
     courseId: string,
     groupName: string,
@@ -486,7 +435,6 @@ export class CanvasService {
       submission: {
         submission_type: 'online_text_entry',
         body: bodyText,
-        user_id: parseInt(userId, 10) || userId,
       },
     };
     const res = await fetch(url + '?as_user_id=' + encodeURIComponent(userId), {
@@ -497,40 +445,6 @@ export class CanvasService {
     if (!res.ok) {
       const text = await res.text();
       throw new Error(`Canvas create submission with body failed: ${res.status} ${text}`);
-    }
-  }
-
-  /**
-   * Create submission with body and comment in one POST (Comment-First pattern).
-   * Mirrors submit_prompt_first.php exactly: no user_id in body, only as_user_id in URL.
-   * Including user_id in body can trigger 403 "user not authorized" on some Canvas instances.
-   */
-  async createSubmissionWithBodyAndComment(
-    courseId: string,
-    assignmentId: string,
-    userId: string,
-    bodyText: string,
-    commentText: string,
-    domainOverride?: string,
-    tokenOverride?: string | null,
-  ): Promise<void> {
-    const domain = this.getDomain(domainOverride);
-    const url = `https://${domain}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions`;
-    const body = {
-      submission: {
-        submission_type: 'online_text_entry',
-        body: bodyText,
-      },
-      comment: { text_comment: commentText },
-    };
-    const res = await fetch(url + '?as_user_id=' + encodeURIComponent(userId), {
-      method: 'POST',
-      headers: this.getAuthHeaders(tokenOverride),
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Canvas create submission with body and comment failed: ${res.status} ${text}`);
     }
   }
 
@@ -556,74 +470,4 @@ export class CanvasService {
     }
   }
 
-  async getSubmissionWithComments(
-    courseId: string,
-    assignmentId: string,
-    userId: string,
-    domainOverride?: string,
-    tokenOverride?: string | null,
-  ): Promise<{ comments?: Array<{ comment?: string }> } | null> {
-    const domain = this.getDomain(domainOverride);
-    const url = `https://${domain}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}?include[]=submission_comments`;
-    const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
-    if (!res.ok) return null;
-    const data = (await res.json()) as { submission_comments?: Array<{ comment?: string }> };
-    return { comments: data.submission_comments ?? [] };
-  }
-
-  async putSubmissionComment(
-    courseId: string,
-    assignmentId: string,
-    userId: string,
-    commentText: string,
-    domainOverride?: string,
-    tokenOverride?: string | null,
-  ): Promise<void> {
-    const domain = this.getDomain(domainOverride);
-    const url = `https://${domain}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}`;
-    const body = { comment: { text_comment: commentText } };
-    const res = await fetch(url, {
-      method: 'PUT',
-      headers: this.getAuthHeaders(tokenOverride),
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Canvas put submission comment failed: ${res.status} ${text}`);
-    }
-  }
-
-  /**
-   * @deprecated Does not use as_user_id; submissions do not appear for students.
-   * Use createSubmissionWithBodyAndComment instead.
-   */
-  async createSubmissionWithComment(
-    courseId: string,
-    assignmentId: string,
-    userId: string,
-    bodyText: string,
-    commentText: string,
-    domainOverride?: string,
-    tokenOverride?: string | null,
-  ): Promise<void> {
-    const domain = this.getDomain(domainOverride);
-    const url = `https://${domain}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions`;
-    const body = {
-      submission: {
-        submission_type: 'online_text_entry',
-        body: bodyText,
-        user_id: parseInt(userId, 10) || userId,
-      },
-      comment: { text_comment: commentText },
-    };
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: this.getAuthHeaders(tokenOverride),
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Canvas create submission failed: ${res.status} ${text}`);
-    }
-  }
 }

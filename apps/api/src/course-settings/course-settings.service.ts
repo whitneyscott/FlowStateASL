@@ -3,42 +3,30 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { CanvasService } from '../canvas/canvas.service';
-import { SproutVideoService } from '../sproutvideo/sproutvideo.service';
-import { PlaylistCacheService } from '../sproutvideo/playlist-cache.service';
-import type { SproutPlaylist } from '../sproutvideo/interfaces/sprout-playlist.interface';
 import { CourseSettingsEntity } from './entities/course-settings.entity';
 
-interface AssignmentDescriptionData {
+const FLASHCARD_SETTINGS_ASSIGNMENT_TITLE = 'Flashcard Settings';
+
+interface SettingsAssignmentDescriptionData {
   v?: number;
-  sproutAccountId?: string;
   selectedCurriculums?: string[];
   selectedUnits?: string[];
-  filteredPlaylists?: Array<{
-    id: string;
-    title: string;
-    items?: Array<{ id?: string; title: string; embed?: string }>;
-  }>;
   updatedAt?: string;
-  playlistUpdatedAt?: Record<string, string>;
-}
-
-function segments(title: string): string[] {
-  return title.split('.').map((p) => p.trim()).filter(Boolean);
 }
 
 /** Extract JSON from Canvas assignment description (may be HTML-wrapped or escaped) */
-function parseAssignmentDescription(description: string): AssignmentDescriptionData | null {
+function parseAssignmentDescription(description: string): SettingsAssignmentDescriptionData | null {
   const trimmed = description?.trim();
   if (!trimmed) return null;
   try {
-    const parsed = JSON.parse(trimmed) as AssignmentDescriptionData;
+    const parsed = JSON.parse(trimmed) as SettingsAssignmentDescriptionData;
     if (parsed && typeof parsed === 'object') return parsed;
   } catch {
     // Canvas may return HTML-wrapped content; try to extract JSON
     const jsonMatch = trimmed.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       try {
-        const parsed = JSON.parse(jsonMatch[0]) as AssignmentDescriptionData;
+        const parsed = JSON.parse(jsonMatch[0]) as SettingsAssignmentDescriptionData;
         if (parsed && typeof parsed === 'object') return parsed;
       } catch {
         // ignore
@@ -48,29 +36,42 @@ function parseAssignmentDescription(description: string): AssignmentDescriptionD
   return null;
 }
 
-function filterPlaylistsByCurriculumUnits(
-  playlists: SproutPlaylist[],
-  selectedCurriculums: string[],
-  selectedUnits: string[],
-): SproutPlaylist[] {
-  return playlists.filter((p) => {
-    const [c, u] = segments(p.title ?? '');
-    if (selectedCurriculums.length > 0 && (!c || !selectedCurriculums.includes(c))) return false;
-    if (selectedUnits.length > 0 && (!u || !selectedUnits.includes(u))) return false;
-    return true;
-  });
-}
-
 @Injectable()
 export class CourseSettingsService {
   constructor(
     @InjectRepository(CourseSettingsEntity)
     private readonly repo: Repository<CourseSettingsEntity>,
     private readonly canvas: CanvasService,
-    private readonly sproutVideo: SproutVideoService,
-    private readonly playlistCache: PlaylistCacheService,
     private readonly config: ConfigService,
   ) {}
+
+  private async ensureFlashcardSettingsAssignment(
+    courseId: string,
+    canvasDomain?: string,
+    tokenOverride?: string | null,
+  ): Promise<string> {
+    const existing = await this.canvas.findAssignmentByTitle(
+      courseId,
+      FLASHCARD_SETTINGS_ASSIGNMENT_TITLE,
+      canvasDomain,
+      tokenOverride,
+    );
+    if (existing) return existing;
+
+    return this.canvas.createAssignment(
+      courseId,
+      FLASHCARD_SETTINGS_ASSIGNMENT_TITLE,
+      {
+        submissionTypes: ['online_text_entry'],
+        pointsPossible: 0,
+        published: true,
+        description: 'Stores flashcard curriculum and unit settings (auto-created by ASL Express)',
+        omitFromFinalGrade: true,
+        tokenOverride,
+      },
+      canvasDomain,
+    );
+  }
 
   async get(
     courseId: string,
@@ -78,11 +79,9 @@ export class CourseSettingsService {
   ): Promise<{
     selectedCurriculums: string[];
     selectedUnits: string[];
-    filteredPlaylists?: Array<{ id: string; title: string; items?: Array<{ id?: string; title: string; embed?: string }> }>;
     sproutAccountId?: string;
     progressAssignmentId: string | null;
     hasCanvasToken: boolean;
-    needsUpdate?: boolean;
   } | null> {
     const row = await this.repo.findOne({ where: { courseId } });
     if (!row) return null;
@@ -91,23 +90,24 @@ export class CourseSettingsService {
     const tokenOverride = row.canvasApiToken ?? this.config.get<string>('CANVAS_API_TOKEN') ?? null;
     const domainOverride = options?.canvasDomain ?? this.config.get<string>('CANVAS_DOMAIN');
 
-    let assignmentId: string | null = null;
+    let settingsAssignmentId: string | null = null;
     try {
-      assignmentId = await this.canvas.findAssignmentByTitle(
+      settingsAssignmentId = await this.canvas.findAssignmentByTitle(
         courseId,
-        'Flashcard Progress',
+        FLASHCARD_SETTINGS_ASSIGNMENT_TITLE,
         domainOverride,
         tokenOverride,
       );
     } catch {
-      assignmentId = row.progressAssignmentId ?? null;
+      settingsAssignmentId = null;
     }
 
-    if (!assignmentId) {
+    if (!settingsAssignmentId) {
       return {
         selectedCurriculums: Array.isArray(row.selectedCurriculums) ? row.selectedCurriculums : [],
         selectedUnits: Array.isArray(row.selectedUnits) ? row.selectedUnits : [],
-        progressAssignmentId: null,
+        progressAssignmentId: row.progressAssignmentId ?? null,
+        sproutAccountId: this.config.get<string>('SPROUT_ACCOUNT_ID') ?? undefined,
         hasCanvasToken,
       };
     }
@@ -115,7 +115,7 @@ export class CourseSettingsService {
     try {
       const assignment = await this.canvas.getAssignment(
         courseId,
-        assignmentId,
+        settingsAssignmentId,
         domainOverride,
         tokenOverride,
       );
@@ -123,7 +123,8 @@ export class CourseSettingsService {
         return {
           selectedCurriculums: Array.isArray(row.selectedCurriculums) ? row.selectedCurriculums : [],
           selectedUnits: Array.isArray(row.selectedUnits) ? row.selectedUnits : [],
-          progressAssignmentId: assignmentId,
+          progressAssignmentId: row.progressAssignmentId ?? null,
+          sproutAccountId: this.config.get<string>('SPROUT_ACCOUNT_ID') ?? undefined,
           hasCanvasToken,
         };
       }
@@ -133,44 +134,31 @@ export class CourseSettingsService {
         return {
           selectedCurriculums: Array.isArray(row.selectedCurriculums) ? row.selectedCurriculums : [],
           selectedUnits: Array.isArray(row.selectedUnits) ? row.selectedUnits : [],
-          progressAssignmentId: assignmentId,
+          progressAssignmentId: row.progressAssignmentId ?? null,
+          sproutAccountId: this.config.get<string>('SPROUT_ACCOUNT_ID') ?? undefined,
           hasCanvasToken,
         };
       }
 
       const selectedCurriculums = Array.isArray(parsed.selectedCurriculums) ? parsed.selectedCurriculums : [];
       const selectedUnits = Array.isArray(parsed.selectedUnits) ? parsed.selectedUnits : [];
-      const filteredPlaylists = Array.isArray(parsed.filteredPlaylists) ? parsed.filteredPlaylists : [];
-
-      let needsUpdate: boolean | undefined;
-      if (options?.isTeacher) {
-        needsUpdate = await this.checkNeedsUpdate(courseId, parsed.playlistUpdatedAt ?? {});
-      }
 
       return {
         selectedCurriculums,
         selectedUnits,
-        filteredPlaylists,
-        sproutAccountId: parsed.sproutAccountId ?? undefined,
-        progressAssignmentId: assignmentId,
+        sproutAccountId: this.config.get<string>('SPROUT_ACCOUNT_ID') ?? undefined,
+        progressAssignmentId: row.progressAssignmentId ?? null,
         hasCanvasToken,
-        needsUpdate,
       };
     } catch {
       return {
         selectedCurriculums: Array.isArray(row.selectedCurriculums) ? row.selectedCurriculums : [],
         selectedUnits: Array.isArray(row.selectedUnits) ? row.selectedUnits : [],
-        progressAssignmentId: assignmentId,
+        progressAssignmentId: row.progressAssignmentId ?? null,
+        sproutAccountId: this.config.get<string>('SPROUT_ACCOUNT_ID') ?? undefined,
         hasCanvasToken,
       };
     }
-  }
-
-  async checkNeedsUpdate(
-    _courseId: string,
-    cachedPlaylistUpdatedAt: Record<string, string>,
-  ): Promise<boolean> {
-    return this.playlistCache.checkNeedsUpdate(cachedPlaylistUpdatedAt);
   }
 
   async save(
@@ -190,6 +178,11 @@ export class CourseSettingsService {
         'Canvas API token is required to save deck configuration. Please enter your Canvas API token in the Canvas API Token field.',
       );
     }
+    const settingsAssignmentId = await this.ensureFlashcardSettingsAssignment(
+      courseId,
+      canvasDomain,
+      effectiveToken,
+    );
     const progressAssignmentId = await this.canvas.ensureFlashcardProgressAssignment(
       courseId,
       canvasDomain,
@@ -200,45 +193,17 @@ export class CourseSettingsService {
         ? (canvasApiToken?.trim() || null)
         : (row?.canvasApiToken ?? null);
 
-    const allPlaylists = await this.playlistCache.getAllPlaylistsWithVideos();
-    const filtered = filterPlaylistsByCurriculumUnits(allPlaylists, selectedCurriculums, selectedUnits);
-
-    const sproutAccountId = this.config.get<string>('SPROUT_ACCOUNT_ID') ?? undefined;
-    const filteredPlaylists: Array<{
-      id: string;
-      title: string;
-      items: Array<{ id: string; title: string }>;
-    }> = [];
-    const playlistUpdatedAt: Record<string, string> = {};
-
-    for (const p of filtered) {
-      if (this.sproutVideo.isBlacklisted(String(p.title ?? ''))) continue;
-      const videoIds = Array.isArray(p.videos) ? p.videos : [];
-      filteredPlaylists.push({
-        id: p.id,
-        title: String(p.title ?? ''),
-        items: videoIds.map((vid) => ({
-          id: String(vid),
-          title: 'Vocabulary Item',
-        })),
-      });
-      if (p.updated_at) playlistUpdatedAt[p.id] = p.updated_at;
-    }
-
-    const payload: AssignmentDescriptionData = {
+    const payload: SettingsAssignmentDescriptionData = {
       v: 1,
-      sproutAccountId: sproutAccountId ?? undefined,
       selectedCurriculums: selectedCurriculums ?? [],
       selectedUnits: selectedUnits ?? [],
-      filteredPlaylists,
       updatedAt: new Date().toISOString(),
-      playlistUpdatedAt,
     };
 
     const description = JSON.stringify(payload);
     await this.canvas.updateAssignmentDescription(
       courseId,
-      progressAssignmentId,
+      settingsAssignmentId,
       description,
       canvasDomain,
       effectiveToken,

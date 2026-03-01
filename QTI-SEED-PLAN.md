@@ -42,6 +42,13 @@ The parser must extract:
 - Parser: read zip contents, extract playlist title and per-item video id/title
 - Seed script: call parser for each zip in `qtifiles/`, then upsert into `sprout_playlists` and `sprout_playlist_videos` (or equivalent tables used for QTI-sourced data)
 
+## Implementation (Done)
+
+- **Parser**: `apps/api/src/qti/qti-parser.ts` — parses zip contents, extracts playlist title, video ids (item `ident`), and video titles (varequal text)
+- **Seed script**: `apps/api/src/scripts/seed-qti.ts` — runs `npm run seed:qti`, reads `qtifiles/*.zip`, and upserts into `sprout_playlists` and `sprout_playlist_videos`
+
+Playlist IDs: uses SproutVideo playlist ID from `assessment_meta.xml` description iframe when present; otherwise a slug from the zip filename (e.g. `qti-FS1-03-01-FS-PL-Fast`).
+
 ## Relation to Existing Seeding
 
 See [HOWTO-SEED-DATABASE.md](HOWTO-SEED-DATABASE.md) for SproutVideo-based seeding. QTI-based seeding is an alternative/additional source when course exports are available instead of or in addition to live SproutVideo API data.

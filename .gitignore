@@ -33,3 +33,7 @@ Thumbs.db
 
 # Coverage
 coverage
+
+# QTI export files (may contain course content)
+qtifile/
+qtifiles/

@@ -4,7 +4,6 @@ import type {
   SproutPlaylist,
   SproutPlaylistListItem,
 } from './interfaces/sprout-playlist.interface';
-import type { SproutVideoItem } from './interfaces/sprout-video-item.interface';
 
 const BLACKLIST = ['exam', 'test', 'sentence'];
 
@@ -36,27 +35,6 @@ export class SproutVideoService {
   isBlacklisted(title: string): boolean {
     const lower = title.toLowerCase();
     return BLACKLIST.some((term) => lower.includes(term));
-  }
-
-  async getPlaylistCount(): Promise<number> {
-    const apiKey = this.config.get('SPROUT_KEY');
-    if (!apiKey) return 0;
-    try {
-      const res = await fetch(
-        'https://api.sproutvideo.com/v1/playlists?per_page=1&page=1',
-        { headers: { 'SproutVideo-Api-Key': apiKey } },
-      );
-      if (!res.ok) return 0;
-      const data = (await res.json()) as { total?: number; playlists?: unknown[] };
-      if (typeof data.total === 'number') return data.total;
-      return 0;
-    } catch {
-      return 0;
-    }
-  }
-
-  async fetchAllPlaylists(): Promise<SproutPlaylist[]> {
-    return this.fetchPlaylistsUpdatedSince(null);
   }
 
   /**
@@ -208,73 +186,6 @@ export class SproutVideoService {
       page++;
     }
     return all;
-  }
-
-  async getPlaylists(): Promise<Array<{ id: string; title: string }>> {
-    const playlists = await this.fetchAllPlaylists();
-    return playlists
-      .filter((p) => !this.isBlacklisted(String(p.title ?? '')))
-      .map((p) => ({ id: String(p.id), title: String(p.title ?? '') }));
-  }
-
-  async getPlaylistItems(
-    filter: string,
-    playlistId?: string,
-  ): Promise<SproutPlaylistListItem[] | SproutVideoItem[]> {
-    const apiKey = this.config.get('SPROUT_KEY');
-    if (!apiKey) throw new Error('SproutVideo not configured');
-
-    if (playlistId) {
-      const res = await fetch(
-        `https://api.sproutvideo.com/v1/playlists/${playlistId}`,
-        { headers: { 'SproutVideo-Api-Key': apiKey } },
-      );
-      if (!res.ok) throw new Error(`SproutVideo API error: ${res.status}`);
-      const data = (await res.json()) as { videos?: string[] };
-      const videoIds = data.videos ?? [];
-      const items: SproutVideoItem[] = [];
-      const delayMs = 200;
-      for (let i = 0; i < videoIds.length; i++) {
-        if (i > 0) await new Promise((r) => setTimeout(r, delayMs));
-        const vid = videoIds[i];
-        let vRes: Response;
-        let backoff = delayMs;
-        const maxRetries = 3;
-        for (let attempt = 0; attempt <= maxRetries; attempt++) {
-          vRes = await fetch(
-            `https://api.sproutvideo.com/v1/videos/${vid}`,
-            { headers: { 'SproutVideo-Api-Key': apiKey } },
-          );
-          if (vRes.ok) break;
-          if (vRes.status !== 429 || attempt === maxRetries) break;
-          await new Promise((r) => setTimeout(r, backoff));
-          backoff *= 2;
-        }
-        if (!vRes!.ok) continue;
-        const vData = (await vRes!.json()) as { title?: string; embed_code?: string };
-        items.push({
-          title: String(vData.title ?? 'Vocabulary Item'),
-          embed: String(vData.embed_code ?? ''),
-        });
-      }
-      return items;
-    }
-
-    const playlists = await this.fetchAllPlaylists();
-    const searchTerms = this.getSmartVersions(filter);
-    if (searchTerms.length === 0) return [];
-    const result: SproutPlaylistListItem[] = [];
-    for (const p of playlists) {
-      const title = String(p.title ?? '');
-      if (this.isBlacklisted(title)) continue;
-      for (const term of searchTerms) {
-        if (title.toLowerCase().startsWith(term.toLowerCase())) {
-          result.push({ title, id: String(p.id) });
-          break;
-        }
-      }
-    }
-    return result;
   }
 
   filterPlaylists(

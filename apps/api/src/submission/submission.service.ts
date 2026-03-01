@@ -20,6 +20,7 @@ type DeckResult = {
   scoreTotal: number;
   playlistTitle: string;
   rehearsalBestScore: string | null;
+  incorrectItems: Array<{ videoId: string; name: string }>;
 };
 
 type SubmissionBodyResults = Record<string, DeckResult>;
@@ -45,6 +46,14 @@ function mergeDeckResult(existing: DeckResult | undefined, dto: SubmitFlashcardD
   const score = dto.score ?? 0;
   const scoreTotal = dto.scoreTotal ?? 0;
   const playlistTitle = dto.playlistTitle ?? '';
+  const incorrectItems = Array.isArray(dto.incorrectItems)
+    ? dto.incorrectItems
+        .map((item) => ({
+          videoId: String(item?.videoId ?? '').trim(),
+          name: String(item?.name ?? '').trim(),
+        }))
+        .filter((item) => item.videoId.length > 0 && item.name.length > 0)
+    : [];
 
   let rehearsalBestScore: string | null = existing?.rehearsalBestScore ?? null;
   if (mode === 'rehearsal' && scoreTotal > 0) {
@@ -64,21 +73,8 @@ function mergeDeckResult(existing: DeckResult | undefined, dto: SubmitFlashcardD
     scoreTotal,
     playlistTitle,
     rehearsalBestScore,
+    incorrectItems,
   };
-}
-
-function buildProgressJson(dto: SubmitFlashcardDto): string {
-  const payload = {
-    sessionId: randomUUID(),
-    browserSession: Date.now().toString(36),
-    deckIds: dto.deckIds ?? [],
-    mode: dto.mode ?? 'rehearsal',
-    score: dto.score,
-    scoreTotal: dto.scoreTotal,
-    playlistTitle: dto.playlistTitle ?? '',
-    submittedAt: new Date().toISOString(),
-  };
-  return JSON.stringify(payload);
 }
 
 @Injectable()
@@ -100,8 +96,6 @@ export class SubmissionService {
         ctx.canvasDomain,
       );
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId);
-
-    const commentText = buildProgressJson(dto);
     const existing = await this.canvas.getSubmission(
       ctx.courseId,
       progressAssignmentId,
@@ -123,13 +117,11 @@ export class SubmissionService {
 
     // Canvas PUT does NOT support submission[body]—only POST create does.
     // For existing submissions, POST creates a new attempt with our body.
-    // Always use POST to ensure body is persisted (Comment-First pattern).
-    await this.canvas.createSubmissionWithBodyAndComment(
+    await this.canvas.createSubmissionWithBody(
       ctx.courseId,
       progressAssignmentId,
       ctx.userId,
       bodyJson,
-      commentText,
       ctx.canvasDomain,
       token,
     );
@@ -243,6 +235,6 @@ export class SubmissionService {
     // TODO: Replace with rubric criterion scoring once gate assignments and rubric system are implemented.
     // submitGrade(lisOutcomeServiceUrl, lisResultSourcedid, dto.score, dto.scoreTotal) — STUBBED OUT
 
-    return { synced: true, debug: { progressSaved: true, gradeSent: false, details: 'Progress saved to Flashcard Progress assignment (comments and submission body).' } };
+    return { synced: true, debug: { progressSaved: true, gradeSent: false, details: 'Progress saved to Flashcard Progress assignment submission body.' } };
   }
 }

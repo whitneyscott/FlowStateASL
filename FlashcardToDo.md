@@ -40,9 +40,11 @@
 
 ✅ Canvas Integration: Logic to check for the "Flashcard Progress" assignment. Create it if missing.
 
-✅ Data Storage: Implement saving to Canvas comments using the established JSON schema (Browser Session + UUID).
+✅ Data Storage: Implement saving to the Flashcard Progress assignment submission body using the established JSON schema (Browser Session + UUID).
 
 ✅ Tutorial Scoring: Ensure Tutorial mode does not award 100% credit.
+
+⬜ Teacher Progress API: Add endpoint(s) to read submission-body progress data, including per-deck `incorrectItems` (`videoId`, `name`) for future teacher dashboard reporting.
 
 ## Stage 5: Expressive Mode & AI
 
