@@ -68,6 +68,8 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveLog, setSaveLog] = useState<string[]>([]);
   const [deckProgress, setDeckProgress] = useState<Record<string, { completed: number }>>({});
+  const [deckItemsLoading, setDeckItemsLoading] = useState(false);
+  const [deckTotalFromCache, setDeckTotalFromCache] = useState<number | null>(null);
   const submittedForSessionRef = useRef(false);
 
   const [secDisplay, setSecDisplay] = useState(3);
@@ -263,6 +265,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     setView(goToPlaylistView ? 'playlist' : 'study');
 
     const cached = filteredPlaylistsWithItems.find((p) => String(p.id) === String(id));
+    setDeckTotalFromCache(cached?.items?.length ?? null);
     const sproutAccountId = courseSettings?.sproutAccountId;
     const buildEmbed = (videoId: string) =>
       sproutAccountId
@@ -270,6 +273,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
         : undefined;
     const cachedHasEmbeds = cached?.items?.some((it) => it.embed);
     if (cached?.items && cached.items.length > 0 && cachedHasEmbeds) {
+      setDeckItemsLoading(false);
       let list = cached.items.map((it) => ({ title: it.title, embed: it.embed }));
       if (singleVersionPerAnswer) {
         const seen = new Set<string>();
@@ -295,6 +299,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
       return;
     }
 
+    setDeckItemsLoading(true);
     try {
       const res = await fetch(
         `/api/flashcard/items?playlist_id=${encodeURIComponent(id)}`,
@@ -332,6 +337,8 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     } catch {
       setItems([]);
       setDeckProgress({});
+    } finally {
+      setDeckItemsLoading(false);
     }
   };
 
@@ -553,6 +560,8 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     setItems([]);
     setCurrentIndex(-1);
     setScreeningOverlay(null);
+    setDeckTotalFromCache(null);
+    setDeckItemsLoading(false);
   };
 
   const resetCurrentDeck = () => {
@@ -987,7 +996,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
             <div className="flashcards-status-bar">
               <span>
                 Progress: {currentIndex < 0
-                  ? `${Math.min(deckProgress[currentPlaylist?.id ?? '']?.completed ?? 0, items.length)} of ${items.length} cards`
+                  ? `${Math.min(deckProgress[currentPlaylist?.id ?? '']?.completed ?? 0, deckTotalFromCache ?? items.length)} of ${deckTotalFromCache ?? items.length} cards`
                   : `${mode === 'tutorial' ? score.details.length : score.correct} / ${score.total || items.length}`}{' '}
                 {mode === 'screening' && streak !== 0 && (
                   <span
@@ -1084,14 +1093,24 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
 
               {currentIndex < 0 ? (
                 <div className="flashcards-card-content">
-                  <p className="flashcards-vocab-display">READY?</p>
-                  <button
-                    type="button"
-                    className="flashcards-btn flashcards-btn-flip"
-                    onClick={startSession}
-                  >
-                    Start
-                  </button>
+                  {deckItemsLoading ? (
+                    <div className="flashcards-loading-spinner">
+                      <div className="flashcards-loading-spinner-icon" />
+                      <p>Loading deck...</p>
+                    </div>
+                  ) : (
+                    <>
+                      <p className="flashcards-vocab-display">READY?</p>
+                      <button
+                        type="button"
+                        className={`flashcards-btn flashcards-btn-flip${items.length === 0 ? ' flashcards-btn-disabled' : ''}`}
+                        onClick={startSession}
+                        disabled={items.length === 0}
+                      >
+                        Start
+                      </button>
+                    </>
+                  )}
                 </div>
               ) : currentItem ? (
                 <div className="flashcards-controls flashcards-controls-col flashcards-card-content">
