@@ -502,7 +502,8 @@ export class CanvasService {
 
   /**
    * Create submission with body and comment in one POST (Comment-First pattern).
-   * Mirrors submit_prompt_first.php: preserves data atomically with as_user_id.
+   * Mirrors submit_prompt_first.php exactly: no user_id in body, only as_user_id in URL.
+   * Including user_id in body can trigger 403 "user not authorized" on some Canvas instances.
    */
   async createSubmissionWithBodyAndComment(
     courseId: string,
@@ -519,7 +520,6 @@ export class CanvasService {
       submission: {
         submission_type: 'online_text_entry',
         body: bodyText,
-        user_id: parseInt(userId, 10) || userId,
       },
       comment: { text_comment: commentText },
     };
