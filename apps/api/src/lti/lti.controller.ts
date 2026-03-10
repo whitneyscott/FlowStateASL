@@ -1,23 +1,32 @@
-import {
-  Controller,
-  Post,
-  Get,
-  Body,
-  Res,
-  Req,
-  NotImplementedException,
-} from '@nestjs/common';
+import { Controller, Post, Get, Body, Res, Req, Query } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { randomBytes } from 'crypto';
+import { ConfigService } from '@nestjs/config';
 import { LtiService } from './lti.service';
+import { LtiJwksService } from './lti-jwks.service';
+import { Lti13LaunchService } from './lti13-launch.service';
 import { AssessmentService } from '../assessment/assessment.service';
+import { CourseSettingsService } from '../course-settings/course-settings.service';
 import { setLtiToken, consumeLtiToken } from './lti-token.store';
+import { setOidcState, consumeOidcState } from './lti-oidc-state.store';
+import { setLastError, appendLtiLog } from '../common/last-error.store';
+
+function ltiErrorHtml(message: string, frontendUrl = 'http://localhost:4200'): string {
+  return `<!DOCTYPE html><html><head><title>LTI Launch Error</title>
+<style>body{font-family:sans-serif;margin:2em;background:#1a1a1a;color:#00ff88;} a{color:#00ff88;} pre{background:#000;padding:12px;border:2px solid #00ff88;}</style></head>
+<body><h1>LTI Launch Error</h1><pre>${message.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
+<p><a href="${frontendUrl}/flashcards?debug=1">View Bridge Debug Log</a> — Open this link to see the LTI launch log and errors.</p></body></html>`;
+}
 
 @Controller('lti')
 export class LtiController {
   constructor(
     private readonly ltiService: LtiService,
+    private readonly ltiJwks: LtiJwksService,
+    private readonly lti13: Lti13LaunchService,
     private readonly assessmentService: AssessmentService,
+    private readonly courseSettings: CourseSettingsService,
+    private readonly config: ConfigService,
   ) {}
 
   @Post('launch/flashcards')
@@ -138,13 +147,185 @@ export class LtiController {
     };
   }
 
-  @Get('oidc/login')
-  oidcLogin() {
-    throw new NotImplementedException('LTI 1.3 not implemented');
+  @Get('jwks')
+  async jwks(@Res() res: Response) {
+    const jwks = await this.ltiJwks.getJwks();
+    res.json(jwks);
   }
 
-  @Post('oidc/redirect')
-  oidcRedirect() {
-    throw new NotImplementedException('LTI 1.3 not implemented');
+  @Get('oidc/login')
+  async oidcLoginGet(@Req() req: Request, @Res() res: Response) {
+    const params = { ...req.query } as Record<string, string | undefined>;
+    return this.handleOidcLogin(params, res);
+  }
+
+  @Post('oidc/login')
+  async oidcLoginPost(@Req() req: Request, @Res() res: Response) {
+    const params = { ...req.body, ...req.query } as Record<string, string | undefined>;
+    return this.handleOidcLogin(params, res);
+  }
+
+  private handleOidcLogin(
+    params: Record<string, string | undefined>,
+    res: Response,
+  ) {
+    const iss = (params.iss ?? params.issuer ?? '').toString().trim();
+    const loginHint = (params.login_hint ?? params.loginHint ?? '').toString().trim();
+    const targetLinkUri = (params.target_link_uri ?? params.targetLinkUri ?? '').toString().trim();
+    const ltiMessageHint = (params.lti_message_hint ?? params.ltiMessageHint ?? '').toString().trim() || undefined;
+    const clientIdParam = (params.client_id ?? params.clientId ?? '').toString().trim() || undefined;
+    const ltiClientIdEnv = (this.config.get<string>('LTI_CLIENT_ID') ?? '').trim();
+    // MUST use client_id from Canvas (request) so we use the key Canvas is launching with
+    const clientId = (clientIdParam ?? ltiClientIdEnv ?? '').trim();
+    if (clientIdParam) {
+      console.log('[LTI OIDC] client_id from Canvas:', clientId);
+      appendLtiLog('oidc', 'client_id from Canvas', { clientId });
+    } else {
+      console.warn('[LTI OIDC] WARNING: Canvas did NOT send client_id. Using LTI_CLIENT_ID from .env:', clientId);
+      appendLtiLog('oidc', 'WARNING: Canvas did NOT send client_id, using .env fallback', { clientId });
+    }
+    const redirectUri = (this.config.get<string>('LTI_REDIRECT_URI') ?? '').trim();
+    const debug = (params.debug ?? params.debugMode ?? '').toString().toLowerCase() === '1' || (params.debug ?? params.debugMode ?? '').toString().toLowerCase() === 'true';
+    console.log('[LTI OIDC] redirect_uri:', JSON.stringify(redirectUri), '| length:', redirectUri.length);
+    if (!iss || !loginHint || !targetLinkUri || !clientId || !redirectUri) {
+      const missing = [
+        !iss && 'iss',
+        !loginHint && 'login_hint',
+        !targetLinkUri && 'target_link_uri',
+        !clientId && 'client_id',
+        !redirectUri && 'LTI_REDIRECT_URI (set in .env)',
+      ].filter(Boolean);
+      return res.status(400).send(`Missing OIDC params: ${missing.join(', ')}`);
+    }
+    const state = randomBytes(16).toString('hex');
+    const nonce = randomBytes(16).toString('hex');
+    setOidcState(state, nonce, redirectUri, targetLinkUri);
+    const authUrl = new URL('/api/lti/authorize_redirect', iss.endsWith('/') ? iss.slice(0, -1) : iss);
+    authUrl.searchParams.set('scope', 'openid');
+    authUrl.searchParams.set('response_type', 'id_token');
+    authUrl.searchParams.set('prompt', 'none');
+    authUrl.searchParams.set('client_id', clientId);
+    authUrl.searchParams.set('redirect_uri', redirectUri);
+    authUrl.searchParams.set('login_hint', loginHint);
+    authUrl.searchParams.set('state', state);
+    authUrl.searchParams.set('nonce', nonce);
+    authUrl.searchParams.set('response_mode', 'form_post');
+    if (ltiMessageHint) authUrl.searchParams.set('lti_message_hint', ltiMessageHint);
+
+    const fullAuthUrl = authUrl.toString();
+    console.log('[LTI OIDC] redirect_uri:', JSON.stringify(redirectUri), '| client_id:', clientId, '| iss:', iss);
+    console.log('[LTI OIDC] full auth URL (no state/nonce):', authUrl.origin + authUrl.pathname + '?' + new URLSearchParams({ scope: 'openid', response_type: 'id_token', client_id: clientId, redirect_uri: redirectUri }).toString());
+
+    if (debug) {
+      return res.json({
+        debug: true,
+        redirect_uri: redirectUri,
+        redirect_uri_quoted: JSON.stringify(redirectUri),
+        redirect_uri_length: redirectUri.length,
+        client_id: clientId,
+        iss,
+        target_link_uri: targetLinkUri,
+        auth_url: fullAuthUrl,
+        hint: 'Canvas requires redirect_uri to match Developer Key exactly. Check trailing slash, http vs https.',
+      });
+    }
+    return res.redirect(fullAuthUrl);
+  }
+
+  @Post('launch')
+  async launch13(
+    @Body() body: Record<string, unknown>,
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
+    appendLtiLog('launch', 'POST /launch received', { bodyKeys: body ? Object.keys(body) : [] });
+    const canvasError = (body?.error ?? '').toString().trim();
+    const canvasErrorDesc = (body?.error_description ?? body?.errorDescription ?? '').toString().trim();
+    if (canvasError) {
+      const msg = `LTI auth failed: ${canvasError}${canvasErrorDesc ? ` - ${canvasErrorDesc}` : ''}`;
+      setLastError('/api/lti/launch', new Error(msg));
+      appendLtiLog('launch', msg, { canvasError, canvasErrorDesc });
+      return res.status(400).type('html').send(ltiErrorHtml(msg, this.config.get<string>('FRONTEND_URL') ?? 'http://localhost:4200'));
+    }
+    const idToken = (body?.id_token ?? body?.idToken ?? '').toString().trim();
+    const state = (body?.state ?? '').toString().trim();
+    if (!idToken || !state) {
+      const bodyKeys = body ? Object.keys(body) : [];
+      const msg = `Missing id_token or state. Body keys: ${bodyKeys.join(', ')}`;
+      setLastError('/api/lti/launch', new Error(msg));
+      appendLtiLog('launch', msg, { bodyKeys });
+      return res.status(400).type('html').send(ltiErrorHtml(msg, this.config.get<string>('FRONTEND_URL') ?? 'http://localhost:4200'));
+    }
+    const stored = consumeOidcState(state);
+    if (!stored) {
+      const msg = 'Invalid or expired state';
+      setLastError('/api/lti/launch', new Error(msg));
+      appendLtiLog('launch', msg);
+      return res.status(400).type('html').send(ltiErrorHtml(msg, this.config.get<string>('FRONTEND_URL') ?? 'http://localhost:4200'));
+    }
+    const result = await this.lti13.validateAndExtract(idToken);
+    if ('error' in result) {
+      setLastError('/api/lti/launch', new Error(result.error));
+      appendLtiLog('launch', 'Invalid id_token', { reason: result.error });
+      return res.status(400).type('html').send(ltiErrorHtml(`Invalid id_token: ${result.error}`, this.config.get<string>('FRONTEND_URL') ?? 'http://localhost:4200'));
+    }
+    const ctx = result.context;
+    appendLtiLog('launch', 'Canvas domain extracted from iss', {
+      canvasDomain: ctx.canvasDomain ?? '(none)',
+      canvasBaseUrl: ctx.canvasBaseUrl ?? '(none)',
+    });
+    if (ctx.toolType === 'prompter' && this.ltiService.isTeacherRole(ctx.roles) && ctx.assignmentId && ctx.resourceLinkTitle) {
+      try {
+        ctx.assignmentNameSynced = await this.assessmentService.syncAssignmentNameIfNeeded(
+          ctx.courseId,
+          ctx.assignmentId,
+          ctx.resourceLinkId || '',
+          ctx.resourceLinkTitle,
+          ctx.canvasDomain,
+        );
+      } catch {
+        ctx.assignmentNameSynced = false;
+      }
+    }
+    const token = randomBytes(24).toString('hex');
+    setLtiToken(token, ctx);
+    const base = this.config.get<string>('FRONTEND_URL') ?? '';
+    const path = ctx.toolType === 'prompter' ? '/prompter' : '/flashcards';
+    const finalRedirect = `${base}${path}?lti_token=${token}`;
+
+    const isTeacher = this.ltiService.isTeacherRole(ctx.roles);
+    const storedToken = ctx.courseId ? await this.courseSettings.getStoredCanvasToken(ctx.courseId) : null;
+    const needsOAuth = isTeacher && !storedToken;
+    const oauthConfigured =
+      this.config.get<string>('CANVAS_OAUTH_CLIENT_ID') &&
+      this.config.get<string>('CANVAS_OAUTH_CLIENT_SECRET') &&
+      this.config.get<string>('CANVAS_OAUTH_REDIRECT_URI');
+    // Canvas base URL from LTI iss — no env fallback
+    const canvasBaseUrl = ctx.canvasBaseUrl ?? null;
+
+    appendLtiLog('launch', 'OAuth redirect decision', {
+      needsOAuth,
+      oauthConfigured: !!oauthConfigured,
+      canvasBaseUrl: canvasBaseUrl ?? '(none)',
+    });
+
+    if (req.session) {
+      req.session.ltiContext = ctx;
+      req.session.save((err) => {
+        if (err) setLastError('/api/lti/launch', err);
+        if (needsOAuth && oauthConfigured && canvasBaseUrl) {
+          const apiBase = this.config.get<string>('APP_URL') ?? `http://localhost:${this.config.get('PORT') ?? 3000}`;
+          const oauthInitUrl = `${apiBase}/api/oauth/canvas?returnTo=${encodeURIComponent(finalRedirect)}`;
+          appendLtiLog('launch', 'Teacher without Canvas token — redirecting to OAuth init', { oauthInitUrl });
+          res.redirect(oauthInitUrl);
+        } else {
+          appendLtiLog('launch', 'Success - redirecting', { redirectUrl: finalRedirect });
+          res.redirect(finalRedirect);
+        }
+      });
+    } else {
+      appendLtiLog('launch', 'Success - redirecting (no session)', { redirectUrl: finalRedirect });
+      res.redirect(finalRedirect);
+    }
   }
 }

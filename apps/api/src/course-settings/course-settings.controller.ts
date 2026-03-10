@@ -3,14 +3,18 @@ import {
   Controller,
   ForbiddenException,
   Get,
+  HttpException,
+  HttpStatus,
   Put,
   Req,
   UseGuards,
 } from '@nestjs/common';
 import { Request } from 'express';
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
+import { appendLtiLog } from '../common/last-error.store';
 import { LtiLaunchGuard } from '../lti/guards/lti-launch.guard';
 import { LtiService } from '../lti/lti.service';
+import { CanvasTokenExpiredError } from '../canvas/canvas-token-expired.error';
 import { CourseSettingsService } from './course-settings.service';
 
 @Controller('course-settings')
@@ -24,19 +28,40 @@ export class CourseSettingsController {
   @Get()
   async get(@Req() req: Request) {
     const ctx = req.session?.ltiContext as LtiContext | undefined;
-    console.log('[CourseSettings GET] session:', {
+    const isTeacher = this.ltiService.isTeacherRole(ctx?.roles ?? '');
+    appendLtiLog('course-settings', 'GET /api/course-settings requested', {
       hasSession: !!req.session,
-      sessionId: (req.session as { id?: string } | undefined)?.id ?? req.sessionID,
       hasLtiContext: !!ctx,
-      courseId: ctx?.courseId,
-      cookieHeader: req.headers.cookie ? 'present' : 'MISSING',
+      courseId: ctx?.courseId ?? null,
+      isTeacher,
     });
-    if (!ctx?.courseId) return null;
-    const result = await this.courseSettings.get(ctx.courseId, {
-      isTeacher: this.ltiService.isTeacherRole(ctx.roles ?? ''),
-      canvasDomain: ctx.canvasDomain,
+    if (!ctx?.courseId) {
+      appendLtiLog('course-settings', 'GET aborted: no courseId in session');
+      return null;
+    }
+    let result;
+    try {
+      result = await this.courseSettings.get(ctx.courseId, {
+        isTeacher,
+        canvasDomain: ctx.canvasDomain,
+        canvasBaseUrl: ctx.canvasBaseUrl,
+      });
+    } catch (err) {
+      if (err instanceof CanvasTokenExpiredError) {
+        appendLtiLog('course-settings', 'Canvas token expired — reauth required', {});
+        throw new HttpException(
+          { reauthRequired: true, message: 'Canvas token expired. Re-authorizing...' },
+          HttpStatus.UNAUTHORIZED,
+        );
+      }
+      throw err;
+    }
+    appendLtiLog('course-settings', 'GET result from service', {
+      courseId: ctx.courseId,
+      selectedCurriculums: result?.selectedCurriculums ?? [],
+      selectedUnits: result?.selectedUnits ?? [],
+      hasResult: !!result,
     });
-    console.log('[CourseSettings GET] courseId:', ctx.courseId, 'result:', JSON.stringify(result));
     return result;
   }
 
@@ -59,12 +84,14 @@ export class CourseSettingsController {
     if (!this.ltiService.isTeacherRole(ctx.roles)) {
       throw new ForbiddenException('Teacher role required');
     }
+    const canvasToken = (body.canvasApiToken?.trim() || null) ?? (req.session as { canvasAccessToken?: string })?.canvasAccessToken ?? null;
     await this.courseSettings.save(
       ctx.courseId,
       body.selectedCurriculums ?? [],
       body.selectedUnits ?? [],
       ctx.canvasDomain,
-      body.canvasApiToken,
+      canvasToken ?? undefined,
+      ctx.canvasBaseUrl,
     );
   }
 }
