@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
+import { fetchCourseSettings } from '../lib/course-settings';
 import './TeacherSettings.css';
 
 const TEACHER_PATTERNS = [
@@ -38,7 +39,7 @@ interface TeacherSettingsProps {
 }
 
 export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }: TeacherSettingsProps) {
-  const { setSproutVideo, setLastFunction, setLastApiResult, setLastApiError } = useDebug();
+  const { setSproutVideo, setLastFunction, setLastApiResult, setLastApiError, setLastCourseSettings } = useDebug();
   const [allPlaylists, setAllPlaylists] = useState<Array<{ id: string; title: string }>>([]);
   const [curricula, setCurricula] = useState<string[]>([]);
   const [allUnits, setAllUnits] = useState<string[]>([]);
@@ -51,7 +52,6 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
   const [savedFeedback, setSavedFeedback] = useState(false);
   const [loading, setLoading] = useState(true);
   const [playlistTotal, setPlaylistTotal] = useState<number | null>(null);
-  const [canvasApiTokenInput, setCanvasApiTokenInput] = useState('');
   const [showSaveModal, setShowSaveModal] = useState(false);
 
   const teacher = context && isTeacher(context.roles);
@@ -61,7 +61,6 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
     ? allPlaylists
     : allPlaylists.filter((p) => !hasAssessmentTerm(p.title));
 
-  const [hasCanvasToken, setHasCanvasToken] = useState(false);
   const filtered = displayPlaylists;
 
   const encodeCsv = (values: string[]): string =>
@@ -77,14 +76,14 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
     const data = await res.json().catch(() => []);
     const units = Array.isArray(data) ? data.map(String) : [];
     setAllUnits(units);
-    setSelectedUnits((prev) => prev.filter((u) => units.includes(u)));
   }, []);
 
-  const loadPlaylists = useCallback(async (curriculaInput: string[], unitsInput: string[]) => {
+  const loadPlaylists = useCallback(async (curriculaInput: string[], unitsInput: string[], showBlacklisted = false) => {
     const curriculaCsv = encodeCsv(curriculaInput);
     const unitsCsv = encodeCsv(unitsInput);
+    const blacklistedParam = showBlacklisted ? '&showBlacklisted=1' : '';
     const res = await fetch(
-      `/api/flashcard/teacher-playlists?curricula=${curriculaCsv}&units=${unitsCsv}`,
+      `/api/flashcard/teacher-playlists?curricula=${curriculaCsv}&units=${unitsCsv}${blacklistedParam}`,
       { credentials: 'include' },
     );
     if (!res.ok) {
@@ -129,41 +128,35 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
           }
         }
         if (cancelled) return;
-        setLastFunction('GET /api/course-settings');
-        const [curriculaRes, csRes] = await Promise.all([
-          fetch('/api/flashcard/curricula', { credentials: 'include' }),
-          fetch('/api/course-settings', { credentials: 'include' }),
-        ]);
+        const cs = await fetchCourseSettings({
+          setLastFunction,
+          setLastApiResult,
+          setLastApiError,
+        });
+        if (cancelled) return;
+        if (cs === null) return;
+        setLastCourseSettings({
+          selectedCurriculums: cs.selectedCurriculums,
+          selectedUnits: cs.selectedUnits,
+          _debug: cs._debug,
+        });
+        setSelectedCurriculums(cs.selectedCurriculums);
+        setSelectedUnits(cs.selectedUnits);
+        if (cancelled) return;
+        setLastFunction('GET /api/flashcard/curricula');
+        const curriculaBlacklistParam = assessmentPlaylistsVisible ? '?showBlacklisted=1' : '';
+        const curriculaRes = await fetch(`/api/flashcard/curricula${curriculaBlacklistParam}`, { credentials: 'include' });
         if (cancelled) return;
         const curriculaList = await curriculaRes.json().catch(() => []);
-        const csRaw = await csRes.text().catch(() => '');
-        const cs = (() => { try { return JSON.parse(csRaw); } catch { return null; } })();
-        setLastApiResult('GET /api/course-settings', csRes.status, csRes.ok);
-        if (!csRes.ok) {
-          let errMsg = String(csRes.status);
-          try { const j = JSON.parse(csRaw); errMsg = j?.message ?? errMsg; } catch { errMsg = csRaw?.slice(0, 80) ?? errMsg; }
-          setLastApiError('GET /api/course-settings', csRes.status, errMsg);
-        }
         if (!curriculaRes.ok) {
           setError(`HTTP ${curriculaRes.status}`);
           if (!cancelled) setLoading(false);
           return;
         }
         setCurricula(Array.isArray(curriculaList) ? curriculaList.map(String) : []);
-        const initialCurriculums = Array.isArray(cs?.selectedCurriculums) ? cs.selectedCurriculums : [];
-        const initialUnits = Array.isArray(cs?.selectedUnits) ? cs.selectedUnits : [];
-        setSelectedCurriculums(initialCurriculums);
-        setSelectedUnits(initialUnits);
-        await loadUnits(initialCurriculums);
-        await loadPlaylists(initialCurriculums, initialUnits);
-        if (cs?.selectedCurriculums) {
-          setSelectedCurriculums(Array.isArray(cs.selectedCurriculums) ? cs.selectedCurriculums : []);
-        }
-        if (cs?.selectedUnits) {
-          setSelectedUnits(Array.isArray(cs.selectedUnits) ? cs.selectedUnits : []);
-        }
-        setHasCanvasToken(!!cs?.hasCanvasToken);
-        setCanvasApiTokenInput('');
+        await loadUnits(cs.selectedCurriculums);
+        if (cancelled) return;
+        await loadPlaylists(cs.selectedCurriculums, cs.selectedUnits, assessmentPlaylistsVisible);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load');
       } finally {
@@ -172,7 +165,7 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
     }
     load();
     return () => { cancelled = true; };
-  }, [teacher, hasLti, retryCount, loadPlaylists, loadUnits]);
+  }, [teacher, hasLti, retryCount, assessmentPlaylistsVisible, loadPlaylists, loadUnits]);
 
   useEffect(() => {
     if (!teacher || !hasLti) return;
@@ -183,10 +176,10 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
 
   useEffect(() => {
     if (!teacher || !hasLti) return;
-    loadPlaylists(selectedCurriculums, selectedUnits).catch((err) => {
+    loadPlaylists(selectedCurriculums, selectedUnits, assessmentPlaylistsVisible).catch((err) => {
       setError(err instanceof Error ? err.message : 'Failed to load playlists');
     });
-  }, [teacher, hasLti, selectedCurriculums, selectedUnits, loadPlaylists]);
+  }, [teacher, hasLti, selectedCurriculums, selectedUnits, assessmentPlaylistsVisible, loadPlaylists]);
 
   useEffect(() => {
     onFilteredPlaylists?.(filtered);
@@ -199,13 +192,10 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
     setShowSaveModal(true);
     setLastFunction('PUT /api/course-settings');
     try {
-      const body: { selectedCurriculums: string[]; selectedUnits: string[]; canvasApiToken?: string } = {
+      const body: { selectedCurriculums: string[]; selectedUnits: string[] } = {
         selectedCurriculums,
         selectedUnits,
       };
-      if (canvasApiTokenInput.trim()) {
-        body.canvasApiToken = canvasApiTokenInput.trim();
-      }
       const res = await fetch('/api/course-settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -231,9 +221,6 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
     }
   };
 
-  const canvasTokenUrl = context?.canvasDomain
-    ? `https://${context.canvasDomain}/profile/settings`
-    : null;
 
   if (!teacher || !hasLti) return null;
   if (loading && allPlaylists.length === 0 && !error) {
@@ -268,7 +255,7 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
     <div className="teacher-settings">
       <h2>Curriculum Settings</h2>
       <div className="teacher-settings-toggle-wrap">
-        <span className="teacher-settings-toggle-label">Assessment Playlists</span>
+        <span className="teacher-settings-toggle-label">Assessment &amp; Blacklisted Playlists</span>
         <button
           type="button"
           className="teacher-settings-btn"
@@ -277,8 +264,9 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
           {assessmentPlaylistsVisible ? 'Hide' : 'Show'}
         </button>
       </div>
-      <div className="teacher-settings-row teacher-settings-multiselect-row">
-        <div className="teacher-settings-checkbox-group">
+      <hr className="teacher-settings-divider" />
+      <div className="teacher-settings-row teacher-settings-multiselect-column">
+        <div className="teacher-settings-curriculum-block">
           <span className="teacher-settings-label">Curriculum</span>
           <div className="teacher-settings-checkbox-list">
             {curricula.map((c) => (
@@ -293,8 +281,8 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
             ))}
           </div>
         </div>
-        <div className="teacher-settings-checkbox-group">
-          <span className="teacher-settings-label">Unit</span>
+        <div className="teacher-settings-unit-block">
+          <span className="teacher-settings-label">Units</span>
           <div className="teacher-settings-checkbox-list">
             {allUnits.map((u) => (
               <label key={u} className="teacher-settings-checkbox-label">
@@ -307,34 +295,6 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
               </label>
             ))}
           </div>
-        </div>
-        <div className="teacher-settings-canvas-token">
-          <div className="teacher-settings-token-prompt">
-            <span className="teacher-settings-label">Canvas API Token (required to save)</span>
-            {!hasCanvasToken && canvasTokenUrl && (
-              <p className="teacher-settings-token-help">
-                Generate an access token in Canvas:{' '}
-                <a
-                  href={canvasTokenUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="teacher-settings-token-link"
-                >
-                  Open Token Settings
-                </a>
-              </p>
-            )}
-          </div>
-          <form onSubmit={(e) => { e.preventDefault(); handleSave(); }} autoComplete="off">
-            <input
-              type="password"
-              className="teacher-settings-input"
-              placeholder={hasCanvasToken ? 'Enter new token to replace' : 'Enter Canvas API token (required)'}
-              value={canvasApiTokenInput}
-              onChange={(e) => setCanvasApiTokenInput(e.target.value)}
-              autoComplete="off"
-            />
-          </form>
         </div>
         <div className="teacher-settings-actions">
           <button

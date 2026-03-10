@@ -94,12 +94,15 @@ export class FlashcardController {
   ) {
     const ctx = req.session?.ltiContext;
     if (!ctx?.courseId || !ctx?.userId) return {};
+    const canvasAccessToken = (req.session as { canvasAccessToken?: string })?.canvasAccessToken;
     const deckIds = deckIdsParam?.split(',').map((s) => s.trim()).filter(Boolean);
     return this.flashcard.getDeckProgress(
       ctx.courseId,
       ctx.userId,
       ctx.canvasDomain,
       deckIds?.length ? deckIds : undefined,
+      ctx.canvasBaseUrl,
+      canvasAccessToken,
     );
   }
 
@@ -115,10 +118,14 @@ export class FlashcardController {
   }
 
   @Get('curricula')
-  async getCurricula(@Req() req: Request) {
+  async getCurricula(
+    @Req() req: Request,
+    @Query('showBlacklisted') showBlacklistedParam?: string,
+  ) {
     this.requireTeacher(req.session?.ltiContext as LtiContext | undefined);
     try {
-      return await this.flashcard.getTeacherCurricula();
+      const showBlacklisted = showBlacklistedParam === '1' || showBlacklistedParam === 'true';
+      return await this.flashcard.getTeacherCurricula({ showBlacklisted });
     } catch (err) {
       setLastError('GET /api/flashcard/curricula', err);
       throw err;
@@ -148,6 +155,7 @@ export class FlashcardController {
     @Req() req: Request,
     @Query('curricula') curriculaParam?: string,
     @Query('units') unitsParam?: string,
+    @Query('showBlacklisted') showBlacklistedParam?: string,
   ) {
     this.requireTeacher(req.session?.ltiContext as LtiContext | undefined);
     try {
@@ -159,11 +167,80 @@ export class FlashcardController {
         .split(',')
         .map((s) => s.trim())
         .filter(Boolean);
-      return await this.flashcard.getTeacherPlaylists(curricula, units);
+      const showBlacklisted = showBlacklistedParam === '1' || showBlacklistedParam === 'true';
+      return await this.flashcard.getTeacherPlaylists(curricula, units, { showBlacklisted });
     } catch (err) {
       setLastError('GET /api/flashcard/teacher-playlists', err);
       throw err;
     }
+  }
+
+  @Get('student-hub')
+  async getStudentHub(
+    @Req() req: Request,
+    @Query('units') unitsParam?: string,
+    @Query('sections') sectionsParam?: string,
+    @Query('showHidden') showHiddenParam?: string,
+    @Query('selectedCurriculums') selectedCurriculumsParam?: string,
+    @Query('selectedUnits') selectedUnitsParam?: string,
+    @Query('additionalCurricula') additionalCurriculaParam?: string,
+    @Query('additionalUnits') additionalUnitsParam?: string,
+    @Query('additionalSections') additionalSectionsParam?: string,
+  ) {
+    const ctx = req.session?.ltiContext;
+    if (!ctx?.courseId) {
+      throw new ForbiddenException('LTI context required');
+    }
+    const units = (unitsParam ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const sections = (sectionsParam ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const additionalCurricula = (additionalCurriculaParam ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const additionalUnits = (additionalUnitsParam ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const additionalSections = (additionalSectionsParam ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const selectedCurriculums =
+      selectedCurriculumsParam != null
+        ? (selectedCurriculumsParam ?? '')
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : undefined;
+    const selectedUnits =
+      selectedUnitsParam != null
+        ? (selectedUnitsParam ?? '')
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : undefined;
+    const showHidden = showHiddenParam === '1' || showHiddenParam === 'true';
+    const canvasAccessToken = (req.session as { canvasAccessToken?: string })?.canvasAccessToken;
+    return this.flashcard.getStudentHub(
+      ctx.courseId,
+      units,
+      sections,
+      ctx.canvasDomain,
+      showHidden,
+      ctx.canvasBaseUrl,
+      additionalCurricula,
+      additionalUnits,
+      additionalSections,
+      canvasAccessToken,
+      selectedCurriculums,
+      selectedUnits,
+    );
   }
 
   @Get('student-units')
@@ -172,7 +249,14 @@ export class FlashcardController {
     if (!ctx?.courseId) {
       throw new ForbiddenException('LTI context required');
     }
-    return this.flashcard.getStudentUnits(ctx.courseId, ctx.canvasDomain);
+    const canvasAccessToken = (req.session as { canvasAccessToken?: string })?.canvasAccessToken;
+    return this.flashcard.getStudentUnits(
+      ctx.courseId,
+      ctx.canvasDomain,
+      undefined,
+      ctx.canvasBaseUrl,
+      canvasAccessToken,
+    );
   }
 
   @Get('student-sections')
@@ -186,7 +270,15 @@ export class FlashcardController {
     }
     const unit = String(unitParam ?? '').trim();
     if (!unit) return [];
-    return this.flashcard.getStudentSections(ctx.courseId, unit, ctx.canvasDomain);
+    const canvasAccessToken = (req.session as { canvasAccessToken?: string })?.canvasAccessToken;
+    return this.flashcard.getStudentSections(
+      ctx.courseId,
+      unit,
+      ctx.canvasDomain,
+      undefined,
+      ctx.canvasBaseUrl,
+      canvasAccessToken,
+    );
   }
 
   @Get('student-playlists')
@@ -207,6 +299,8 @@ export class FlashcardController {
       unit,
       section,
       ctx.canvasDomain,
+      undefined,
+      ctx.canvasBaseUrl,
     );
   }
 
