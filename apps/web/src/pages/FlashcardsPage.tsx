@@ -49,7 +49,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   >([]);
   const [hubSelectedUnits, setHubSelectedUnits] = useState<string[]>([]);
   const [hubSelectedSections, setHubSelectedSections] = useState<string[]>([]);
-  const [hubFilterMode, setHubFilterMode] = useState<'all' | 'current' | 'additional'>('all');
+  const [hubFilterMode, setHubFilterMode] = useState<'all' | 'current' | 'additional'>('current');
   const [lastSession, setLastSession] = useState<{ unit: string } | null>(null);
   const [view, setView] = useState<'menu' | 'study' | 'results' | 'playlist'>('menu');
   const [currentPlaylist, setCurrentPlaylist] = useState<{
@@ -91,7 +91,6 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   } | null>(null);
   const [viewAsPlaylist, setViewAsPlaylist] = useState(false);
   const [viewAsStudent, setViewAsStudent] = useState(false);
-  const [showHiddenUnits, setShowHiddenUnits] = useState(false);
   const [singleVersionPerAnswer, setSingleVersionPerAnswer] = useState(false);
   const [tutorialAutoAdvance, setTutorialAutoAdvance] = useState(true);
 
@@ -104,9 +103,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     setPlaylistsLoading(true);
     try {
       setLastFunction('GET /api/flashcard/student-playlists-batch');
-      const url = showHiddenUnits
-        ? '/api/flashcard/student-playlists-batch?showHidden=1'
-        : '/api/flashcard/student-playlists-batch';
+      const url = '/api/flashcard/student-playlists-batch?showHidden=1';
       const res = await fetch(url, { credentials: 'include' });
       setLastApiResult('GET /api/flashcard/student-playlists-batch', res.status, res.ok);
       const data = await res.json().catch(() => ({}));
@@ -157,7 +154,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     } finally {
       setPlaylistsLoading(false);
     }
-  }, [context?.courseId, showHiddenUnits]);
+  }, [context?.courseId]);
 
   useEffect(() => {
     const shouldLoad = teacherMode
@@ -170,31 +167,30 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   }, [teacherMode, viewAsStudent, isCourseNavigation, context?.courseId, loadBatchData]);
 
   const { hubUnits, hubSections, filteredPlaylists } = useMemo(() => {
-    const units = [...new Set(allPlaylistsWithHierarchy.map((p) => p.unit).filter(Boolean))].sort();
+    const teacherUnits = courseSettings?.selectedUnits ?? [];
+    let list = allPlaylistsWithHierarchy;
+    if (hubFilterMode === 'current') {
+      list = teacherUnits.length > 0 ? list.filter((p) => teacherUnits.includes(p.unit)) : list;
+    } else if (hubFilterMode === 'additional') {
+      list = teacherUnits.length > 0 ? list.filter((p) => !teacherUnits.includes(p.unit)) : [];
+    }
+    const units = [...new Set(list.map((p) => p.unit).filter(Boolean))].sort();
     const sections =
       hubSelectedUnits.length > 0
-        ? [...new Set(allPlaylistsWithHierarchy.filter((p) => hubSelectedUnits.includes(p.unit)).map((p) => p.section).filter(Boolean))].sort()
-        : [...new Set(allPlaylistsWithHierarchy.map((p) => p.section).filter(Boolean))].sort();
-    let list = allPlaylistsWithHierarchy;
+        ? [...new Set(list.filter((p) => hubSelectedUnits.includes(p.unit)).map((p) => p.section).filter(Boolean))].sort()
+        : [...new Set(list.map((p) => p.section).filter(Boolean))].sort();
     if (hubSelectedUnits.length > 0) {
       list = list.filter((p) => hubSelectedUnits.includes(p.unit));
     }
     if (hubSelectedSections.length > 0) {
       list = list.filter((p) => hubSelectedSections.includes(p.section));
     }
-    const currentUnit = hubSelectedUnits[0];
-    const currentSection = hubSelectedSections[0];
-    if (hubFilterMode === 'current' && currentUnit && currentSection) {
-      list = list.filter((p) => p.unit === currentUnit && p.section === currentSection);
-    } else if (hubFilterMode === 'additional' && currentUnit && currentSection) {
-      list = list.filter((p) => !(p.unit === currentUnit && p.section === currentSection));
-    }
     return {
       hubUnits: units,
       hubSections: sections,
       filteredPlaylists: list.sort((a, b) => a.title.localeCompare(b.title)).map((p) => ({ id: p.id, title: p.title })),
     };
-  }, [allPlaylistsWithHierarchy, hubSelectedUnits, hubSelectedSections, hubFilterMode]);
+  }, [allPlaylistsWithHierarchy, courseSettings?.selectedUnits, hubSelectedUnits, hubSelectedSections, hubFilterMode]);
 
   const toggleHubUnit = useCallback((u: string) => {
     setHubSelectedUnits((prev) =>
@@ -206,6 +202,12 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     setHubSelectedSections((prev) =>
       prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]
     );
+  }, []);
+
+  const handleHubFilterModeChange = useCallback((mode: 'all' | 'current' | 'additional') => {
+    setHubFilterMode(mode);
+    setHubSelectedUnits([]);
+    setHubSelectedSections([]);
   }, []);
 
   useEffect(() => {
@@ -739,16 +741,24 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                     )}
                     <div className="teacher-settings" style={{ marginBottom: 24 }}>
                       <h2>Study materials</h2>
-                      {courseSettings && (courseSettings.selectedCurriculums?.length > 0 || courseSettings.selectedUnits?.length > 0) && (
-                        <label className="flashcards-playlist-view-toggle" style={{ marginBottom: 8, display: 'block' }}>
-                          <input
-                            type="checkbox"
-                            checked={showHiddenUnits}
-                            onChange={(e) => setShowHiddenUnits(e.target.checked)}
-                          />
-                          Show hidden units and curriculum
-                        </label>
-                      )}
+                      <div className="teacher-settings-toggle-wrap" style={{ flexDirection: 'row', alignItems: 'center', gap: 16, flexWrap: 'wrap', marginBottom: 20 }}>
+                        <span className="teacher-settings-toggle-label">Show</span>
+                        {[
+                          { mode: 'current' as const, label: 'Current' },
+                          { mode: 'additional' as const, label: 'Additional materials' },
+                          { mode: 'all' as const, label: 'All' },
+                        ].map(({ mode, label }) => (
+                          <label key={mode} className="flashcards-playlist-view-toggle">
+                            <input
+                              type="radio"
+                              name="hubFilterMode"
+                              checked={hubFilterMode === mode}
+                              onChange={() => handleHubFilterModeChange(mode)}
+                            />
+                            {label}
+                          </label>
+                        ))}
+                      </div>
                       <hr
                         className="teacher-settings-divider"
                         style={{
@@ -788,20 +798,6 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                             </label>
                           ))}
                         </div>
-                      </div>
-                      <div className="teacher-settings-toggle-wrap" style={{ flexDirection: 'row', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-                        <span className="teacher-settings-toggle-label">Decks</span>
-                        {(['all', 'current', 'additional'] as const).map((mode) => (
-                          <label key={mode} className="flashcards-playlist-view-toggle">
-                            <input
-                              type="radio"
-                              name="hubFilterMode"
-                              checked={hubFilterMode === mode}
-                              onChange={() => setHubFilterMode(mode)}
-                            />
-                            {mode.charAt(0).toUpperCase() + mode.slice(1)}
-                          </label>
-                        ))}
                       </div>
                     </div>
                     <div className="flashcards-menu-toggles">
