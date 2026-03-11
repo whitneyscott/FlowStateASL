@@ -3,7 +3,9 @@
   "description": "ASL Express - Fully local development. Canvas and app both run locally; no tunnel.",
   "oidc_initiation_url": "http://localhost:3000/api/lti/oidc/login",
   "target_link_uri": "http://localhost:3000/api/lti/launch",
-  "redirect_uris": ["http://localhost:3000/api/lti/launch"],
+  "redirect_uris": [
+    "http://localhost:3000/api/lti/launch"
+  ],
   "scopes": [],
   "extensions": [
     {

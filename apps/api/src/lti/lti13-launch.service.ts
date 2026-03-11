@@ -1,0 +1,196 @@
+import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import * as jose from 'jose';
+import * as jwt from 'jsonwebtoken';
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const jwkToPem = require('jwk-to-pem') as (jwk: { kty: string; n?: string; e?: string }) => string;
+import type { LtiContext } from '../common/interfaces/lti-context.interface';
+
+const IS_DEV = process.env.NODE_ENV !== 'production';
+
+const LTI_MSG_TYPE = 'https://purl.imsglobal.org/spec/lti/claim/message_type';
+const LTI_VERSION = 'https://purl.imsglobal.org/spec/lti/claim/version';
+const LTI_ROLES = 'https://purl.imsglobal.org/spec/lti/claim/roles';
+const LTI_RESOURCE_LINK = 'https://purl.imsglobal.org/spec/lti/claim/resource_link';
+const LTI_CONTEXT = 'https://purl.imsglobal.org/spec/lti/claim/context';
+const LTI_CUSTOM = 'https://purl.imsglobal.org/spec/lti/claim/custom';
+const LTI_DEPLOYMENT_ID = 'https://purl.imsglobal.org/spec/lti/claim/deployment_id';
+const TEACHER_URIS = [
+  'http://purl.imsglobal.org/vocab/lis/v2/membership#Instructor',
+  'http://purl.imsglobal.org/vocab/lis/v2/membership#Administrator',
+  'http://purl.imsglobal.org/vocab/lis/v2/membership#ContentDeveloper',
+  'http://purl.imsglobal.org/vocab/lis/v2/institution/person#Administrator',
+  'http://purl.imsglobal.org/vocab/lis/v2/institution/person#Instructor',
+];
+
+@Injectable()
+export class Lti13LaunchService {
+  private jwksCache = new Map<string, { jwks: jose.JWTVerifyGetKey; expires: number }>();
+  private readonly CACHE_MS = 60 * 60 * 1000; // 1 hour
+
+  constructor(private readonly config: ConfigService) {}
+
+  async validateAndExtract(idToken: string): Promise<{ context: LtiContext } | { error: string }> {
+    const unprotected = jose.decodeJwt(idToken) as jose.JWTPayload;
+    const iss = unprotected.iss as string;
+    const aud = unprotected.aud;
+    const audStr = typeof aud === 'string' ? aud : Array.isArray(aud) ? aud[0] : String(aud ?? '');
+    const clientIdFromEnv = (this.config.get<string>('LTI_CLIENT_ID') ?? '').trim();
+    const allowedAudiences = [audStr, clientIdFromEnv].filter(Boolean);
+    const expectedAud = allowedAudiences.length ? allowedAudiences : undefined;
+    if (!iss) {
+      return { error: 'JWT missing iss claim' };
+    }
+
+    const jwksResult = await this.getPlatformJwksWithError(iss);
+    if ('error' in jwksResult) return jwksResult;
+
+    const jwks = jwksResult.jwks;
+    let verified: jose.JWTPayload;
+    try {
+      const result = await jose.jwtVerify(idToken, jwks, {
+        issuer: iss,
+        audience: expectedAud,
+        clockTolerance: 60,
+      });
+      verified = result.payload;
+    } catch (err) {
+      const msg = (err as Error).message;
+      const isKeySizeError = /2048|modulusLength/i.test(msg);
+      if (IS_DEV && isKeySizeError) {
+        const fallback = await this.verifyWithLegacyKeySupport(idToken, iss, expectedAud, unprotected);
+        if (fallback) verified = fallback;
+        else return { error: `JWT verification failed: ${msg}. iss=${iss} aud=${JSON.stringify(aud)} exp=${unprotected.exp} iat=${unprotected.iat}` };
+      } else {
+        return { error: `JWT verification failed: ${msg}. iss=${iss} aud=${JSON.stringify(aud)} exp=${unprotected.exp} iat=${unprotected.iat}` };
+      }
+    }
+
+    const ctx = this.payloadToContext(verified);
+    if (!ctx) return { error: 'JWT missing sub claim' };
+    return { context: ctx };
+  }
+
+  private async getPlatformJwks(iss: string): Promise<jose.JWTVerifyGetKey | null> {
+    const r = await this.getPlatformJwksWithError(iss);
+    return 'jwks' in r ? r.jwks : null;
+  }
+
+  /**
+   * Dev-only fallback: verify JWT with allowInsecureKeySizes for Canvas Docker's 1024-bit keys.
+   * Production Canvas uses 2048+ bits; this path is never used when NODE_ENV=production.
+   */
+  private async verifyWithLegacyKeySupport(
+    idToken: string,
+    iss: string,
+    expectedAud: string | string[] | undefined,
+    unprotected: jose.JWTPayload,
+  ): Promise<jose.JWTPayload | null> {
+    try {
+      const jwksUrl = new URL('/api/lti/security/jwks', iss.endsWith('/') ? iss.slice(0, -1) : iss).href;
+      const res = await fetch(jwksUrl);
+      if (!res.ok) return null;
+      const jwksBody = (await res.json()) as { keys?: Array<Record<string, unknown>> };
+      const keys = jwksBody?.keys;
+      if (!Array.isArray(keys) || keys.length === 0) return null;
+
+      const header = jose.decodeProtectedHeader(idToken);
+      const kid = header.kid;
+      const jwk = kid ? keys.find((k) => k.kid === kid) : keys[0];
+      if (!jwk || jwk.kty !== 'RSA') return null;
+
+      const pem = jwkToPem(jwk as { kty: string; n?: string; e?: string });
+      const aud = expectedAud
+        ? Array.isArray(expectedAud) && expectedAud.length > 0
+          ? expectedAud[0]
+          : typeof expectedAud === 'string'
+            ? expectedAud
+            : undefined
+        : undefined;
+      const verifyOpts = {
+        algorithms: ['RS256'],
+        issuer: iss,
+        audience: aud,
+        clockTolerance: 60,
+        allowInsecureKeySizes: true,
+      };
+      const payload = jwt.verify(idToken, pem, verifyOpts as jwt.VerifyOptions) as jose.JWTPayload;
+      return payload;
+    } catch {
+      return null;
+    }
+  }
+
+  private async getPlatformJwksWithError(iss: string): Promise<{ jwks: jose.JWTVerifyGetKey } | { error: string }> {
+    const cached = this.jwksCache.get(iss);
+    if (cached && Date.now() < cached.expires) return { jwks: cached.jwks };
+
+    const jwksUrl = new URL('/api/lti/security/jwks', iss.endsWith('/') ? iss.slice(0, -1) : iss).href;
+    try {
+      const res = await fetch(jwksUrl);
+      if (!res.ok) {
+        const text = await res.text();
+        return { error: `Failed to fetch JWKS from ${jwksUrl}: ${res.status} ${text.slice(0, 200)}` };
+      }
+      const jwks = jose.createRemoteJWKSet(new URL(jwksUrl));
+      this.jwksCache.set(iss, { jwks, expires: Date.now() + this.CACHE_MS });
+      return { jwks };
+    } catch (err) {
+      const msg = (err as Error).message;
+      return { error: `Failed to fetch JWKS from ${jwksUrl}: ${msg}` };
+    }
+  }
+
+  private payloadToContext(payload: jose.JWTPayload): LtiContext | null {
+    const sub = payload.sub as string;
+    if (!sub) return null;
+
+    const custom = (payload[LTI_CUSTOM] as Record<string, string>) ?? {};
+    const context = (payload[LTI_CONTEXT] as { id?: string }) ?? {};
+    const resourceLink = (payload[LTI_RESOURCE_LINK] as { id?: string; title?: string }) ?? {};
+    const roles = (payload[LTI_ROLES] as string[]) ?? [];
+
+    // For Canvas API: use custom.course_id ($Canvas.course.id = numeric) over context.id (opaque LTI hash)
+    const courseId = (custom.course_id ?? context.id ?? '').toString();
+    const userId = sub;
+    const resourceLinkId = (resourceLink.id ?? '').toString();
+    const resourceLinkTitle = resourceLink.title;
+    const assignmentId = (custom.assignment_id ?? '').toString().trim();
+    const moduleId = (custom.module_id ?? '').toString().trim();
+    const rolesStr = Array.isArray(roles) ? roles.join(',') : String(roles);
+    const toolType = (custom.tool_type === 'prompter' ? 'prompter' : 'flashcards') as 'flashcards' | 'prompter';
+
+    const iss = payload.iss as string;
+    let canvasDomain: string | undefined;
+    let canvasBaseUrl: string | undefined;
+    try {
+      if (iss) {
+        const u = new URL(iss);
+        canvasDomain = u.hostname;
+        canvasBaseUrl = `${u.protocol}//${u.host}`;
+      }
+    } catch {
+      // ignore
+    }
+
+    return {
+      courseId,
+      assignmentId,
+      userId,
+      resourceLinkId,
+      moduleId,
+      toolType,
+      roles: rolesStr,
+      resourceLinkTitle,
+      canvasDomain,
+      canvasBaseUrl,
+    };
+  }
+
+  isTeacherRoleFromUris(roles: string[]): boolean {
+    if (!Array.isArray(roles)) return false;
+    return roles.some((r) =>
+      TEACHER_URIS.some((u) => String(r).toLowerCase().includes(u.toLowerCase().split('#')[1]))
+    );
+  }
+}

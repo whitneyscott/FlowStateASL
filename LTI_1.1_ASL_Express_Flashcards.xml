@@ -31,6 +31,7 @@
     </blti:extensions>
     
     <blti:custom>
+        <lticm:property name="custom_activity_type">flashcards</lticm:property>
         <lticm:property name="custom_canvas_course_id">$Canvas.course.id</lticm:property>
         <lticm:property name="custom_canvas_assignment_id">$Canvas.assignment.id</lticm:property>
         <lticm:property name="custom_canvas_user_id">$Canvas.user.id</lticm:property>

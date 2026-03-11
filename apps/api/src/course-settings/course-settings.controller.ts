@@ -3,18 +3,18 @@ import {
   Controller,
   ForbiddenException,
   Get,
-  HttpException,
-  HttpStatus,
+  Post,
   Put,
   Req,
+  Res,
   UseGuards,
 } from '@nestjs/common';
-import { Request } from 'express';
+import { Request, Response } from 'express';
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
 import { appendLtiLog } from '../common/last-error.store';
+import { CanvasTokenExpiredError } from '../canvas/canvas.service';
 import { LtiLaunchGuard } from '../lti/guards/lti-launch.guard';
 import { LtiService } from '../lti/lti.service';
-import { CanvasTokenExpiredError } from '../canvas/canvas-token-expired.error';
 import { CourseSettingsService } from './course-settings.service';
 
 @Controller('course-settings')
@@ -26,43 +26,46 @@ export class CourseSettingsController {
   ) {}
 
   @Get()
-  async get(@Req() req: Request) {
+  async get(@Req() req: Request, @Res() res: Response) {
     const ctx = req.session?.ltiContext as LtiContext | undefined;
     const isTeacher = this.ltiService.isTeacherRole(ctx?.roles ?? '');
+    const canvasAccessToken = (req.session as { canvasAccessToken?: string } | undefined)?.canvasAccessToken;
     appendLtiLog('course-settings', 'GET /api/course-settings requested', {
       hasSession: !!req.session,
       hasLtiContext: !!ctx,
+      hasCanvasAccessToken: !!canvasAccessToken,
       courseId: ctx?.courseId ?? null,
       isTeacher,
     });
     if (!ctx?.courseId) {
       appendLtiLog('course-settings', 'GET aborted: no courseId in session');
-      return null;
+      return res.json(null);
     }
-    let result;
     try {
-      result = await this.courseSettings.get(ctx.courseId, {
+      const result = await this.courseSettings.get(ctx.courseId, {
         isTeacher,
         canvasDomain: ctx.canvasDomain,
         canvasBaseUrl: ctx.canvasBaseUrl,
+        canvasAccessToken: canvasAccessToken ?? undefined,
       });
+      appendLtiLog('course-settings', 'GET result from service', {
+        courseId: ctx.courseId,
+        selectedCurriculums: result?.selectedCurriculums ?? [],
+        selectedUnits: result?.selectedUnits ?? [],
+        hasResult: !!result,
+      });
+      return res.json(result);
     } catch (err) {
       if (err instanceof CanvasTokenExpiredError) {
-        appendLtiLog('course-settings', 'Canvas token expired — reauth required', {});
-        throw new HttpException(
-          { reauthRequired: true, message: 'Canvas token expired. Re-authorizing...' },
-          HttpStatus.UNAUTHORIZED,
-        );
+        appendLtiLog('course-settings', 'Canvas token expired — 401, redirectToOAuth');
+        return res.status(401).json({
+          error: 'Canvas token expired',
+          redirectToOAuth: true,
+          message: 'Re-authorize with Canvas to continue.',
+        });
       }
       throw err;
     }
-    appendLtiLog('course-settings', 'GET result from service', {
-      courseId: ctx.courseId,
-      selectedCurriculums: result?.selectedCurriculums ?? [],
-      selectedUnits: result?.selectedUnits ?? [],
-      hasResult: !!result,
-    });
-    return result;
   }
 
   @Put()
@@ -84,14 +87,50 @@ export class CourseSettingsController {
     if (!this.ltiService.isTeacherRole(ctx.roles)) {
       throw new ForbiddenException('Teacher role required');
     }
-    const canvasToken = (body.canvasApiToken?.trim() || null) ?? (req.session as { canvasAccessToken?: string })?.canvasAccessToken ?? null;
+    const canvasAccessToken = (req.session as { canvasAccessToken?: string } | undefined)?.canvasAccessToken;
     await this.courseSettings.save(
       ctx.courseId,
       body.selectedCurriculums ?? [],
       body.selectedUnits ?? [],
       ctx.canvasDomain,
-      canvasToken ?? undefined,
+      canvasAccessToken ?? undefined,
       ctx.canvasBaseUrl,
     );
+  }
+
+  @Get('announcement-status')
+  async announcementStatus(@Req() req: Request) {
+    const ctx = req.session?.ltiContext as LtiContext | undefined;
+    if (!ctx?.courseId) {
+      throw new ForbiddenException('LTI context required');
+    }
+    if (!this.ltiService.isTeacherRole(ctx.roles)) {
+      throw new ForbiddenException('Teacher role required');
+    }
+    const canvasAccessToken = (req.session as { canvasAccessToken?: string })?.canvasAccessToken;
+    const exists = await this.courseSettings.announcementExists(ctx.courseId, {
+      canvasDomain: ctx.canvasDomain,
+      canvasBaseUrl: ctx.canvasBaseUrl,
+      canvasAccessToken: canvasAccessToken ?? undefined,
+    });
+    return { exists };
+  }
+
+  @Post('recreate-announcement')
+  async recreateAnnouncement(@Req() req: Request) {
+    const ctx = req.session?.ltiContext as LtiContext | undefined;
+    if (!ctx?.courseId) {
+      throw new ForbiddenException('LTI context required');
+    }
+    if (!this.ltiService.isTeacherRole(ctx.roles)) {
+      throw new ForbiddenException('Teacher role required');
+    }
+    const canvasAccessToken = (req.session as { canvasAccessToken?: string })?.canvasAccessToken;
+    await this.courseSettings.recreateAnnouncement(ctx.courseId, {
+      canvasDomain: ctx.canvasDomain,
+      canvasBaseUrl: ctx.canvasBaseUrl,
+      canvasAccessToken: canvasAccessToken ?? undefined,
+    });
+    return { success: true };
   }
 }

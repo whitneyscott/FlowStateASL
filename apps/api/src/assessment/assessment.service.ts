@@ -16,6 +16,8 @@ export class AssessmentService {
     resourceLinkId: string,
     resourceLinkTitle: string,
     canvasDomain?: string,
+    canvasBaseUrl?: string,
+    tokenOverride?: string | null,
   ): Promise<boolean> {
     const trimmed = resourceLinkTitle?.trim() ?? '';
     if (!trimmed) return false;
@@ -27,11 +29,13 @@ export class AssessmentService {
     if (stored === trimmed) return false;
 
     const newName = `${trimmed} - Submission`;
+    const domainOverride = canvasBaseUrl ?? (canvasDomain ? `https://${canvasDomain}` : undefined);
     await this.canvasService.renameAssignment(
       courseId,
       assignmentId,
       newName,
-      canvasDomain,
+      domainOverride,
+      tokenOverride,
     );
 
     const updated: Parameters<IConfigRepository['saveConfig']>[0] = {

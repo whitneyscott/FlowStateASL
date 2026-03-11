@@ -3,20 +3,16 @@ import { Request, Response } from 'express';
 import { ConfigService } from '@nestjs/config';
 import { randomBytes } from 'crypto';
 import { appendLtiLog } from '../common/last-error.store';
-import { CourseSettingsService } from '../course-settings/course-settings.service';
 
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000; // 10 min
 const oauthStateStore = new Map<
   string,
-  { canvasBaseUrl: string; returnTo: string; courseId: string; expires: number }
+  { canvasBaseUrl: string; returnTo: string; expires: number }
 >();
 
 @Controller('oauth/canvas')
 export class CanvasOAuthController {
-  constructor(
-    private readonly config: ConfigService,
-    private readonly courseSettings: CourseSettingsService,
-  ) {}
+  constructor(private readonly config: ConfigService) {}
 
   /**
    * Initiate Canvas OAuth. Redirects user to Canvas authorize URL.
@@ -25,8 +21,7 @@ export class CanvasOAuthController {
   @Get()
   async init(@Req() req: Request, @Res() res: Response, @Query('returnTo') returnTo?: string) {
     const ctx = req.session?.ltiContext;
-    // Canvas base URL from LTI launch (extracted from iss) — no env fallback
-    const canvasBaseUrl = ctx?.canvasBaseUrl ?? null;
+    const canvasBaseUrl = ctx?.canvasBaseUrl ?? this.config.get<string>('CANVAS_API_BASE_URL');
     const clientId = (this.config.get<string>('CANVAS_OAUTH_CLIENT_ID') ?? '').trim();
     const clientSecret = (this.config.get<string>('CANVAS_OAUTH_CLIENT_SECRET') ?? '').trim();
     const redirectUri = (this.config.get<string>('CANVAS_OAUTH_REDIRECT_URI') ?? '').trim();
@@ -40,13 +35,12 @@ export class CanvasOAuthController {
 
     if (!canvasBaseUrl || !clientId || !clientSecret || !redirectUri) {
       const msg =
-        'Canvas OAuth not configured: set CANVAS_OAUTH_CLIENT_ID, CANVAS_OAUTH_CLIENT_SECRET, CANVAS_OAUTH_REDIRECT_URI. Canvas base URL comes from LTI launch (iss claim).';
+        'Canvas OAuth not configured: set CANVAS_OAUTH_CLIENT_ID, CANVAS_OAUTH_CLIENT_SECRET, CANVAS_OAUTH_REDIRECT_URI. Canvas base URL comes from LTI launch (canvasBaseUrl) or CANVAS_API_BASE_URL.';
       appendLtiLog('oauth', 'OAuth init failed', { msg });
       return res.status(400).send(msg);
     }
 
     const base = (canvasBaseUrl.startsWith('http') ? canvasBaseUrl : `https://${canvasBaseUrl}`).replace(/\/$/, '');
-    const courseId = ctx?.courseId ?? '';
     const state = randomBytes(16).toString('hex');
     const returnPath = (returnTo ?? '/flashcards').replace(/^https?:\/\/[^/]+/, '') || '/flashcards';
     const appUrl = (this.config.get<string>('FRONTEND_URL') ?? 'http://localhost:4200').replace(/\/$/, '');
@@ -55,7 +49,6 @@ export class CanvasOAuthController {
     oauthStateStore.set(state, {
       canvasBaseUrl: base,
       returnTo: fullReturnTo,
-      courseId,
       expires: Date.now() + OAUTH_STATE_TTL_MS,
     });
 
@@ -136,16 +129,6 @@ export class CanvasOAuthController {
       });
       const appUrl = (this.config.get<string>('FRONTEND_URL') ?? 'http://localhost:4200').replace(/\/$/, '');
       return res.redirect(`${appUrl}/flashcards?oauth_error=Failed+to+get+access+token`);
-    }
-
-    const courseId = stored.courseId ?? (req.session?.ltiContext as { courseId?: string } | undefined)?.courseId ?? '';
-    if (courseId) {
-      try {
-        await this.courseSettings.storeCanvasTokenForCourse(courseId, tokenData.access_token!);
-        appendLtiLog('oauth', 'Canvas token stored by courseId', { courseId, tokenLength: tokenData.access_token!.length });
-      } catch (e) {
-        appendLtiLog('oauth', 'Failed to store token by courseId', { courseId, error: (e as Error).message });
-      }
     }
 
     if (req.session) {

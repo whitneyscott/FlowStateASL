@@ -19,12 +19,17 @@ NestJS + React monorepo for ASL Express Drill and Assess.
 
 ## Setup
 
-1. Copy `.env.example` to `.env` and set `DATABASE_URL`, `SPROUT_KEY`, `CANVAS_API_TOKEN`. `CANVAS_DOMAIN` is optional when launched via LTI (auto-extracted from launch params).
+1. Copy `.env.example` to `.env` and set `DATABASE_URL`, `SPROUT_KEY`. Canvas domain is auto-extracted from LTI launch. Set `CANVAS_OAUTH_CLIENT_ID`, `CANVAS_OAUTH_CLIENT_SECRET`, `CANVAS_OAUTH_REDIRECT_URI` for Canvas API (teachers and students use OAuth).
 2. Run migrations (requires DATABASE_URL in .env):
    `npx typeorm migration:run -d apps/api/src/data/data-source.ts`
 3. `npm install`
-4. `npm run serve:api` — API on http://localhost:3000
-5. `npm run serve:web` — Web on http://localhost:4200 (proxies /api to 3000)
+
+## Services to Run (Local Dev)
+
+| Service      | Command             | Purpose                                   |
+|--------------|---------------------|-------------------------------------------|
+| PostgreSQL   | (running)           | DB for DATABASE_URL                       |
+| API + Web | `npm run start:dev` | API :3000, Web :4200 (fully local; Canvas in Docker) |
 
 ## LTI Launch
 

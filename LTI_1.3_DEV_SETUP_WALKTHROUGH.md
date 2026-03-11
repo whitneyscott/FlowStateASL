@@ -40,11 +40,11 @@ This starts the API and web app only. No ngrok.
 
 ## Step 3: Key 2 – API Key (OAuth for Canvas API)
 
-The app uses OAuth to call Canvas API (course settings, assignments). This is a **different** key from the LTI Key.
+The app uses OAuth to call Canvas API (course settings, assignments). This is a **different** key from the LTI Key. **Both redirect URIs must be set in Canvas**—LTI Key and API Key have separate redirect URI fields.
 
 1. Canvas **Admin** → **Developer Keys** → **+ Developer Key** → **Add API Key** (not LTI Key).
 2. Turn **off** "Enforce Scopes".
-3. Add **Redirect URI**: `http://localhost:3000/oauth/canvas/callback`
+3. Add **Redirect URI** (exact match required): `http://localhost:3000/api/oauth/canvas/callback`
 4. Save and **Enable**.
 5. Copy **Client ID** and **Client Secret** → add to `.env`:
 
@@ -71,16 +71,22 @@ Your `.env` should have:
 APP_URL=http://localhost:3000
 LTI_CLIENT_ID=<Client ID from LTI Key>
 LTI_REDIRECT_URI=http://localhost:3000/api/lti/launch
+CANVAS_OAUTH_REDIRECT_URI=http://localhost:3000/api/oauth/canvas/callback
 CANVAS_OAUTH_CLIENT_ID=<Client ID from API Key>
 CANVAS_OAUTH_CLIENT_SECRET=<Client Secret from API Key>
 ```
 
-`LTI_REDIRECT_URI` must match the Redirect URI you added to the LTI Developer Key. Restart the API after changing `.env`.
+- `LTI_REDIRECT_URI` must match the Redirect URI on the **LTI** Developer Key.
+- `CANVAS_OAUTH_REDIRECT_URI` must match the Redirect URI on the **API** Developer Key.
+
+Restart the API after changing `.env`.
 
 ---
 
 ## Notes
 
+- **Debug log**: LTI launch errors are stored and shown in the Bridge Debug Log. When a launch fails, the error page includes a link to open the app and view the log. The Bridge Debug Log (on flashcards/prompter pages) also shows LTI Launch Log entries.
 - **LTI Key** = launch only. **API Key** = OAuth for Canvas API. Do not use the LTI Key for OAuth (it will fail with invalid_scope).
 - **If `localhost` doesn't work** (e.g. Canvas in Docker can't reach the app): try `host.docker.internal` (Docker Desktop) or your WSL host IP (`hostname -I`) instead of `localhost` in the JSON and Developer Key redirect URIs.
+- **"localhost refused to connect"** after launch: The app redirects to `FRONTEND_URL` (http://localhost:4200). Ensure the web app is running—`npm run start:dev` starts both API and web.
 - **CORS / FRONTEND_URL**: Use `http://localhost:4200` for local dev.

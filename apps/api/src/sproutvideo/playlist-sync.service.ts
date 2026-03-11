@@ -17,6 +17,24 @@ const SYNC_METADATA_KEY_LAST_SYNC = 'last_sync_at';
 /** Default delay between playlists. Use SPROUTVIDEO_PLAYLIST_DELAY_MS env to override. */
 const DEFAULT_PLAYLIST_DELAY_MS = 500;
 
+/**
+ * Parse dot-delimited title e.g. "TWA.01.01.Example Playlist Title"
+ * Part 1 → curriculum, Part 2 → unit, Part 3 → section, Last segment → deck_title.
+ * Returns null if fewer than 4 segments (log warning and skip).
+ */
+function parsePlaylistTitle(title: string): { curriculum: string; unit: string; section: string; deckTitle: string } | null {
+  const parts = String(title ?? '').split('.').map((s) => s.trim()).filter(Boolean);
+  if (parts.length < 4) {
+    console.warn(`[PlaylistSync] Skipping playlist title with <4 segments: "${title}"`);
+    return null;
+  }
+  const curriculum = parts[0];
+  const unit = parts[1];
+  const section = parts[2];
+  const deckTitle = parts.slice(3).join('.');
+  return { curriculum, unit, section, deckTitle };
+}
+
 @Injectable()
 export class PlaylistSyncService {
   constructor(
@@ -63,11 +81,19 @@ export class PlaylistSyncService {
     for (const p of playlists) {
       if (playlistIndex > 0) await this.delay(playlistDelay);
 
+      const title = String(p.title ?? '');
+      const parsed = parsePlaylistTitle(title);
+      if (!parsed) continue;
+
       const sproutUpdatedAt = p.updated_at ? new Date(p.updated_at) : null;
       await this.playlistRepo.upsert(
         {
           id: p.id,
-          title: String(p.title ?? ''),
+          title,
+          curriculum: parsed.curriculum,
+          unit: parsed.unit,
+          section: parsed.section,
+          deckTitle: parsed.deckTitle,
           sproutUpdatedAt,
           syncedAt,
         },

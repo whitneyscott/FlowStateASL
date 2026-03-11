@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
+import { useSearchParams } from 'react-router-dom';
 
 interface BridgeLogProps {
   context: LtiContext | null;
@@ -9,18 +10,36 @@ interface BridgeLogProps {
 }
 
 export function BridgeLog({ context, loading, error }: BridgeLogProps) {
-  const { sproutVideoAccessed, sproutVideoPlaylistsRetrieved, lastFunctionCalled, lastApiResult, lastApiError, lastSubmissionDetails } = useDebug();
+  const { sproutVideoAccessed, sproutVideoPlaylistsRetrieved, lastFunctionCalled, lastApiResult, lastApiError, lastSubmissionDetails, lastCourseSettings } = useDebug();
+  const [searchParams] = useSearchParams();
+  const debugMode = searchParams.get('debug') === '1';
   const [lastServerError, setLastServerError] = useState<{ endpoint: string; message: string } | null>(null);
+  const [ltiLog, setLtiLog] = useState<string[]>([]);
   const [lines, setLines] = useState<string[]>(['Initializing...']);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // When ?debug=1, force expanded and scroll into view (like my-canvas-app developer mode)
+  const [expanded, setExpanded] = useState(true);
+  useEffect(() => {
+    if (debugMode) {
+      setExpanded(true);
+      containerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [debugMode]);
 
   useEffect(() => {
     let cancelled = false;
     const poll = async () => {
       try {
-        const res = await fetch('/api/debug/last-error', { credentials: 'include' });
+        const [errRes, ltiRes] = await Promise.all([
+          fetch('/api/debug/last-error', { credentials: 'include' }),
+          fetch('/api/debug/lti-log', { credentials: 'include' }),
+        ]);
         if (cancelled) return;
-        const data = await res.json();
-        setLastServerError(data ?? null);
+        const errData = await errRes.json();
+        const ltiData = await ltiRes.json();
+        setLastServerError(errData ?? null);
+        setLtiLog(Array.isArray(ltiData?.lines) ? ltiData.lines : []);
       } catch {
         if (!cancelled) setLastServerError(null);
       }
@@ -29,7 +48,6 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
     const id = setInterval(poll, 3000);
     return () => { cancelled = true; clearInterval(id); };
   }, []);
-  const [expanded, setExpanded] = useState(true);
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
@@ -92,13 +110,37 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
     if (lastSubmissionDetails) {
       newLines.push('Submission details:', lastSubmissionDetails);
     }
+    if (lastCourseSettings) {
+      newLines.push('Course settings (from Flashcard Settings assignment):');
+      newLines.push(`  selectedCurriculums: ${JSON.stringify(lastCourseSettings.selectedCurriculums)}`);
+      newLines.push(`  selectedUnits: ${JSON.stringify(lastCourseSettings.selectedUnits)}`);
+      const d = lastCourseSettings._debug;
+      if (d) {
+        newLines.push(`  [debug] Assignment: "${d.assignmentTitle}" (id: ${d.flashcardSettingsAssignmentId ?? 'none'})`);
+        newLines.push(`  [debug] courseIdUsed: ${d.courseIdUsed} | canvasDomainUsed: ${d.canvasDomainUsed || '(env)'} | findResult: ${d.findResult}`);
+        newLines.push(`  [debug] tokenStatus: ${d.tokenStatus ?? '(not set)'}`);
+        if (d.canvasApiResponse) {
+          newLines.push(`  [debug] Canvas API response: ${d.canvasApiResponse}`);
+        }
+        newLines.push(`  [debug] requestFindByTitle: ${d.requestFindByTitle}`);
+        if (d.requestGetAssignment) {
+          newLines.push(`  [debug] requestGetAssignment: ${d.requestGetAssignment}`);
+        }
+      }
+    }
+    // LTI launch log from backend (OIDC, launch steps, errors)
+    if (ltiLog.length > 0) {
+      newLines.push('--- LTI Launch Log ---');
+      newLines.push(...ltiLog);
+    }
     setLines(newLines);
-  }, [context, loading, error, sproutVideoAccessed, sproutVideoPlaylistsRetrieved, lastFunctionCalled, lastApiResult, lastApiError, lastSubmissionDetails, lastServerError]);
+  }, [context, loading, error, sproutVideoAccessed, sproutVideoPlaylistsRetrieved, lastFunctionCalled, lastApiResult, lastApiError, lastSubmissionDetails, lastCourseSettings, lastServerError, ltiLog]);
 
   const text = ['BRIDGE DEBUG LOG:', ...lines].join('\n');
 
   return (
     <div
+      ref={containerRef}
       style={{
         background: '#000',
         color: '#00ff88',
@@ -108,6 +150,9 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
         margin: '10px auto 20px auto',
         textAlign: 'left',
         whiteSpace: 'pre-wrap',
+        wordBreak: 'break-word',
+        overflowWrap: 'break-word',
+        overflow: 'auto',
         fontSize: 13,
         lineHeight: 1.4,
         maxWidth: 800,
@@ -136,6 +181,27 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
           }}
         >
           {expanded ? '▼' : '▶'} BRIDGE DEBUG LOG
+        </button>
+        <button
+          type="button"
+          onClick={async () => {
+            await fetch('/api/debug/lti-log?clear=1', { credentials: 'include' });
+            setLtiLog([]);
+          }}
+          title="Clear LTI log"
+          style={{
+            background: 'none',
+            border: '1px solid #00ff88',
+            color: '#00ff88',
+            padding: '4px 8px',
+            borderRadius: 4,
+            cursor: 'pointer',
+            fontFamily: 'inherit',
+            fontSize: 11,
+            marginRight: 8,
+          }}
+        >
+          Clear LTI log
         </button>
         <button
           type="button"

@@ -27,7 +27,9 @@ export class SubmissionController {
     @Body() dto: SubmitFlashcardDto,
   ): Promise<{ synced: boolean; error?: string; debug?: { progressSaved: boolean; gradeSent?: boolean; details: string } }> {
     try {
-      const ctx = req.session!.ltiContext! as LtiContext;
+      const sessionCtx = req.session!.ltiContext! as LtiContext;
+      const canvasAccessToken = (req.session as { canvasAccessToken?: string })?.canvasAccessToken;
+      const ctx: LtiContext = { ...sessionCtx, canvasAccessToken };
       const result = await this.submission.submitFlashcard(ctx, dto);
       if (result.synced) {
         res.status(HttpStatus.CREATED);

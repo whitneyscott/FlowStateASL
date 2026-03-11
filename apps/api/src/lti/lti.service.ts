@@ -4,6 +4,8 @@ import type { LtiContext } from '../common/interfaces/lti-context.interface';
 declare module 'express-session' {
   interface SessionData {
     ltiContext?: LtiContext;
+    /** Canvas OAuth access token — obtained via OAuth flow, used for Canvas API calls */
+    canvasAccessToken?: string;
   }
 }
 
@@ -27,6 +29,19 @@ function extractCanvasDomain(body: Record<string, string>): string | undefined {
   try {
     const parsed = new URL(url);
     return parsed.hostname || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function extractCanvasBaseUrl(body: Record<string, string>): string | undefined {
+  const url =
+    (body.tool_consumer_instance_url ?? '').trim() ||
+    (body.lis_outcome_service_url ?? '').trim();
+  if (!url) return undefined;
+  try {
+    const parsed = new URL(url);
+    return `${parsed.protocol}//${parsed.host}`;
   } catch {
     return undefined;
   }
@@ -84,6 +99,7 @@ export class LtiService {
     const lisOutcomeServiceUrl = (body.lis_outcome_service_url ?? '').trim() || undefined;
     const lisResultSourcedid = (body.lis_result_sourcedid ?? '').trim() || undefined;
     const canvasDomain = extractCanvasDomain(body);
+    const canvasBaseUrl = extractCanvasBaseUrl(body);
 
     if (!courseId || !userId) return null;
     return {
@@ -98,6 +114,7 @@ export class LtiService {
       lisOutcomeServiceUrl,
       lisResultSourcedid,
       canvasDomain,
+      canvasBaseUrl,
     };
   }
 }

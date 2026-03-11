@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
-import { fetchCourseSettings } from '../lib/course-settings';
 import './TeacherSettings.css';
 
 const TEACHER_PATTERNS = [
@@ -53,6 +52,9 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
   const [loading, setLoading] = useState(true);
   const [playlistTotal, setPlaylistTotal] = useState<number | null>(null);
   const [showSaveModal, setShowSaveModal] = useState(false);
+  const [announcementMissing, setAnnouncementMissing] = useState(false);
+  const [showRecreateAnnouncementModal, setShowRecreateAnnouncementModal] = useState(false);
+  const [recreating, setRecreating] = useState(false);
 
   const teacher = context && isTeacher(context.roles);
   const hasLti = context && context.courseId && context.userId !== 'standalone';
@@ -61,6 +63,7 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
     ? allPlaylists
     : allPlaylists.filter((p) => !hasAssessmentTerm(p.title));
 
+  const [hasCanvasToken, setHasCanvasToken] = useState(false);
   const filtered = displayPlaylists;
 
   const encodeCsv = (values: string[]): string =>
@@ -78,12 +81,11 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
     setAllUnits(units);
   }, []);
 
-  const loadPlaylists = useCallback(async (curriculaInput: string[], unitsInput: string[], showBlacklisted = false) => {
+  const loadPlaylists = useCallback(async (curriculaInput: string[], unitsInput: string[]) => {
     const curriculaCsv = encodeCsv(curriculaInput);
     const unitsCsv = encodeCsv(unitsInput);
-    const blacklistedParam = showBlacklisted ? '&showBlacklisted=1' : '';
     const res = await fetch(
-      `/api/flashcard/teacher-playlists?curricula=${curriculaCsv}&units=${unitsCsv}${blacklistedParam}`,
+      `/api/flashcard/teacher-playlists?curricula=${curriculaCsv}&units=${unitsCsv}`,
       { credentials: 'include' },
     );
     if (!res.ok) {
@@ -128,24 +130,34 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
           }
         }
         if (cancelled) return;
-        const cs = await fetchCourseSettings({
-          setLastFunction,
-          setLastApiResult,
-          setLastApiError,
-        });
+        setLastFunction('GET /api/course-settings');
+        const csRes = await fetch('/api/course-settings', { credentials: 'include' });
         if (cancelled) return;
-        if (cs === null) return;
+        const csRaw = await csRes.text().catch(() => '');
+        const cs = (() => { try { return JSON.parse(csRaw); } catch { return null; } })();
+        setLastApiResult('GET /api/course-settings', csRes.status, csRes.ok);
+        if (csRes.status === 401 && cs?.redirectToOAuth) {
+          const returnTo = encodeURIComponent(window.location.href);
+          window.location.href = `/api/oauth/canvas?returnTo=${returnTo}`;
+          return;
+        }
+        if (!csRes.ok) {
+          let errMsg = String(csRes.status);
+          try { const j = JSON.parse(csRaw); errMsg = j?.message ?? errMsg; } catch { errMsg = csRaw?.slice(0, 80) ?? errMsg; }
+          setLastApiError('GET /api/course-settings', csRes.status, errMsg);
+        }
+        const savedCurriculums = Array.isArray(cs?.selectedCurriculums) ? cs.selectedCurriculums : [];
+        const savedUnits = Array.isArray(cs?.selectedUnits) ? cs.selectedUnits : [];
         setLastCourseSettings({
-          selectedCurriculums: cs.selectedCurriculums,
-          selectedUnits: cs.selectedUnits,
-          _debug: cs._debug,
+          selectedCurriculums: savedCurriculums,
+          selectedUnits: savedUnits,
+          _debug: cs?._debug,
         });
-        setSelectedCurriculums(cs.selectedCurriculums);
-        setSelectedUnits(cs.selectedUnits);
+        setSelectedCurriculums(savedCurriculums);
+        setSelectedUnits(savedUnits);
         if (cancelled) return;
         setLastFunction('GET /api/flashcard/curricula');
-        const curriculaBlacklistParam = assessmentPlaylistsVisible ? '?showBlacklisted=1' : '';
-        const curriculaRes = await fetch(`/api/flashcard/curricula${curriculaBlacklistParam}`, { credentials: 'include' });
+        const curriculaRes = await fetch('/api/flashcard/curricula', { credentials: 'include' });
         if (cancelled) return;
         const curriculaList = await curriculaRes.json().catch(() => []);
         if (!curriculaRes.ok) {
@@ -154,9 +166,21 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
           return;
         }
         setCurricula(Array.isArray(curriculaList) ? curriculaList.map(String) : []);
-        await loadUnits(cs.selectedCurriculums);
+        await loadUnits(savedCurriculums);
         if (cancelled) return;
-        await loadPlaylists(cs.selectedCurriculums, cs.selectedUnits, assessmentPlaylistsVisible);
+        await loadPlaylists(savedCurriculums, savedUnits);
+        setHasCanvasToken(!!cs?.hasCanvasToken);
+        if (cancelled) return;
+        setLastFunction('GET /api/course-settings/announcement-status');
+        const annRes = await fetch('/api/course-settings/announcement-status', { credentials: 'include' });
+        if (cancelled) return;
+        const annData = await annRes.json().catch(() => ({}));
+        if (annRes.ok && annData?.exists === false) {
+          setAnnouncementMissing(true);
+          setShowRecreateAnnouncementModal(true);
+        } else {
+          setAnnouncementMissing(false);
+        }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load');
       } finally {
@@ -165,7 +189,7 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
     }
     load();
     return () => { cancelled = true; };
-  }, [teacher, hasLti, retryCount, assessmentPlaylistsVisible, loadPlaylists, loadUnits]);
+  }, [teacher, hasLti, retryCount, loadPlaylists, loadUnits]);
 
   useEffect(() => {
     if (!teacher || !hasLti) return;
@@ -176,10 +200,10 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
 
   useEffect(() => {
     if (!teacher || !hasLti) return;
-    loadPlaylists(selectedCurriculums, selectedUnits, assessmentPlaylistsVisible).catch((err) => {
+    loadPlaylists(selectedCurriculums, selectedUnits).catch((err) => {
       setError(err instanceof Error ? err.message : 'Failed to load playlists');
     });
-  }, [teacher, hasLti, selectedCurriculums, selectedUnits, assessmentPlaylistsVisible, loadPlaylists]);
+  }, [teacher, hasLti, selectedCurriculums, selectedUnits, loadPlaylists]);
 
   useEffect(() => {
     onFilteredPlaylists?.(filtered);
@@ -221,7 +245,6 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
     }
   };
 
-
   if (!teacher || !hasLti) return null;
   if (loading && allPlaylists.length === 0 && !error) {
     const loadingText = playlistTotal != null && playlistTotal > 0
@@ -254,8 +277,8 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
   return (
     <div className="teacher-settings">
       <h2>Curriculum Settings</h2>
-      <div className="teacher-settings-toggle-wrap">
-        <span className="teacher-settings-toggle-label">Assessment &amp; Blacklisted Playlists</span>
+      <div className="teacher-settings-toggle-wrap" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 8 }}>
+        <span className="teacher-settings-toggle-label">Assessment Decks</span>
         <button
           type="button"
           className="teacher-settings-btn"
@@ -264,9 +287,17 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
           {assessmentPlaylistsVisible ? 'Hide' : 'Show'}
         </button>
       </div>
-      <hr className="teacher-settings-divider" />
-      <div className="teacher-settings-row teacher-settings-multiselect-column">
-        <div className="teacher-settings-curriculum-block">
+      <hr
+        className="teacher-settings-divider"
+        style={{
+          width: '100%',
+          border: 'none',
+          borderTop: '4px solid #52525b',
+          margin: '20px 0',
+        }}
+      />
+      <div className="teacher-settings-row teacher-settings-multiselect-row">
+        <div className="teacher-settings-checkbox-group">
           <span className="teacher-settings-label">Curriculum</span>
           <div className="teacher-settings-checkbox-list">
             {curricula.map((c) => (
@@ -281,7 +312,7 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
             ))}
           </div>
         </div>
-        <div className="teacher-settings-unit-block">
+        <div className="teacher-settings-checkbox-group">
           <span className="teacher-settings-label">Units</span>
           <div className="teacher-settings-checkbox-list">
             {allUnits.map((u) => (
@@ -296,17 +327,17 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
             ))}
           </div>
         </div>
-        <div className="teacher-settings-actions">
-          <button
-            type="button"
-            className="teacher-settings-btn"
-            onClick={handleSave}
-            disabled={saving}
-          >
-            {saving ? 'Saving...' : 'Save'}
-          </button>
-          {savedFeedback && <span className="teacher-settings-saved">Saved!</span>}
-        </div>
+      </div>
+      <div className="teacher-settings-actions" style={{ marginTop: 16 }}>
+        <button
+          type="button"
+          className="teacher-settings-btn"
+          onClick={handleSave}
+          disabled={saving}
+        >
+          {saving ? 'Saving...' : 'Save'}
+        </button>
+        {savedFeedback && <span className="teacher-settings-saved">Saved!</span>}
       </div>
       {showSaveModal && saving && (
         <div className="teacher-settings-overlay teacher-settings-save-modal">
@@ -318,7 +349,48 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
         </div>
       )}
       {allPlaylists.length > 0 && (
-        <p className="teacher-settings-footer">{allPlaylists.length} playlists loaded</p>
+        <p className="teacher-settings-footer">{allPlaylists.length} decks loaded</p>
+      )}
+      {showRecreateAnnouncementModal && announcementMissing && (
+        <div className="teacher-settings-overlay teacher-settings-save-modal">
+          <div className="teacher-settings-save-modal-content">
+            <p>The ASL Express Flashcard Settings announcement was deleted or is missing. Would you like to recreate it?</p>
+            <div className="teacher-settings-actions" style={{ marginTop: 16, justifyContent: 'center' }}>
+              <button
+                type="button"
+                className="teacher-settings-btn"
+                onClick={async () => {
+                  setRecreating(true);
+                  try {
+                    const res = await fetch('/api/course-settings/recreate-announcement', {
+                      method: 'POST',
+                      credentials: 'include',
+                    });
+                    if (res.ok) {
+                      setShowRecreateAnnouncementModal(false);
+                      setAnnouncementMissing(false);
+                    }
+                  } finally {
+                    setRecreating(false);
+                  }
+                }}
+                disabled={recreating}
+              >
+                {recreating ? 'Recreating...' : 'Recreate'}
+              </button>
+              <button
+                type="button"
+                className="teacher-settings-btn"
+                onClick={() => {
+                  setShowRecreateAnnouncementModal(false);
+                }}
+                disabled={recreating}
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

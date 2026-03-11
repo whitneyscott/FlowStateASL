@@ -17,6 +17,21 @@ config();
 
 const QTI_DIR = process.env.QTI_DIR ?? join(process.cwd(), 'qtifiles');
 
+/** Parse dot-delimited title e.g. "TWA.01.01.Example Playlist Title" → curriculum, unit, section, deck_title */
+function parsePlaylistTitle(title: string): { curriculum: string; unit: string; section: string; deckTitle: string } | null {
+  const parts = String(title ?? '').split('.').map((s) => s.trim()).filter(Boolean);
+  if (parts.length < 4) {
+    console.warn(`[seed-qti] Skipping playlist title with <4 segments: "${title}"`);
+    return null;
+  }
+  return {
+    curriculum: parts[0],
+    unit: parts[1],
+    section: parts[2],
+    deckTitle: parts.slice(3).join('.'),
+  };
+}
+
 async function main(): Promise<void> {
   const dbUrl = process.env.DATABASE_URL;
   if (!dbUrl) {
@@ -65,11 +80,18 @@ async function main(): Promise<void> {
       continue;
     }
 
+    const titleParsed = parsePlaylistTitle(parsed.title);
+    if (!titleParsed) continue;
+
     try {
       await playlistRepo.upsert(
         {
           id: parsed.playlistId,
           title: parsed.title,
+          curriculum: titleParsed.curriculum,
+          unit: titleParsed.unit,
+          section: titleParsed.section,
+          deckTitle: titleParsed.deckTitle,
           sproutUpdatedAt: null,
           syncedAt,
         },

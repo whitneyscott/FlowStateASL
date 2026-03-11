@@ -90,17 +90,20 @@ export class SubmissionService {
     ctx: LtiContext,
     dto: SubmitFlashcardDto,
   ): Promise<void> {
+    const canvasOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
+    const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
     const progressAssignmentId =
       await this.courseSettings.getProgressAssignmentId(
         ctx.courseId,
         ctx.canvasDomain,
+        ctx.canvasBaseUrl,
+        token,
       );
-    const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId);
     const existing = await this.canvas.getSubmission(
       ctx.courseId,
       progressAssignmentId,
       ctx.userId,
-      ctx.canvasDomain,
+      canvasOverride,
       token,
     );
     const parsed = parseSubmissionBody(existing?.body);
@@ -122,7 +125,7 @@ export class SubmissionService {
       progressAssignmentId,
       ctx.userId,
       bodyJson,
-      ctx.canvasDomain,
+      canvasOverride,
       token,
     );
 
@@ -131,7 +134,7 @@ export class SubmissionService {
       ctx.courseId,
       progressAssignmentId,
       ctx.userId,
-      ctx.canvasDomain,
+      canvasOverride,
       token,
     );
     if (!verified?.body?.trim()) {
@@ -225,7 +228,7 @@ export class SubmissionService {
         error: msg,
         debug: {
           progressSaved: false,
-          details: `Progress failed to save. Reason: ${msg} Check that the Canvas API token is configured in Teacher Settings or CANVAS_API_TOKEN env, and that the Flashcard Progress assignment exists and is published.`,
+          details: `Progress failed to save. Reason: ${msg} Complete Canvas OAuth (Teacher Settings) and ensure the Flashcard Progress assignment exists and is published.`,
         },
       };
     }

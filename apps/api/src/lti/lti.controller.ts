@@ -6,7 +6,6 @@ import { LtiService } from './lti.service';
 import { LtiJwksService } from './lti-jwks.service';
 import { Lti13LaunchService } from './lti13-launch.service';
 import { AssessmentService } from '../assessment/assessment.service';
-import { CourseSettingsService } from '../course-settings/course-settings.service';
 import { setLtiToken, consumeLtiToken } from './lti-token.store';
 import { setOidcState, consumeOidcState } from './lti-oidc-state.store';
 import { setLastError, appendLtiLog } from '../common/last-error.store';
@@ -25,7 +24,6 @@ export class LtiController {
     private readonly ltiJwks: LtiJwksService,
     private readonly lti13: Lti13LaunchService,
     private readonly assessmentService: AssessmentService,
-    private readonly courseSettings: CourseSettingsService,
     private readonly config: ConfigService,
   ) {}
 
@@ -89,6 +87,8 @@ export class LtiController {
           ctx.resourceLinkId || '',
           ctx.resourceLinkTitle,
           ctx.canvasDomain,
+          ctx.canvasBaseUrl,
+          (req.session as { canvasAccessToken?: string })?.canvasAccessToken,
         );
       } catch {
         ctx.assignmentNameSynced = false;
@@ -270,9 +270,11 @@ export class LtiController {
       return res.status(400).type('html').send(ltiErrorHtml(`Invalid id_token: ${result.error}`, this.config.get<string>('FRONTEND_URL') ?? 'http://localhost:4200'));
     }
     const ctx = result.context;
-    appendLtiLog('launch', 'Canvas domain extracted from iss', {
-      canvasDomain: ctx.canvasDomain ?? '(none)',
+    appendLtiLog('launch', 'LTI context extracted', {
+      courseId: ctx.courseId,
+      toolType: ctx.toolType,
       canvasBaseUrl: ctx.canvasBaseUrl ?? '(none)',
+      canvasDomain: ctx.canvasDomain ?? '(none)',
     });
     if (ctx.toolType === 'prompter' && this.ltiService.isTeacherRole(ctx.roles) && ctx.assignmentId && ctx.resourceLinkTitle) {
       try {
@@ -282,6 +284,8 @@ export class LtiController {
           ctx.resourceLinkId || '',
           ctx.resourceLinkTitle,
           ctx.canvasDomain,
+          ctx.canvasBaseUrl,
+          (req.session as { canvasAccessToken?: string })?.canvasAccessToken,
         );
       } catch {
         ctx.assignmentNameSynced = false;
@@ -294,19 +298,19 @@ export class LtiController {
     const finalRedirect = `${base}${path}?lti_token=${token}`;
 
     const isTeacher = this.ltiService.isTeacherRole(ctx.roles);
-    const storedToken = ctx.courseId ? await this.courseSettings.getStoredCanvasToken(ctx.courseId) : null;
-    const needsOAuth = isTeacher && !storedToken;
+    const needsOAuth = !(req.session as { canvasAccessToken?: string })?.canvasAccessToken;
     const oauthConfigured =
-      this.config.get<string>('CANVAS_OAUTH_CLIENT_ID') &&
-      this.config.get<string>('CANVAS_OAUTH_CLIENT_SECRET') &&
-      this.config.get<string>('CANVAS_OAUTH_REDIRECT_URI');
-    // Canvas base URL from LTI iss — no env fallback
-    const canvasBaseUrl = ctx.canvasBaseUrl ?? null;
+      !!this.config.get<string>('CANVAS_OAUTH_CLIENT_ID') &&
+      !!this.config.get<string>('CANVAS_OAUTH_CLIENT_SECRET') &&
+      !!this.config.get<string>('CANVAS_OAUTH_REDIRECT_URI');
+    const canvasBaseUrl = ctx.canvasBaseUrl ?? this.config.get<string>('CANVAS_API_BASE_URL');
 
     appendLtiLog('launch', 'OAuth redirect decision', {
       needsOAuth,
-      oauthConfigured: !!oauthConfigured,
+      oauthConfigured,
       canvasBaseUrl: canvasBaseUrl ?? '(none)',
+      isTeacher,
+      hasCanvasAccessToken: !!(req.session as { canvasAccessToken?: string })?.canvasAccessToken,
     });
 
     if (req.session) {
@@ -316,7 +320,7 @@ export class LtiController {
         if (needsOAuth && oauthConfigured && canvasBaseUrl) {
           const apiBase = this.config.get<string>('APP_URL') ?? `http://localhost:${this.config.get('PORT') ?? 3000}`;
           const oauthInitUrl = `${apiBase}/api/oauth/canvas?returnTo=${encodeURIComponent(finalRedirect)}`;
-          appendLtiLog('launch', 'Teacher without Canvas token — redirecting to OAuth init', { oauthInitUrl });
+          appendLtiLog('launch', 'User without Canvas token — redirecting to OAuth init', { oauthInitUrl });
           res.redirect(oauthInitUrl);
         } else {
           appendLtiLog('launch', 'Success - redirecting', { redirectUrl: finalRedirect });

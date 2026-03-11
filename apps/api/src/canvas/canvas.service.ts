@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { appendLtiLog, setLastCanvasApiResponse } from '../common/last-error.store';
 
 export class CanvasUploadChunkError extends Error {
   constructor(
@@ -11,23 +12,37 @@ export class CanvasUploadChunkError extends Error {
   }
 }
 
+/** Thrown when Canvas API returns 401 — token expired or invalid; client should re-trigger OAuth */
+export class CanvasTokenExpiredError extends Error {
+  constructor(public readonly status = 401) {
+    super('Canvas API token expired or invalid — re-trigger OAuth');
+    this.name = 'CanvasTokenExpiredError';
+  }
+}
+
 @Injectable()
 export class CanvasService {
   constructor(private readonly config: ConfigService) {}
 
   private getAuthHeaders(tokenOverride?: string | null): Record<string, string> {
-    const token = tokenOverride ?? this.config.get('CANVAS_API_TOKEN');
-    if (!token) throw new Error('Canvas not configured');
+    const token = tokenOverride?.trim() || null;
+    if (!token) {
+      console.warn('[CanvasService] getAuthHeaders: no token — OAuth access token required (session.canvasAccessToken)');
+      throw new Error('Canvas OAuth access token required');
+    }
     return {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
     };
   }
 
-  private getDomain(override?: string): string {
-    const domain = (override?.trim() || this.config.get('CANVAS_DOMAIN')) as string | undefined;
-    if (!domain) throw new Error('Canvas not configured');
-    return domain;
+  private getBaseUrl(override?: string): string {
+    const val = (override?.trim() || this.config.get('CANVAS_API_BASE_URL')) as string | undefined;
+    if (!val) throw new Error('Canvas base URL required (from LTI iss or CANVAS_API_BASE_URL)');
+    if (val.startsWith('http://') || val.startsWith('https://')) {
+      return val.replace(/\/$/, '');
+    }
+    return `https://${val}`;
   }
 
   async submitGrade(
@@ -89,16 +104,17 @@ export class CanvasService {
     size: number,
     contentType: string,
     domainOverride?: string,
+    tokenOverride?: string | null,
   ): Promise<{ uploadUrl: string; uploadParams: Record<string, string> }> {
-    const domain = this.getDomain(domainOverride);
-    const url = `https://${domain}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}/files`;
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}/files`;
     const form = new FormData();
     form.append('name', filename);
     form.append('size', String(size));
     form.append('content_type', contentType);
     const res = await fetch(url, {
       method: 'POST',
-      headers: { Authorization: this.getAuthHeaders().Authorization },
+      headers: { Authorization: this.getAuthHeaders(tokenOverride).Authorization },
       body: form,
     });
     if (!res.ok) {
@@ -122,7 +138,7 @@ export class CanvasService {
     uploadUrl: string,
     uploadParams: Record<string, string>,
     buffer: Buffer,
-    options?: { resumeFromOffset?: number },
+    options?: { resumeFromOffset?: number; tokenOverride?: string | null },
   ): Promise<{ fileId: string }> {
     const start = options?.resumeFromOffset ?? 0;
     const total = buffer.length;
@@ -144,7 +160,7 @@ export class CanvasService {
       if (res.status >= 300 && res.status < 400) {
         const location = res.headers.get('location');
         if (!location) throw new Error('Redirect without Location');
-        const authHeaders = this.getAuthHeaders();
+        const authHeaders = this.getAuthHeaders(options?.tokenOverride);
         const confirmRes = await fetch(location, {
           method: 'GET',
           headers: { Authorization: authHeaders.Authorization },
@@ -185,9 +201,10 @@ export class CanvasService {
     fileId: string,
     bodyHtml: string,
     domainOverride?: string,
+    tokenOverride?: string | null,
   ): Promise<void> {
-    const domain = this.getDomain(domainOverride);
-    const url = `https://${domain}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions`;
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions`;
     const body = {
       submission: {
         submission_type: 'online_upload',
@@ -197,7 +214,7 @@ export class CanvasService {
     };
     const res = await fetch(url + '?as_user_id=' + encodeURIComponent(userId), {
       method: 'POST',
-      headers: this.getAuthHeaders(),
+      headers: this.getAuthHeaders(tokenOverride),
       body: JSON.stringify(body),
     });
     if (!res.ok) {
@@ -211,12 +228,13 @@ export class CanvasService {
     assignmentId: string,
     newName: string,
     domainOverride?: string,
+    tokenOverride?: string | null,
   ): Promise<void> {
-    const domain = this.getDomain(domainOverride);
-    const url = `https://${domain}/api/v1/courses/${courseId}/assignments/${assignmentId}`;
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}`;
     const res = await fetch(url, {
       method: 'PUT',
-      headers: this.getAuthHeaders(),
+      headers: this.getAuthHeaders(tokenOverride),
       body: JSON.stringify({ assignment: { name: newName } }),
     });
     if (!res.ok) {
@@ -231,23 +249,40 @@ export class CanvasService {
     domainOverride?: string,
     tokenOverride?: string | null,
   ): Promise<string | null> {
-    const domain = this.getDomain(domainOverride);
+    const base = this.getBaseUrl(domainOverride);
     let page = 1;
     const perPage = 100;
     let hasMore = true;
     while (hasMore) {
-      const url = `https://${domain}/api/v1/courses/${courseId}/assignments?per_page=${perPage}&page=${page}`;
+      const url = `${base}/api/v1/courses/${courseId}/assignments?per_page=${perPage}&page=${page}`;
       const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
-      if (!res.ok) return null;
-      const data = (await res.json()) as Array<{ id: number; name?: string }>;
+      const rawBody = await res.text();
+      if (!res.ok) {
+        const info = { status: res.status, statusText: res.statusText, bodyPreview: rawBody.slice(0, 200) };
+        setLastCanvasApiResponse(info);
+        appendLtiLog('canvas', 'findAssignmentByTitle failed', { ...info, url });
+        if (res.status === 401) throw new CanvasTokenExpiredError(401);
+        return null;
+      }
+      const data = (() => {
+        try {
+          return JSON.parse(rawBody) as Array<{ id: number; name?: string }>;
+        } catch {
+          return [];
+        }
+      })();
       const list = data ?? [];
       const found = list.find(
         (a) => String(a.name ?? '').trim() === assignmentTitle.trim(),
       );
-      if (found) return String(found.id);
+      if (found) {
+        setLastCanvasApiResponse(null);
+        return String(found.id);
+      }
       hasMore = list.length === perPage;
       page++;
     }
+    setLastCanvasApiResponse(null);
     return null;
   }
 
@@ -258,8 +293,8 @@ export class CanvasService {
     domainOverride?: string,
     tokenOverride?: string | null,
   ): Promise<number> {
-    const domain = this.getDomain(domainOverride);
-    const listUrl = `https://${domain}/api/v1/courses/${courseId}/assignment_groups`;
+    const base = this.getBaseUrl(domainOverride);
+    const listUrl = `${base}/api/v1/courses/${courseId}/assignment_groups`;
     const listRes = await fetch(listUrl, { headers: this.getAuthHeaders(tokenOverride) });
     if (!listRes.ok) {
       const text = await listRes.text();
@@ -271,7 +306,7 @@ export class CanvasService {
     );
     if (existing) return existing.id;
 
-    const createUrl = `https://${domain}/api/v1/courses/${courseId}/assignment_groups`;
+    const createUrl = `${base}/api/v1/courses/${courseId}/assignment_groups`;
     const createRes = await fetch(createUrl, {
       method: 'POST',
       headers: this.getAuthHeaders(tokenOverride),
@@ -303,9 +338,9 @@ export class CanvasService {
     } = {},
     domainOverride?: string,
   ): Promise<string> {
-    const domain = this.getDomain(domainOverride);
+    const base = this.getBaseUrl(domainOverride);
     const tokenOverride = options.tokenOverride;
-    const url = `https://${domain}/api/v1/courses/${courseId}/assignments`;
+    const url = `${base}/api/v1/courses/${courseId}/assignments`;
     const body: Record<string, unknown> = {
       assignment: {
         name,
@@ -341,10 +376,13 @@ export class CanvasService {
     domainOverride?: string,
     tokenOverride?: string | null,
   ): Promise<{ description?: string } | null> {
-    const domain = this.getDomain(domainOverride);
-    const url = `https://${domain}/api/v1/courses/${courseId}/assignments/${assignmentId}`;
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}`;
     const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      if (res.status === 401) throw new CanvasTokenExpiredError(401);
+      return null;
+    }
     const data = (await res.json()) as { description?: string };
     return { description: data.description };
   }
@@ -356,8 +394,8 @@ export class CanvasService {
     domainOverride?: string,
     tokenOverride?: string | null,
   ): Promise<void> {
-    const domain = this.getDomain(domainOverride);
-    const url = `https://${domain}/api/v1/courses/${courseId}/assignments/${assignmentId}`;
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}`;
     const res = await fetch(url, {
       method: 'PUT',
       headers: this.getAuthHeaders(tokenOverride),
@@ -413,8 +451,8 @@ export class CanvasService {
     domainOverride?: string,
     tokenOverride?: string | null,
   ): Promise<{ body?: string } | null> {
-    const domain = this.getDomain(domainOverride);
-    const url = `https://${domain}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}`;
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}`;
     const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
     if (!res.ok) return null;
     const data = (await res.json()) as { body?: string };
@@ -429,8 +467,8 @@ export class CanvasService {
     domainOverride?: string,
     tokenOverride?: string | null,
   ): Promise<void> {
-    const domain = this.getDomain(domainOverride);
-    const url = `https://${domain}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions`;
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions`;
     const body = {
       submission: {
         submission_type: 'online_text_entry',
@@ -456,8 +494,8 @@ export class CanvasService {
     domainOverride?: string,
     tokenOverride?: string | null,
   ): Promise<void> {
-    const domain = this.getDomain(domainOverride);
-    const url = `https://${domain}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}`;
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}`;
     const body = { submission: { body: bodyText } };
     const res = await fetch(url, {
       method: 'PUT',
@@ -467,6 +505,102 @@ export class CanvasService {
     if (!res.ok) {
       const text = await res.text();
       throw new Error(`Canvas put submission body failed: ${res.status} ${text}`);
+    }
+  }
+
+  // --- Announcement API (Flashcard Settings) ---
+
+  private static readonly FLASHCARD_SETTINGS_ANNOUNCEMENT_TITLE = 'ASL Express Flashcard Settings';
+  private static readonly FLASHCARD_SETTINGS_ANNOUNCEMENT_TITLE_FULL =
+    '⚠️ DO NOT DELETE — ASL Express Flashcard Settings';
+
+  async findFlashcardSettingsAnnouncement(
+    courseId: string,
+    tokenOverride: string | null,
+    domainOverride?: string,
+  ): Promise<{ id: number; title: string; message: string } | null> {
+    const base = this.getBaseUrl(domainOverride);
+    let page = 1;
+    const perPage = 50;
+    while (true) {
+      const url = `${base}/api/v1/courses/${courseId}/discussion_topics?only_announcements=true&per_page=${perPage}&page=${page}`;
+      const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
+      const rawBody = await res.text();
+      if (!res.ok) {
+        if (res.status === 401) throw new CanvasTokenExpiredError(401);
+        const info = { status: res.status, bodyPreview: rawBody.slice(0, 200) };
+        setLastCanvasApiResponse({ status: res.status, statusText: res.statusText, bodyPreview: rawBody.slice(0, 200) });
+        appendLtiLog('canvas', 'findFlashcardSettingsAnnouncement failed', info);
+        return null;
+      }
+      const data = (() => {
+        try {
+          return JSON.parse(rawBody) as Array<{ id: number; title?: string; message?: string }>;
+        } catch {
+          return [];
+        }
+      })();
+      const list = data ?? [];
+      const found = list.find((t) =>
+        String(t.title ?? '').includes(CanvasService.FLASHCARD_SETTINGS_ANNOUNCEMENT_TITLE),
+      );
+      if (found) {
+        setLastCanvasApiResponse(null);
+        return { id: found.id, title: found.title ?? '', message: found.message ?? '' };
+      }
+      if (list.length < perPage) break;
+      page++;
+    }
+    setLastCanvasApiResponse(null);
+    return null;
+  }
+
+  async createFlashcardSettingsAnnouncement(
+    courseId: string,
+    settings: { selectedCurriculums: string[]; selectedUnits: string[] },
+    tokenOverride: string | null,
+    domainOverride?: string,
+  ): Promise<number> {
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/discussion_topics`;
+    const body = {
+      title: CanvasService.FLASHCARD_SETTINGS_ANNOUNCEMENT_TITLE_FULL,
+      message: JSON.stringify(settings),
+      is_announcement: true,
+    };
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: this.getAuthHeaders(tokenOverride),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Canvas create announcement failed: ${res.status} ${text}`);
+    }
+    const data = (await res.json()) as { id?: number };
+    const id = data.id ?? 0;
+    if (!id) throw new Error('Canvas did not return announcement id');
+    return id;
+  }
+
+  async updateFlashcardSettingsAnnouncement(
+    courseId: string,
+    topicId: number,
+    settings: { selectedCurriculums: string[]; selectedUnits: string[] },
+    tokenOverride: string | null,
+    domainOverride?: string,
+  ): Promise<void> {
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/discussion_topics/${topicId}`;
+    const body = { message: JSON.stringify(settings) };
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: this.getAuthHeaders(tokenOverride),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Canvas update announcement failed: ${res.status} ${text}`);
     }
   }
 

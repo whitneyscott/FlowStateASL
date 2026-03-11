@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
 import { TeacherSettings } from '../components/TeacherSettings';
-import { fetchCourseSettings } from '../lib/course-settings';
 import './FlashcardsPage.css';
 
 type PlaylistItem = { title: string; id?: string };
@@ -36,7 +35,7 @@ interface FlashcardsPageProps {
 }
 
 export default function FlashcardsPage({ context }: FlashcardsPageProps) {
-  const { setLastFunction, setSproutVideo, setLastApiResult, setLastApiError, setLastSubmissionDetails, setLastCourseSettings } = useDebug();
+  const { setLastFunction, setSproutVideo, setLastApiResult, setLastApiError, setLastSubmissionDetails } = useDebug();
   const teacherMode = context && isTeacher(context.roles) && context.courseId && context.userId !== 'standalone';
   const hasRealAssignment = context?.assignmentId && 
     context.assignmentId !== '' && 
@@ -48,12 +47,8 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   const [allPlaylistsHub, setAllPlaylistsHub] = useState<Array<{ id: string; title: string }>>([]);
   const [hubUnits, setHubUnits] = useState<string[]>([]);
   const [hubSections, setHubSections] = useState<string[]>([]);
-  const [hubSelectedUnits, setHubSelectedUnits] = useState<string[]>([]);
-  const [hubSelectedSections, setHubSelectedSections] = useState<string[]>([]);
-  const [hubAdditionalCurricula, setHubAdditionalCurricula] = useState<string[]>([]);
-  const [hubAdditionalUnits, setHubAdditionalUnits] = useState<string[]>([]);
-  const [hubSelectedAdditionalCurricula, setHubSelectedAdditionalCurricula] = useState<string[]>([]);
-  const [hubSelectedAdditionalUnits, setHubSelectedAdditionalUnits] = useState<string[]>([]);
+  const [hubSelectedUnit, setHubSelectedUnit] = useState('');
+  const [hubSelectedSection, setHubSelectedSection] = useState('');
   const [lastSession, setLastSession] = useState<{ unit: string } | null>(null);
   const [view, setView] = useState<'menu' | 'study' | 'results' | 'playlist'>('menu');
   const [currentPlaylist, setCurrentPlaylist] = useState<{
@@ -95,7 +90,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   } | null>(null);
   const [viewAsPlaylist, setViewAsPlaylist] = useState(false);
   const [viewAsStudent, setViewAsStudent] = useState(false);
-  const [showCourseMaterialsOnly, setShowCourseMaterialsOnly] = useState(true);
+  const [showHiddenUnits, setShowHiddenUnits] = useState(false);
   const [singleVersionPerAnswer, setSingleVersionPerAnswer] = useState(false);
   const [tutorialAutoAdvance, setTutorialAutoAdvance] = useState(true);
 
@@ -107,84 +102,60 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     const courseId = context.courseId;
     setPlaylistsLoading(true);
     try {
-      const cs = await fetchCourseSettings({
-        setLastFunction,
-        setLastApiResult,
-        setLastApiError,
-      });
-      if (cs === null) {
-        setPlaylistsLoading(false);
-        return;
-      }
-      setLastCourseSettings({
-        selectedCurriculums: cs.selectedCurriculums,
-        selectedUnits: cs.selectedUnits,
-        _debug: cs._debug,
-      });
-      setCourseSettings({
-        selectedCurriculums: cs.selectedCurriculums,
-        selectedUnits: cs.selectedUnits,
-        sproutAccountId: cs.sproutAccountId,
-      });
-      const showHidden = !showCourseMaterialsOnly;
-      const curriculaParam = cs.selectedCurriculums.length > 0
-        ? `selectedCurriculums=${cs.selectedCurriculums.map(encodeURIComponent).join(',')}`
-        : '';
-      const unitsParam = cs.selectedUnits.length > 0
-        ? `selectedUnits=${cs.selectedUnits.map(encodeURIComponent).join(',')}`
-        : '';
-      const params = [curriculaParam, unitsParam, showHidden ? 'showHidden=1' : ''].filter(Boolean).join('&');
-      const hubUrl = `/api/flashcard/student-hub${params ? `?${params}` : ''}`;
       setLastFunction('GET /api/flashcard/student-hub');
+      const hubUrl = showHiddenUnits
+        ? '/api/flashcard/student-hub?showHidden=1'
+        : '/api/flashcard/student-hub';
       const hubRes = await fetch(hubUrl, { credentials: 'include' });
       setLastApiResult('GET /api/flashcard/student-hub', hubRes.status, hubRes.ok);
       const hub = await hubRes.json().catch(() => ({}));
+      if (hubRes.status === 401 && hub?.redirectToOAuth) {
+        const returnTo = encodeURIComponent(window.location.href);
+        window.location.href = `/api/oauth/canvas?returnTo=${returnTo}`;
+        return;
+      }
+      const csState = hub?.selectedCurriculums != null
+        ? { selectedCurriculums: hub.selectedCurriculums ?? [], selectedUnits: hub.selectedUnits ?? [], sproutAccountId: hub.sproutAccountId }
+        : null;
+      setCourseSettings(csState);
+      if (hub?.error === 'announcement_missing') {
+        setDeckLoadError('Course materials are not yet configured. Please notify your teacher.');
+      } else {
+        setDeckLoadError(null);
+      }
       setAllPlaylistsHub([]);
       setPlaylists([]);
       setHubSections([]);
-      setHubSelectedSections([]);
-      if (showHidden) {
-        setHubAdditionalCurricula(Array.isArray(hub.additionalCurricula) ? hub.additionalCurricula.map(String) : []);
-        setHubAdditionalUnits(Array.isArray(hub.additionalUnits) ? hub.additionalUnits.map(String) : []);
-        setHubSelectedAdditionalCurricula([]);
-        setHubSelectedAdditionalUnits([]);
-      } else {
-        setHubAdditionalCurricula([]);
-        setHubAdditionalUnits([]);
-        setHubSelectedAdditionalCurricula([]);
-        setHubSelectedAdditionalUnits([]);
-      }
+      setHubSelectedSection('');
 
       const units = Array.isArray(hub.units) ? hub.units.map(String) : [];
       setHubUnits(units);
 
-      const teacherUnits = cs.selectedUnits;
       const stored = localStorage.getItem(LAST_SESSION_KEY(courseId));
-      let defaultUnits: string[] = [];
+      let preferredUnit = '';
       if (stored) {
         try {
-          const parsed = JSON.parse(stored) as { unit?: string; units?: string[] };
-          if (Array.isArray(parsed?.units) && parsed.units.length > 0) {
-            defaultUnits = parsed.units.filter((u: string) => units.includes(u));
-            if (defaultUnits.length > 0) setLastSession({ unit: defaultUnits[0] });
-          } else if (parsed?.unit && units.includes(parsed.unit)) {
-            defaultUnits = [parsed.unit];
+          const parsed = JSON.parse(stored) as { unit?: string };
+          if (parsed?.unit) {
+            preferredUnit = parsed.unit;
             setLastSession({ unit: parsed.unit });
           }
         } catch {
-          //
         }
       }
-      if (defaultUnits.length === 0 && units.length > 0) {
-        defaultUnits = showCourseMaterialsOnly && teacherUnits.length > 0
-          ? [teacherUnits[0]]
-          : [units[0]];
+
+      if (units.length > 0) {
+        const selected = preferredUnit && units.includes(preferredUnit)
+          ? preferredUnit
+          : units[0];
+        setHubSelectedUnit(selected);
+      } else {
+        setHubSelectedUnit('');
       }
-      setHubSelectedUnits(defaultUnits);
     } finally {
       setPlaylistsLoading(false);
     }
-  }, [context?.courseId, showCourseMaterialsOnly, setLastFunction, setLastApiResult, setLastApiError, setLastCourseSettings]);
+  }, [context?.courseId, showHiddenUnits]);
 
   useEffect(() => {
     const shouldLoadHub = teacherMode
@@ -201,9 +172,9 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
       ? viewAsStudent && isCourseNavigation
       : !!context?.courseId;
     if (!useHubData) return;
-    if (hubSelectedUnits.length === 0) {
+    if (!hubSelectedUnit) {
       setHubSections([]);
-      setHubSelectedSections([]);
+      setHubSelectedSection('');
       setAllPlaylistsHub([]);
       setPlaylists([]);
       return;
@@ -212,31 +183,22 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     let cancelled = false;
     const fetchSections = async () => {
       try {
-        const showParam = !showCourseMaterialsOnly ? '&showHidden=1' : '';
-        const unitsParam = hubSelectedUnits.map(encodeURIComponent).join(',');
-        const currParam = (courseSettings?.selectedCurriculums?.length ?? 0) > 0
-          ? `&selectedCurriculums=${courseSettings!.selectedCurriculums.map(encodeURIComponent).join(',')}`
-          : '';
-        const selUnitsParam = (courseSettings?.selectedUnits?.length ?? 0) > 0
-          ? `&selectedUnits=${courseSettings!.selectedUnits.map(encodeURIComponent).join(',')}`
-          : '';
+        const showParam = showHiddenUnits ? '&showHidden=1' : '';
         const res = await fetch(
-          `/api/flashcard/student-hub?units=${unitsParam}${showParam}${currParam}${selUnitsParam}`,
+          `/api/flashcard/student-hub?unit=${encodeURIComponent(hubSelectedUnit)}${showParam}`,
           { credentials: 'include' },
         );
         const data = await res.json().catch(() => ({}));
         if (cancelled) return;
         const sections = Array.isArray(data?.sections) ? data.sections.map(String) : [];
         setHubSections(sections);
-        setHubSelectedSections((prev) => {
-          const valid = prev.filter((s) => sections.includes(s));
-          if (valid.length === prev.length && prev.length > 0) return prev;
-          return sections.length > 0 ? [sections[0]] : [];
-        });
+        if (!sections.includes(hubSelectedSection)) {
+          setHubSelectedSection(sections[0] ?? '');
+        }
       } catch {
         if (cancelled) return;
         setHubSections([]);
-        setHubSelectedSections([]);
+        setHubSelectedSection('');
       }
     };
     fetchSections();
@@ -244,15 +206,13 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     return () => {
       cancelled = true;
     };
-  }, [teacherMode, viewAsStudent, isCourseNavigation, context?.courseId, hubSelectedUnits, showCourseMaterialsOnly, courseSettings]);
+  }, [teacherMode, viewAsStudent, isCourseNavigation, context?.courseId, hubSelectedUnit, hubSelectedSection, showHiddenUnits]);
 
   useEffect(() => {
     const useHubData = teacherMode
       ? viewAsStudent && isCourseNavigation
       : !!context?.courseId;
-    const hasCourseSelection = hubSelectedUnits.length > 0 && hubSelectedSections.length > 0;
-    const hasAdditionalSelection = hubSelectedAdditionalCurricula.length > 0 && hubSelectedAdditionalUnits.length > 0;
-    if (!useHubData || (!hasCourseSelection && !hasAdditionalSelection)) {
+    if (!useHubData || !hubSelectedUnit || !hubSelectedSection) {
       setAllPlaylistsHub([]);
       setPlaylists([]);
       return;
@@ -262,23 +222,9 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     const fetchPlaylists = async () => {
       setPlaylistsLoading(true);
       try {
-        const showParam = !showCourseMaterialsOnly ? '&showHidden=1' : '';
-        const unitsParam = hubSelectedUnits.map(encodeURIComponent).join(',');
-        const sectionsParam = hubSelectedSections.map(encodeURIComponent).join(',');
-        const currParam = (courseSettings?.selectedCurriculums?.length ?? 0) > 0
-          ? `&selectedCurriculums=${courseSettings!.selectedCurriculums.map(encodeURIComponent).join(',')}`
-          : '';
-        const selUnitsParam = (courseSettings?.selectedUnits?.length ?? 0) > 0
-          ? `&selectedUnits=${courseSettings!.selectedUnits.map(encodeURIComponent).join(',')}`
-          : '';
-        const addCurrParam = hubSelectedAdditionalCurricula.length > 0
-          ? `&additionalCurricula=${hubSelectedAdditionalCurricula.map(encodeURIComponent).join(',')}`
-          : '';
-        const addUnitsParam = hubSelectedAdditionalUnits.length > 0
-          ? `&additionalUnits=${hubSelectedAdditionalUnits.map(encodeURIComponent).join(',')}`
-          : '';
+        const showParam = showHiddenUnits ? '&showHidden=1' : '';
         const res = await fetch(
-          `/api/flashcard/student-hub?units=${unitsParam}&sections=${sectionsParam}${showParam}${currParam}${selUnitsParam}${addCurrParam}${addUnitsParam}`,
+          `/api/flashcard/student-hub?unit=${encodeURIComponent(hubSelectedUnit)}&section=${encodeURIComponent(hubSelectedSection)}${showParam}`,
           { credentials: 'include' },
         );
         const data = await res.json().catch(() => ({}));
@@ -303,7 +249,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     return () => {
       cancelled = true;
     };
-  }, [teacherMode, viewAsStudent, isCourseNavigation, context?.courseId, hubSelectedUnits, hubSelectedSections, hubSelectedAdditionalCurricula, hubSelectedAdditionalUnits, showCourseMaterialsOnly, courseSettings]);
+  }, [teacherMode, viewAsStudent, isCourseNavigation, context?.courseId, hubSelectedUnit, hubSelectedSection, showHiddenUnits]);
 
   const handleFilteredPlaylists = useCallback((list: Array<{ id: string; title: string }>) => {
     setPlaylistsLoading(false);
@@ -549,16 +495,12 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
       `  score: ${score.correct}/${score.total}, mode: ${mode}`,
     ]);
     if (context?.courseId) {
-      const [, , u] = segments(currentPlaylist.title);
-      try {
-        const toStore: { unit?: string; units?: string[] } = {};
-        if (u) toStore.unit = u;
-        if (hubSelectedUnits.length > 0) toStore.units = hubSelectedUnits;
-        if (Object.keys(toStore).length > 0) {
-          localStorage.setItem(LAST_SESSION_KEY(context.courseId), JSON.stringify(toStore));
+      const [,, u] = segments(currentPlaylist.title);
+      if (u) {
+        try {
+          localStorage.setItem(LAST_SESSION_KEY(context.courseId), JSON.stringify({ unit: u }));
+        } catch {
         }
-      } catch {
-        //
       }
     }
     const endpoint = 'POST /api/submission';
@@ -588,7 +530,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
           : [
               `FAILED: ${data.error || data.message || `Save failed (${res.status})`}`,
               `Details: ${data.debug?.details ?? 'None'}`,
-              'Check: Flashcard Progress assignment must exist and be published. Canvas API token required (Teacher Settings or CANVAS_API_TOKEN).',
+              'Check: Flashcard Progress assignment must exist and be published. Canvas OAuth required (Teacher Settings).',
             ]),
       ];
       setSaveLog(logLines);
@@ -826,104 +768,49 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                   </div>
                 ) : (
                   <>
-                    <div className="flashcards-hub-settings">
-                      <h2>Deck Selection</h2>
-                      <div className="flashcards-hub-toggle-wrap">
-                        <span className="flashcards-hub-toggle-label">
-                          Curricula and units not in course materials
-                        </span>
-                        <button
-                          type="button"
-                          className="flashcards-hub-btn"
-                          onClick={() => setShowCourseMaterialsOnly(!showCourseMaterialsOnly)}
+                    {deckLoadError && (
+                      <p className="flashcards-save-error" role="alert" style={{ marginBottom: 16 }}>
+                        {deckLoadError}
+                      </p>
+                    )}
+                    <div className="flashcards-hub-filters">
+                      {courseSettings && (courseSettings.selectedCurriculums?.length > 0 || courseSettings.selectedUnits?.length > 0) && (
+                        <label className="flashcards-playlist-view-toggle" style={{ marginBottom: 8, display: 'block' }}>
+                          <input
+                            type="checkbox"
+                            checked={showHiddenUnits}
+                            onChange={(e) => setShowHiddenUnits(e.target.checked)}
+                          />
+                          Show hidden units and curriculum
+                        </label>
+                      )}
+                      <label className="flashcards-hub-field">
+                        <span className="flashcards-hub-label">Unit</span>
+                        <select
+                          value={hubSelectedUnit}
+                          onChange={(e) => { setHubSelectedUnit(e.target.value); setHubSelectedSection(''); }}
+                          className="flashcards-hub-select"
                         >
-                          {showCourseMaterialsOnly ? 'Show' : 'Hide'}
-                        </button>
-                      </div>
-                      <hr className="flashcards-hub-divider" />
-                      <div className="flashcards-hub-settings-row">
-                        <div className="flashcards-hub-settings-block flashcards-hub-unit-block">
-                          <span className="flashcards-hub-label">Unit</span>
-                          <div className="flashcards-hub-checkbox-list">
-                            {hubUnits.map((u) => (
-                              <label key={u} className="flashcards-hub-checkbox-label">
-                                <input
-                                  type="checkbox"
-                                  checked={hubSelectedUnits.includes(u)}
-                                  onChange={() => {
-                                    setHubSelectedUnits((prev) =>
-                                      prev.includes(u) ? prev.filter((x) => x !== u) : [...prev, u]
-                                    );
-                                  }}
-                                />
-                                {u}
-                              </label>
-                            ))}
-                          </div>
-                        </div>
-                        <div className="flashcards-hub-settings-block flashcards-hub-section-block">
-                          <span className="flashcards-hub-label">Section</span>
-                          <div className="flashcards-hub-checkbox-list">
-                            {hubSections.map((s) => (
-                              <label key={s} className="flashcards-hub-checkbox-label">
-                                <input
-                                  type="checkbox"
-                                  checked={hubSelectedSections.includes(s)}
-                                  onChange={() => {
-                                    setHubSelectedSections((prev) =>
-                                      prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]
-                                    );
-                                  }}
-                                />
-                                {s}
-                              </label>
-                            ))}
-                          </div>
-                        </div>
-                        {!showCourseMaterialsOnly && hubAdditionalCurricula.length > 0 && (
-                          <>
-                            <hr className="flashcards-hub-divider" />
-                            <div className="flashcards-hub-settings-block flashcards-hub-additional-curricula-block">
-                              <span className="flashcards-hub-label">Additional Curricula</span>
-                              <div className="flashcards-hub-checkbox-list">
-                                {hubAdditionalCurricula.map((c) => (
-                                  <label key={c} className="flashcards-hub-checkbox-label">
-                                    <input
-                                      type="checkbox"
-                                      checked={hubSelectedAdditionalCurricula.includes(c)}
-                                      onChange={() => {
-                                        setHubSelectedAdditionalCurricula((prev) =>
-                                          prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]
-                                        );
-                                      }}
-                                    />
-                                    {c}
-                                  </label>
-                                ))}
-                              </div>
-                            </div>
-                            <div className="flashcards-hub-settings-block flashcards-hub-additional-units-block">
-                              <span className="flashcards-hub-label">Additional Units</span>
-                              <div className="flashcards-hub-checkbox-list">
-                                {hubAdditionalUnits.map((u) => (
-                                  <label key={u} className="flashcards-hub-checkbox-label">
-                                    <input
-                                      type="checkbox"
-                                      checked={hubSelectedAdditionalUnits.includes(u)}
-                                      onChange={() => {
-                                        setHubSelectedAdditionalUnits((prev) =>
-                                          prev.includes(u) ? prev.filter((x) => x !== u) : [...prev, u]
-                                        );
-                                      }}
-                                    />
-                                    {u}
-                                  </label>
-                                ))}
-                              </div>
-                            </div>
-                          </>
-                        )}
-                      </div>
+                          <option value="">— All —</option>
+                          {hubUnits.map((u) => (
+                            <option key={u} value={u}>{u}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="flashcards-hub-field">
+                        <span className="flashcards-hub-label">Section</span>
+                        <select
+                          value={hubSelectedSection}
+                          onChange={(e) => setHubSelectedSection(e.target.value)}
+                          className="flashcards-hub-select"
+                          disabled={!hubSelectedUnit}
+                        >
+                          <option value="">— All —</option>
+                          {hubSections.map((s) => (
+                            <option key={s} value={s}>{s}</option>
+                          ))}
+                        </select>
+                      </label>
                     </div>
                     <div className="flashcards-menu-toggles">
                       <label className="flashcards-playlist-view-toggle">

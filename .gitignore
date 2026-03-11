@@ -37,3 +37,5 @@ coverage
 # QTI export files (may contain course content)
 qtifile/
 qtifiles/
+
+.nx/polygraph

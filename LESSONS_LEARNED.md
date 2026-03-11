@@ -70,7 +70,41 @@ ngrok adds several layers of friction that you don't have with fully local devel
 
 - Project configured for localhost: `http://localhost:3000`. Production: `https://canvas-bulk-editor.onrender.com`.
 
-## Debug Log
+## Debug Log / Bridge Debug Log
 
-- Available at `/lti/debug`. Shows login, launch, and OAuth steps.
-- Shareable URL lets others (or tools) inspect it directly instead of copying logs—saves time and reduces mistakes.
+- **Bridge Debug Log** appears on flashcards and prompter pages. Add `?debug=1` to the URL (e.g. `/flashcards?debug=1`) to force it expanded and scrolled into view.
+- The **LTI Launch Log** section shows OIDC and launch steps from the backend. If LTI errors occur, the API error page links to `/flashcards?debug=1`.
+- Last 500 errors and LTI log entries are polled from `/api/debug/last-error` and `/api/debug/lti-log`.
+
+## "localhost refused to connect"
+
+- **Cause**: No process listening on the requested port. Most often the **API failed to start** (e.g. TypeScript build errors in `lti13-launch.service.ts`).
+- **Check**: Ensure `npm run start:dev` starts both API (3000) and web (4200) without build errors. If API build fails, fix the errors before launching.
+
+## LTI 1.3 vs LTI 1.1 (my-canvas-app)
+
+- **my-canvas-app** uses **LTI 1.1**: direct POST to `/lti/launch` with signed form params. Config: `lti-config.xml` (cartridge).
+- **FlowStateASL** uses **LTI 1.3**: OIDC login → redirect → Canvas POSTs `id_token` to `/api/lti/launch`. Config: `LTI_1.3_Developer_Key_Canvas_DEV.json`.
+- They are different protocols; do not expect the same launch flow.
+
+## LTI 1.3 Placeholder Values
+
+- When launching from **course navigation** (sidebar), Canvas may not substitute `$Canvas.module.id` and `$Canvas.assignment.id`—they appear as literal strings. This is expected; those values are only populated when launching from within a module item or assignment.
+- Launch from course navigation for initial testing; use module/assignment links when you need real module/assignment IDs.
+
+## LTI 1.3: client_id Fallback
+
+- Canvas does not always send `client_id` in the OIDC initiation request. The app falls back to `LTI_CLIENT_ID` from `.env`. Ensure `.env` has the correct Client ID from your LTI Developer Key.
+
+## LTI 1.3: RS256 Key Size (2048 Bits)
+
+- **Error**: `JWT verification failed: RS256 requires key modulusLength to be 2048 bits or larger`
+- **Cause**: Canvas Docker/local dev may use 1024-bit RSA keys for LTI signing. The `jose` library enforces a 2048-bit minimum for RS256.
+- **Fix**: Dev-only workaround in `lti13-launch.service.ts`—on this error and `NODE_ENV !== 'production'`, fall back to `jsonwebtoken` with `allowInsecureKeySizes: true`. Production Canvas (Instructure cloud) uses 2048+ bit keys; Render deployment is unaffected.
+- Same issue seen in my-canvas-app.
+
+## LTI 1.3: Deep Linking
+
+- The Developer Key includes **link_selection** (LtiDeepLinkingRequest) and **course_navigation** (LtiResourceLinkRequest). Both use the same `target_link_uri`.
+- **course_navigation** works out of the box—launch from the sidebar, redirect to flashcards/prompter.
+- **link_selection** (adding tool from module "External Tool" picker) may require a dedicated Deep Linking response handler in the future. For now, prefer course navigation for launch.

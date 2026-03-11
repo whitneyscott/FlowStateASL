@@ -7,6 +7,21 @@ interface DebugState {
   lastApiResult: { endpoint: string; status: number; ok: boolean } | null;
   lastApiError: { endpoint: string; status: number; message: string } | null;
   lastSubmissionDetails: string | null;
+  lastCourseSettings: {
+    selectedCurriculums: string[];
+    selectedUnits: string[];
+    _debug?: {
+      assignmentTitle: string;
+      courseIdUsed: string;
+      canvasDomainUsed: string;
+      flashcardSettingsAssignmentId: string | null;
+      findResult: string;
+      requestFindByTitle: string;
+      requestGetAssignment: string | null;
+      tokenStatus?: string;
+      canvasApiResponse?: string | null;
+    };
+  } | null;
 }
 
 interface DebugContextValue extends DebugState {
@@ -15,6 +30,21 @@ interface DebugContextValue extends DebugState {
   setLastApiResult: (endpoint: string, status: number, ok: boolean) => void;
   setLastApiError: (endpoint: string, status: number, message: string) => void;
   setLastSubmissionDetails: (details: string | null) => void;
+  setLastCourseSettings: (data: {
+    selectedCurriculums: string[];
+    selectedUnits: string[];
+    _debug?: {
+      assignmentTitle: string;
+      courseIdUsed: string;
+      canvasDomainUsed: string;
+      flashcardSettingsAssignmentId: string | null;
+      findResult: string;
+      requestFindByTitle: string;
+      requestGetAssignment: string | null;
+      tokenStatus?: string;
+      canvasApiResponse?: string | null;
+    };
+  } | null) => void;
 }
 
 const initial: DebugState = {
@@ -24,6 +54,7 @@ const initial: DebugState = {
   lastApiResult: null,
   lastApiError: null,
   lastSubmissionDetails: null,
+  lastCourseSettings: null,
 };
 
 const DebugContext = createContext<DebugContextValue | null>(null);
@@ -51,8 +82,26 @@ export function DebugProvider({ children }: { children: ReactNode }) {
     setState((s) => ({ ...s, lastSubmissionDetails: details }));
   }, []);
 
+  const setLastCourseSettings = useCallback((data: {
+    selectedCurriculums: string[];
+    selectedUnits: string[];
+    _debug?: {
+      assignmentTitle: string;
+      courseIdUsed: string;
+      canvasDomainUsed: string;
+      flashcardSettingsAssignmentId: string | null;
+      findResult: string;
+      requestFindByTitle: string;
+      requestGetAssignment: string | null;
+      tokenStatus?: string;
+      canvasApiResponse?: string | null;
+    };
+  } | null) => {
+    setState((s) => ({ ...s, lastCourseSettings: data }));
+  }, []);
+
   return (
-    <DebugContext.Provider value={{ ...state, setSproutVideo, setLastFunction, setLastApiResult, setLastApiError, setLastSubmissionDetails }}>
+    <DebugContext.Provider value={{ ...state, setSproutVideo, setLastFunction, setLastApiResult, setLastApiError, setLastSubmissionDetails, setLastCourseSettings }}>
       {children}
     </DebugContext.Provider>
   );
@@ -67,10 +116,12 @@ export function useDebug() {
     lastApiResult: null,
     lastApiError: null,
     lastSubmissionDetails: null,
+    lastCourseSettings: null,
     setSproutVideo: () => {},
     setLastFunction: () => {},
     setLastApiResult: () => {},
     setLastApiError: () => {},
     setLastSubmissionDetails: () => {},
+    setLastCourseSettings: () => {},
   };
 }
