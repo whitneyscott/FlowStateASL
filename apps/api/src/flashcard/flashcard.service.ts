@@ -140,6 +140,48 @@ export class FlashcardService {
     return rows.filter((p) => !this.sproutVideo.isBlacklisted(p.title));
   }
 
+  /** Batch playlists for students: uses same filter as teacher (curricula+units), returns unit/section for client-side filtering. No teacher role required. */
+  async getStudentPlaylistsBatch(
+    courseId: string,
+    canvasDomain?: string,
+    showHidden?: boolean,
+    canvasBaseUrl?: string,
+    canvasAccessToken?: string | null,
+  ): Promise<{
+    playlists: Array<{ id: string; title: string; unit: string; section: string }>;
+    selectedCurriculums: string[];
+    selectedUnits: string[];
+    sproutAccountId?: string;
+    error?: string;
+  }> {
+    const settings = await this.courseSettings.getForStudent(courseId, {
+      canvasDomain,
+      canvasBaseUrl,
+      canvasAccessToken,
+    });
+    const selectedCurriculums = settings.selectedCurriculums ?? [];
+    const selectedUnits = settings.selectedUnits ?? [];
+    const error = 'error' in settings ? settings.error : undefined;
+
+    const curricula = showHidden ? [] : selectedCurriculums;
+    const units = showHidden ? [] : selectedUnits;
+    const rows = await this.playlistCache.getPlaylistsByCurriculaAndUnitsWithHierarchy(
+      curricula,
+      units,
+    );
+    const playlists = rows
+      .filter((p) => !this.sproutVideo.isBlacklisted(p.title))
+      .map((p) => ({ id: p.id, title: p.title, unit: p.unit, section: p.section }));
+
+    return {
+      playlists,
+      selectedCurriculums,
+      selectedUnits,
+      sproutAccountId: this.config.get<string>('SPROUT_ACCOUNT_ID') ?? undefined,
+      ...(error && { error }),
+    };
+  }
+
   /** Bundled endpoint: returns units (and optionally sections/playlists) in one call to reduce round-trips. Uses getForStudent (announcement only). */
   async getStudentHub(
     courseId: string,
@@ -200,11 +242,11 @@ export class FlashcardService {
         canvasAccessToken,
       );
     }
-    if (unit && section) {
+    if (unit) {
       result.playlists = await this.getStudentPlaylists(
         courseId,
         unit,
-        section,
+        section ?? '',
         canvasDomain,
         showHidden,
         canvasBaseUrl,

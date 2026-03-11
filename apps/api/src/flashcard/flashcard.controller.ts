@@ -171,6 +171,37 @@ export class FlashcardController {
     }
   }
 
+  @Get('student-playlists-batch')
+  async getStudentPlaylistsBatch(@Req() req: Request, @Res() res: Response) {
+    const ctx = req.session?.ltiContext;
+    if (!ctx?.courseId) {
+      throw new ForbiddenException('LTI context required');
+    }
+    const canvasAccessToken = (req.session as { canvasAccessToken?: string })?.canvasAccessToken;
+    const showHiddenParam = (req.query?.showHidden as string) ?? '';
+    const showHidden = showHiddenParam === '1' || showHiddenParam === 'true';
+    try {
+      const data = await this.flashcard.getStudentPlaylistsBatch(
+        ctx.courseId,
+        ctx.canvasDomain,
+        showHidden,
+        ctx.canvasBaseUrl,
+        canvasAccessToken,
+      );
+      return res.json(data);
+    } catch (err) {
+      if (err instanceof CanvasTokenExpiredError) {
+        appendLtiLog('flashcard', 'student-playlists-batch: Canvas token expired — 401, redirectToOAuth');
+        return res.status(401).json({
+          error: 'Canvas token expired',
+          redirectToOAuth: true,
+          message: 'Re-authorize with Canvas to continue.',
+        });
+      }
+      throw err;
+    }
+  }
+
   @Get('student-hub')
   async getStudentHub(
     @Req() req: Request,

@@ -242,6 +242,42 @@ export class PlaylistCacheService {
     }
   }
 
+  /** Same filtering as getPlaylistsByCurriculaAndUnits but returns unit and section for frontend filtering. */
+  async getPlaylistsByCurriculaAndUnitsWithHierarchy(
+    curricula: string[],
+    units: string[],
+  ): Promise<Array<{ id: string; title: string; unit: string; section: string }>> {
+    const normalizedCurricula = curricula.map((c) => c.trim()).filter(Boolean);
+    const normalizedUnits = units.map((u) => u.trim()).filter(Boolean);
+
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    let paramIndex = 1;
+
+    if (normalizedCurricula.length > 0) {
+      conditions.push(`curriculum = ANY($${paramIndex})`);
+      params.push(normalizedCurricula);
+      paramIndex++;
+    }
+    if (normalizedUnits.length > 0) {
+      conditions.push(`unit = ANY($${paramIndex})`);
+      params.push(normalizedUnits);
+      paramIndex++;
+    }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const rows = await this.playlistRepo.query(
+      `SELECT id, deck_title AS title, unit, section FROM sprout_playlists ${where} ORDER BY deck_title ASC`,
+      params,
+    ) as Array<{ id: string; title: string; unit: string; section: string }>;
+    return rows.map((r) => ({
+      id: String(r.id),
+      title: String(r.title),
+      unit: String(r.unit ?? ''),
+      section: String(r.section ?? ''),
+    }));
+  }
+
   async getDistinctUnitsByConstraints(
     curricula: string[],
     allowedUnits: string[],

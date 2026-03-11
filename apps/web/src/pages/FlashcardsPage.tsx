@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
 import { TeacherSettings } from '../components/TeacherSettings';
@@ -44,11 +44,12 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   const [playlists, setPlaylists] = useState<PlaylistItem[]>([]);
   const [playlistsLoading, setPlaylistsLoading] = useState(true);
   const [courseSettings, setCourseSettings] = useState<{ selectedCurriculums: string[]; selectedUnits: string[]; sproutAccountId?: string } | null>(null);
-  const [allPlaylistsHub, setAllPlaylistsHub] = useState<Array<{ id: string; title: string }>>([]);
-  const [hubUnits, setHubUnits] = useState<string[]>([]);
-  const [hubSections, setHubSections] = useState<string[]>([]);
+  const [allPlaylistsWithHierarchy, setAllPlaylistsWithHierarchy] = useState<
+    Array<{ id: string; title: string; unit: string; section: string }>
+  >([]);
   const [hubSelectedUnit, setHubSelectedUnit] = useState('');
   const [hubSelectedSection, setHubSelectedSection] = useState('');
+  const [hubFilterMode, setHubFilterMode] = useState<'current' | 'additional' | 'all'>('all');
   const [lastSession, setLastSession] = useState<{ unit: string } | null>(null);
   const [view, setView] = useState<'menu' | 'study' | 'results' | 'playlist'>('menu');
   const [currentPlaylist, setCurrentPlaylist] = useState<{
@@ -94,7 +95,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   const [singleVersionPerAnswer, setSingleVersionPerAnswer] = useState(false);
   const [tutorialAutoAdvance, setTutorialAutoAdvance] = useState(true);
 
-  const loadHubData = useCallback(async () => {
+  const loadBatchData = useCallback(async () => {
     if (!context?.courseId) {
       setPlaylistsLoading(false);
       return;
@@ -102,34 +103,37 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     const courseId = context.courseId;
     setPlaylistsLoading(true);
     try {
-      setLastFunction('GET /api/flashcard/student-hub');
-      const hubUrl = showHiddenUnits
-        ? '/api/flashcard/student-hub?showHidden=1'
-        : '/api/flashcard/student-hub';
-      const hubRes = await fetch(hubUrl, { credentials: 'include' });
-      setLastApiResult('GET /api/flashcard/student-hub', hubRes.status, hubRes.ok);
-      const hub = await hubRes.json().catch(() => ({}));
-      if (hubRes.status === 401 && hub?.redirectToOAuth) {
+      setLastFunction('GET /api/flashcard/student-playlists-batch');
+      const url = showHiddenUnits
+        ? '/api/flashcard/student-playlists-batch?showHidden=1'
+        : '/api/flashcard/student-playlists-batch';
+      const res = await fetch(url, { credentials: 'include' });
+      setLastApiResult('GET /api/flashcard/student-playlists-batch', res.status, res.ok);
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 401 && data?.redirectToOAuth) {
         const returnTo = encodeURIComponent(window.location.href);
         window.location.href = `/api/oauth/canvas?returnTo=${returnTo}`;
         return;
       }
-      const csState = hub?.selectedCurriculums != null
-        ? { selectedCurriculums: hub.selectedCurriculums ?? [], selectedUnits: hub.selectedUnits ?? [], sproutAccountId: hub.sproutAccountId }
+      const csState = data?.selectedCurriculums != null
+        ? { selectedCurriculums: data.selectedCurriculums ?? [], selectedUnits: data.selectedUnits ?? [], sproutAccountId: data.sproutAccountId }
         : null;
       setCourseSettings(csState);
-      if (hub?.error === 'announcement_missing') {
+      if (data?.error === 'announcement_missing') {
         setDeckLoadError('Course materials are not yet configured. Please notify your teacher.');
       } else {
         setDeckLoadError(null);
       }
-      setAllPlaylistsHub([]);
-      setPlaylists([]);
-      setHubSections([]);
-      setHubSelectedSection('');
-
-      const units = Array.isArray(hub.units) ? hub.units.map(String) : [];
-      setHubUnits(units);
+      type Pl = { id: string; title: string; unit: string; section: string };
+      const list: Pl[] = (Array.isArray(data?.playlists) ? data.playlists : []).map(
+        (p: { id?: string; title: string; unit?: string; section?: string }) => ({
+          id: String(p.id ?? p.title),
+          title: String(p.title),
+          unit: String(p.unit ?? ''),
+          section: String(p.section ?? ''),
+        }),
+      );
+      setAllPlaylistsWithHierarchy(list);
 
       const stored = localStorage.getItem(LAST_SESSION_KEY(courseId));
       let preferredUnit = '';
@@ -144,112 +148,62 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
         }
       }
 
-      if (units.length > 0) {
-        const selected = preferredUnit && units.includes(preferredUnit)
-          ? preferredUnit
-          : units[0];
-        setHubSelectedUnit(selected);
-      } else {
-        setHubSelectedUnit('');
-      }
+      const units: string[] = [...new Set(list.map((p: Pl) => p.unit).filter(Boolean))].sort();
+      const initialUnit: string = preferredUnit && units.includes(preferredUnit) ? preferredUnit : (units[0] ?? '');
+      setHubSelectedUnit(initialUnit);
+      const sectionsForUnit: string[] = [...new Set(list.filter((p: Pl) => p.unit === initialUnit).map((p: Pl) => p.section).filter(Boolean))].sort();
+      setHubSelectedSection(sectionsForUnit[0] ?? '');
     } finally {
       setPlaylistsLoading(false);
     }
   }, [context?.courseId, showHiddenUnits]);
 
   useEffect(() => {
-    const shouldLoadHub = teacherMode
+    const shouldLoad = teacherMode
       ? viewAsStudent && isCourseNavigation
       : !!context?.courseId;
-    if (shouldLoadHub) {
+    if (shouldLoad) {
       setPlaylistsLoading(true);
-      loadHubData();
+      loadBatchData();
     }
-  }, [teacherMode, viewAsStudent, isCourseNavigation, context?.courseId, loadHubData]);
+  }, [teacherMode, viewAsStudent, isCourseNavigation, context?.courseId, loadBatchData]);
+
+  const { hubUnits, hubSections, filteredPlaylists } = useMemo(() => {
+    const units = [...new Set(allPlaylistsWithHierarchy.map((p) => p.unit).filter(Boolean))].sort();
+    const sections = hubSelectedUnit
+      ? [...new Set(allPlaylistsWithHierarchy.filter((p) => p.unit === hubSelectedUnit).map((p) => p.section).filter(Boolean))].sort()
+      : [];
+    let list = allPlaylistsWithHierarchy;
+    if (hubSelectedUnit) {
+      list = list.filter((p) => p.unit === hubSelectedUnit);
+      if (hubSelectedSection) {
+        list = list.filter((p) => p.section === hubSelectedSection);
+      }
+    }
+    if (hubFilterMode === 'current') {
+      list = list.filter((p) => p.unit === hubSelectedUnit && p.section === hubSelectedSection);
+    } else if (hubFilterMode === 'additional') {
+      list = list.filter((p) => p.unit !== hubSelectedUnit || p.section !== hubSelectedSection);
+    }
+    return {
+      hubUnits: units,
+      hubSections: sections,
+      filteredPlaylists: list.sort((a, b) => a.title.localeCompare(b.title)).map((p) => ({ id: p.id, title: p.title })),
+    };
+  }, [allPlaylistsWithHierarchy, hubSelectedUnit, hubSelectedSection, hubFilterMode]);
+
+  const handleHubUnitChange = useCallback((unit: string) => {
+    setHubSelectedUnit(unit);
+    const sections = [...new Set(allPlaylistsWithHierarchy.filter((p) => p.unit === unit).map((p) => p.section).filter(Boolean))].sort();
+    setHubSelectedSection(sections[0] ?? '');
+  }, [allPlaylistsWithHierarchy]);
 
   useEffect(() => {
-    const useHubData = teacherMode
-      ? viewAsStudent && isCourseNavigation
-      : !!context?.courseId;
-    if (!useHubData) return;
-    if (!hubSelectedUnit) {
-      setHubSections([]);
-      setHubSelectedSection('');
-      setAllPlaylistsHub([]);
-      setPlaylists([]);
-      return;
+    const useHubData = teacherMode ? viewAsStudent && isCourseNavigation : !!context?.courseId;
+    if (useHubData && filteredPlaylists.length > 0) {
+      setSproutVideo(true, filteredPlaylists.length);
     }
-
-    let cancelled = false;
-    const fetchSections = async () => {
-      try {
-        const showParam = showHiddenUnits ? '&showHidden=1' : '';
-        const res = await fetch(
-          `/api/flashcard/student-hub?unit=${encodeURIComponent(hubSelectedUnit)}${showParam}`,
-          { credentials: 'include' },
-        );
-        const data = await res.json().catch(() => ({}));
-        if (cancelled) return;
-        const sections = Array.isArray(data?.sections) ? data.sections.map(String) : [];
-        setHubSections(sections);
-        if (!sections.includes(hubSelectedSection)) {
-          setHubSelectedSection(sections[0] ?? '');
-        }
-      } catch {
-        if (cancelled) return;
-        setHubSections([]);
-        setHubSelectedSection('');
-      }
-    };
-    fetchSections();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [teacherMode, viewAsStudent, isCourseNavigation, context?.courseId, hubSelectedUnit, hubSelectedSection, showHiddenUnits]);
-
-  useEffect(() => {
-    const useHubData = teacherMode
-      ? viewAsStudent && isCourseNavigation
-      : !!context?.courseId;
-    if (!useHubData || !hubSelectedUnit || !hubSelectedSection) {
-      setAllPlaylistsHub([]);
-      setPlaylists([]);
-      return;
-    }
-
-    let cancelled = false;
-    const fetchPlaylists = async () => {
-      setPlaylistsLoading(true);
-      try {
-        const showParam = showHiddenUnits ? '&showHidden=1' : '';
-        const res = await fetch(
-          `/api/flashcard/student-hub?unit=${encodeURIComponent(hubSelectedUnit)}&section=${encodeURIComponent(hubSelectedSection)}${showParam}`,
-          { credentials: 'include' },
-        );
-        const data = await res.json().catch(() => ({}));
-        if (cancelled) return;
-        const rows = (Array.isArray(data?.playlists) ? data.playlists : []).map((p: { id?: string; title: string }) => ({
-          id: p.id ?? p.title,
-          title: p.title,
-        }));
-        setAllPlaylistsHub(rows);
-        setPlaylists(rows.map((p: { id?: string; title: string }) => ({ id: p.id ?? p.title, title: p.title })));
-        setSproutVideo(true, rows.length);
-      } catch {
-        if (cancelled) return;
-        setAllPlaylistsHub([]);
-        setPlaylists([]);
-      } finally {
-        if (!cancelled) setPlaylistsLoading(false);
-      }
-    };
-    fetchPlaylists();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [teacherMode, viewAsStudent, isCourseNavigation, context?.courseId, hubSelectedUnit, hubSelectedSection, showHiddenUnits]);
+  }, [teacherMode, viewAsStudent, isCourseNavigation, context?.courseId, filteredPlaylists.length, setSproutVideo]);
 
   const handleFilteredPlaylists = useCallback((list: Array<{ id: string; title: string }>) => {
     setPlaylistsLoading(false);
@@ -740,7 +694,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
               <TeacherSettings
                 context={context}
                 onConfigChange={() => {
-                  if (context?.courseId && viewAsStudent) loadHubData();
+                  if (context?.courseId && viewAsStudent) loadBatchData();
                 }}
                 onFilteredPlaylists={handleFilteredPlaylists}
               />
@@ -773,7 +727,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                         {deckLoadError}
                       </p>
                     )}
-                    <div className="flashcards-hub-filters">
+                    <div className="teacher-settings" style={{ marginBottom: 24 }}>
                       {courseSettings && (courseSettings.selectedCurriculums?.length > 0 || courseSettings.selectedUnits?.length > 0) && (
                         <label className="flashcards-playlist-view-toggle" style={{ marginBottom: 8, display: 'block' }}>
                           <input
@@ -784,33 +738,58 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                           Show hidden units and curriculum
                         </label>
                       )}
-                      <label className="flashcards-hub-field">
-                        <span className="flashcards-hub-label">Unit</span>
-                        <select
-                          value={hubSelectedUnit}
-                          onChange={(e) => { setHubSelectedUnit(e.target.value); setHubSelectedSection(''); }}
-                          className="flashcards-hub-select"
-                        >
-                          <option value="">— All —</option>
-                          {hubUnits.map((u) => (
-                            <option key={u} value={u}>{u}</option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="flashcards-hub-field">
-                        <span className="flashcards-hub-label">Section</span>
-                        <select
-                          value={hubSelectedSection}
-                          onChange={(e) => setHubSelectedSection(e.target.value)}
-                          className="flashcards-hub-select"
-                          disabled={!hubSelectedUnit}
-                        >
-                          <option value="">— All —</option>
-                          {hubSections.map((s) => (
-                            <option key={s} value={s}>{s}</option>
-                          ))}
-                        </select>
-                      </label>
+                      <hr
+                        className="teacher-settings-divider"
+                        style={{
+                          width: '100%',
+                          border: 'none',
+                          borderTop: '4px solid #52525b',
+                          margin: '20px 0',
+                        }}
+                      />
+                      <div className="flashcards-hub-filters" style={{ flexWrap: 'wrap', gap: 16, marginBottom: 16 }}>
+                        <label className="flashcards-hub-field">
+                          <span className="flashcards-hub-label">Unit</span>
+                          <select
+                            value={hubSelectedUnit}
+                            onChange={(e) => handleHubUnitChange(e.target.value)}
+                            className="flashcards-hub-select"
+                          >
+                            <option value="">— All —</option>
+                            {hubUnits.map((u) => (
+                              <option key={u} value={u}>{u}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="flashcards-hub-field">
+                          <span className="flashcards-hub-label">Section</span>
+                          <select
+                            value={hubSelectedSection}
+                            onChange={(e) => setHubSelectedSection(e.target.value)}
+                            className="flashcards-hub-select"
+                            disabled={!hubSelectedUnit}
+                          >
+                            <option value="">— All —</option>
+                            {hubSections.map((s) => (
+                              <option key={s} value={s}>{s}</option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+                      <div className="flashcards-menu-toggles" style={{ marginBottom: 16 }}>
+                        <span className="teacher-settings-label" style={{ marginRight: 8 }}>Decks:</span>
+                        {(['all', 'current', 'additional'] as const).map((mode) => (
+                          <label key={mode} className="flashcards-playlist-view-toggle">
+                            <input
+                              type="radio"
+                              name="hubFilterMode"
+                              checked={hubFilterMode === mode}
+                              onChange={() => setHubFilterMode(mode)}
+                            />
+                            {mode.charAt(0).toUpperCase() + mode.slice(1)}
+                          </label>
+                        ))}
+                      </div>
                     </div>
                     <div className="flashcards-menu-toggles">
                       <label className="flashcards-playlist-view-toggle">
@@ -837,9 +816,9 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                           : 'flashcards-playlist-list'
                       }
                     >
-                      {playlists.map((pl, idx) => (
+                      {filteredPlaylists.map((pl, idx) => (
                         <button
-                          key={(pl as { id?: string }).id ?? idx}
+                          key={pl.id ?? idx}
                           type="button"
                           className={
                             viewAsPlaylist
@@ -848,7 +827,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                           }
                           onClick={() =>
                             selectPlaylist(
-                              (pl as { id?: string }).id ?? String(idx),
+                              pl.id ?? String(idx),
                               pl.title,
                               idx,
                             )
