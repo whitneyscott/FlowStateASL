@@ -5,7 +5,19 @@ import type {
   SproutPlaylistListItem,
 } from './interfaces/sprout-playlist.interface';
 
-const BLACKLIST = ['exam', 'test', 'sentence'];
+const BLACKLIST = [
+  'exam',
+  'test',
+  'sentence',
+  'FS',
+  'FS2',
+  'FSA',
+  'FSB',
+  'MP',
+  'SE',
+  'SNT',
+  'unknown',
+];
 
 @Injectable()
 export class SproutVideoService {
@@ -32,9 +44,11 @@ export class SproutVideoService {
     return [];
   }
 
-  isBlacklisted(title: string): boolean {
-    const lower = title.toLowerCase();
-    return BLACKLIST.some((term) => lower.includes(term));
+  /** Case-insensitive exact match against blacklisted curricula. */
+  isBlacklisted(curriculum: string): boolean {
+    const normalized = (curriculum ?? '').trim().toLowerCase();
+    if (!normalized) return false;
+    return BLACKLIST.some((term) => term.toLowerCase() === normalized);
   }
 
   /**

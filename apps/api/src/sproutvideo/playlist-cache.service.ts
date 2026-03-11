@@ -34,13 +34,15 @@ export class PlaylistCacheService {
 
   async getAllPlaylists(): Promise<Array<{ id: string; title: string; sproutUpdatedAt: Date | null }>> {
     const rows = await this.playlistRepo.find({
-      select: ['id', 'deckTitle', 'sproutUpdatedAt'],
+      select: ['id', 'deckTitle', 'curriculum', 'sproutUpdatedAt'],
     });
-    return rows.map((r) => ({
-      id: r.id,
-      title: r.deckTitle,
-      sproutUpdatedAt: r.sproutUpdatedAt,
-    }));
+    return rows
+      .filter((r) => !this.sproutVideo.isBlacklisted(r.curriculum ?? ''))
+      .map((r) => ({
+        id: r.id,
+        title: r.deckTitle,
+        sproutUpdatedAt: r.sproutUpdatedAt,
+      }));
   }
 
   /** Returns playlists with video IDs, matching SproutPlaylist shape for CourseSettingsService.save */
@@ -82,13 +84,13 @@ export class PlaylistCacheService {
     }
 
     const rows = await this.playlistRepo.query(
-      `SELECT id, deck_title AS title FROM sprout_playlists WHERE (${conditions.join(' OR ')}) ORDER BY deck_title ASC`,
+      `SELECT id, deck_title AS title, curriculum FROM sprout_playlists WHERE (${conditions.join(' OR ')}) ORDER BY deck_title ASC`,
       params,
-    ) as Array<{ id: string; title: string }>;
+    ) as Array<{ id: string; title: string; curriculum: string }>;
 
     return rows
-      .map((r) => ({ id: String(r.id), title: String(r.title) }))
-      .filter((p) => !this.sproutVideo.isBlacklisted(p.title));
+      .filter((r) => !this.sproutVideo.isBlacklisted(r.curriculum ?? ''))
+      .map((r) => ({ id: String(r.id), title: String(r.title) }));
   }
 
   async getPlaylistCount(): Promise<number> {
@@ -172,15 +174,19 @@ export class PlaylistCacheService {
       if (normalizedCurricula.length === 0 && normalizedUnits.length === 0) {
         try {
           const rows = await this.playlistRepo.find({
-            select: ['id', 'deckTitle'],
+            select: ['id', 'deckTitle', 'curriculum'],
             order: { deckTitle: 'ASC' },
           });
-          return rows.map((r) => ({ id: r.id, title: r.deckTitle }));
+          return rows
+            .filter((r) => !this.sproutVideo.isBlacklisted(r.curriculum ?? ''))
+            .map((r) => ({ id: r.id, title: r.deckTitle, curriculum: r.curriculum }));
         } catch {
           const rows = await this.playlistRepo.query(
-            `SELECT id, title FROM sprout_playlists ORDER BY title ASC`,
-          ) as Array<{ id: string; title: string }>;
-          return rows.map((r) => ({ id: String(r.id), title: String(r.title) }));
+            `SELECT id, deck_title AS title, curriculum FROM sprout_playlists ORDER BY deck_title ASC`,
+          ) as Array<{ id: string; title: string; curriculum: string }>;
+          return rows
+            .filter((r) => !this.sproutVideo.isBlacklisted(r.curriculum ?? ''))
+            .map((r) => ({ id: String(r.id), title: String(r.title), curriculum: String(r.curriculum ?? '') }));
         }
       }
 
@@ -201,20 +207,24 @@ export class PlaylistCacheService {
 
       const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
       const rows = await this.playlistRepo.query(
-        `SELECT id, deck_title AS title FROM sprout_playlists ${where} ORDER BY deck_title ASC`,
+        `SELECT id, deck_title AS title, curriculum FROM sprout_playlists ${where} ORDER BY deck_title ASC`,
         params,
-      ) as Array<{ id: string; title: string }>;
+      ) as Array<{ id: string; title: string; curriculum: string }>;
 
-      return rows.map((r) => ({ id: String(r.id), title: String(r.title) }));
+      return rows
+        .filter((r) => !this.sproutVideo.isBlacklisted(r.curriculum ?? ''))
+        .map((r) => ({ id: String(r.id), title: String(r.title), curriculum: String(r.curriculum ?? '') }));
     } catch (err) {
       try {
         const normalizedCurricula = curricula.map((c) => c.trim()).filter(Boolean);
         const normalizedUnits = units.map((u) => u.trim()).filter(Boolean);
         if (normalizedCurricula.length === 0 && normalizedUnits.length === 0) {
           const rows = await this.playlistRepo.query(
-            `SELECT id, title FROM sprout_playlists ORDER BY title ASC`,
-          ) as Array<{ id: string; title: string }>;
-          return rows.map((r) => ({ id: String(r.id), title: String(r.title) }));
+            `SELECT id, deck_title AS title, curriculum FROM sprout_playlists ORDER BY deck_title ASC`,
+          ) as Array<{ id: string; title: string; curriculum: string }>;
+          return rows
+            .filter((r) => !this.sproutVideo.isBlacklisted(r.curriculum ?? ''))
+            .map((r) => ({ id: String(r.id), title: String(r.title), curriculum: String(r.curriculum ?? '') }));
         }
         const conds: string[] = [];
         const prms: unknown[] = [];
@@ -231,10 +241,12 @@ export class PlaylistCacheService {
         }
         const where = `WHERE ${conds.join(' AND ')}`;
         const rows = await this.playlistRepo.query(
-          `SELECT id, COALESCE(NULLIF(TRIM(array_to_string((string_to_array(title, '.'))[4:], '.')), ''), title) AS title FROM sprout_playlists ${where} ORDER BY title ASC`,
+          `SELECT id, COALESCE(NULLIF(TRIM(array_to_string((string_to_array(title, '.'))[4:], '.')), ''), title) AS title, curriculum FROM sprout_playlists ${where} ORDER BY title ASC`,
           prms,
-        ) as Array<{ id: string; title: string }>;
-        return rows.map((r) => ({ id: String(r.id), title: String(r.title) }));
+        ) as Array<{ id: string; title: string; curriculum: string }>;
+        return rows
+          .filter((r) => !this.sproutVideo.isBlacklisted(r.curriculum ?? ''))
+          .map((r) => ({ id: String(r.id), title: String(r.title), curriculum: String(r.curriculum ?? '') }));
       } catch (fallbackErr) {
         console.error('[PlaylistCache] getPlaylistsByCurriculaAndUnits failed:', err, fallbackErr);
         return [];
@@ -267,15 +279,17 @@ export class PlaylistCacheService {
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
     const rows = await this.playlistRepo.query(
-      `SELECT id, deck_title AS title, unit, section FROM sprout_playlists ${where} ORDER BY deck_title ASC`,
+      `SELECT id, deck_title AS title, unit, section, curriculum FROM sprout_playlists ${where} ORDER BY deck_title ASC`,
       params,
-    ) as Array<{ id: string; title: string; unit: string; section: string }>;
-    return rows.map((r) => ({
-      id: String(r.id),
-      title: String(r.title),
-      unit: String(r.unit ?? ''),
-      section: String(r.section ?? ''),
-    }));
+    ) as Array<{ id: string; title: string; unit: string; section: string; curriculum: string }>;
+    return rows
+      .filter((r) => !this.sproutVideo.isBlacklisted(r.curriculum ?? ''))
+      .map((r) => ({
+        id: String(r.id),
+        title: String(r.title),
+        unit: String(r.unit ?? ''),
+        section: String(r.section ?? ''),
+      }));
   }
 
   async getDistinctUnitsByConstraints(
@@ -376,10 +390,12 @@ export class PlaylistCacheService {
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
     const rows = await this.playlistRepo.query(
-      `SELECT id, deck_title AS title FROM sprout_playlists ${where} ORDER BY deck_title ASC`,
+      `SELECT id, deck_title AS title, curriculum FROM sprout_playlists ${where} ORDER BY deck_title ASC`,
       params,
-    ) as Array<{ id: string; title: string }>;
-    return rows.map((r) => ({ id: String(r.id), title: String(r.title) }));
+    ) as Array<{ id: string; title: string; curriculum: string }>;
+    return rows
+      .filter((r) => !this.sproutVideo.isBlacklisted(r.curriculum ?? ''))
+      .map((r) => ({ id: String(r.id), title: String(r.title) }));
   }
 
   async checkNeedsUpdate(cachedPlaylistUpdatedAt: Record<string, string>): Promise<boolean> {

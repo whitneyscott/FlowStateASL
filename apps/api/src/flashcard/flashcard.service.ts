@@ -49,9 +49,7 @@ export class FlashcardService {
 
   async getAllPlaylists() {
     const playlists = await this.playlistCache.getAllPlaylists();
-    return playlists
-      .filter((p) => !this.sproutVideo.isBlacklisted(p.title))
-      .map((p) => ({ id: p.id, title: p.title }));
+    return playlists.map((p) => ({ id: p.id, title: p.title }));
   }
 
   async getPlaylistCount(): Promise<number> {
@@ -71,7 +69,7 @@ export class FlashcardService {
     units: string[],
   ): Promise<Array<{ id: string; title: string }>> {
     const rows = await this.playlistCache.getPlaylistsByCurriculaAndUnits(curricula, units);
-    return rows.filter((p) => !this.sproutVideo.isBlacklisted(p.title));
+    return rows.map((p) => ({ id: p.id, title: p.title }));
   }
 
   private async getStudentConstraints(
@@ -137,7 +135,7 @@ export class FlashcardService {
       section,
       constraints.selectedUnits,
     );
-    return rows.filter((p) => !this.sproutVideo.isBlacklisted(p.title));
+    return rows.map((p) => ({ id: p.id, title: p.title }));
   }
 
   /** Batch playlists for students: uses same filter as teacher (curricula+units), returns unit/section for client-side filtering. No teacher role required. */
@@ -169,9 +167,7 @@ export class FlashcardService {
       curricula,
       units,
     );
-    const playlists = rows
-      .filter((p) => !this.sproutVideo.isBlacklisted(p.title))
-      .map((p) => ({ id: p.id, title: p.title, unit: p.unit, section: p.section }));
+    const playlists = rows.map((p) => ({ id: p.id, title: p.title, unit: p.unit, section: p.section }));
 
     return {
       playlists,
