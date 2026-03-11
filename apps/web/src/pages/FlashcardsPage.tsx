@@ -47,9 +47,8 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   const [allPlaylistsWithHierarchy, setAllPlaylistsWithHierarchy] = useState<
     Array<{ id: string; title: string; unit: string; section: string }>
   >([]);
-  const [hubSelectedUnit, setHubSelectedUnit] = useState('');
-  const [hubSelectedSection, setHubSelectedSection] = useState('');
-  const [hubFilterMode, setHubFilterMode] = useState<'current' | 'additional' | 'all'>('all');
+  const [hubSelectedUnits, setHubSelectedUnits] = useState<string[]>([]);
+  const [hubSelectedSections, setHubSelectedSections] = useState<string[]>([]);
   const [lastSession, setLastSession] = useState<{ unit: string } | null>(null);
   const [view, setView] = useState<'menu' | 'study' | 'results' | 'playlist'>('menu');
   const [currentPlaylist, setCurrentPlaylist] = useState<{
@@ -149,10 +148,11 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
       }
 
       const units: string[] = [...new Set(list.map((p: Pl) => p.unit).filter(Boolean))].sort();
-      const initialUnit: string = preferredUnit && units.includes(preferredUnit) ? preferredUnit : (units[0] ?? '');
-      setHubSelectedUnit(initialUnit);
-      const sectionsForUnit: string[] = [...new Set(list.filter((p: Pl) => p.unit === initialUnit).map((p: Pl) => p.section).filter(Boolean))].sort();
-      setHubSelectedSection(sectionsForUnit[0] ?? '');
+      const initialUnits = units.length > 0
+        ? (preferredUnit && units.includes(preferredUnit) ? [preferredUnit] : [units[0]])
+        : [];
+      setHubSelectedUnits(initialUnits);
+      setHubSelectedSections([]);
     } finally {
       setPlaylistsLoading(false);
     }
@@ -170,33 +170,35 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
 
   const { hubUnits, hubSections, filteredPlaylists } = useMemo(() => {
     const units = [...new Set(allPlaylistsWithHierarchy.map((p) => p.unit).filter(Boolean))].sort();
-    const sections = hubSelectedUnit
-      ? [...new Set(allPlaylistsWithHierarchy.filter((p) => p.unit === hubSelectedUnit).map((p) => p.section).filter(Boolean))].sort()
-      : [];
+    const sections =
+      hubSelectedUnits.length > 0
+        ? [...new Set(allPlaylistsWithHierarchy.filter((p) => hubSelectedUnits.includes(p.unit)).map((p) => p.section).filter(Boolean))].sort()
+        : [...new Set(allPlaylistsWithHierarchy.map((p) => p.section).filter(Boolean))].sort();
     let list = allPlaylistsWithHierarchy;
-    if (hubSelectedUnit) {
-      list = list.filter((p) => p.unit === hubSelectedUnit);
-      if (hubSelectedSection) {
-        list = list.filter((p) => p.section === hubSelectedSection);
-      }
+    if (hubSelectedUnits.length > 0) {
+      list = list.filter((p) => hubSelectedUnits.includes(p.unit));
     }
-    if (hubFilterMode === 'current') {
-      list = list.filter((p) => p.unit === hubSelectedUnit && p.section === hubSelectedSection);
-    } else if (hubFilterMode === 'additional') {
-      list = list.filter((p) => p.unit !== hubSelectedUnit || p.section !== hubSelectedSection);
+    if (hubSelectedSections.length > 0) {
+      list = list.filter((p) => hubSelectedSections.includes(p.section));
     }
     return {
       hubUnits: units,
       hubSections: sections,
       filteredPlaylists: list.sort((a, b) => a.title.localeCompare(b.title)).map((p) => ({ id: p.id, title: p.title })),
     };
-  }, [allPlaylistsWithHierarchy, hubSelectedUnit, hubSelectedSection, hubFilterMode]);
+  }, [allPlaylistsWithHierarchy, hubSelectedUnits, hubSelectedSections]);
 
-  const handleHubUnitChange = useCallback((unit: string) => {
-    setHubSelectedUnit(unit);
-    const sections = [...new Set(allPlaylistsWithHierarchy.filter((p) => p.unit === unit).map((p) => p.section).filter(Boolean))].sort();
-    setHubSelectedSection(sections[0] ?? '');
-  }, [allPlaylistsWithHierarchy]);
+  const toggleHubUnit = useCallback((u: string) => {
+    setHubSelectedUnits((prev) =>
+      prev.includes(u) ? prev.filter((x) => x !== u) : [...prev, u]
+    );
+  }, []);
+
+  const toggleHubSection = useCallback((s: string) => {
+    setHubSelectedSections((prev) =>
+      prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]
+    );
+  }, []);
 
   useEffect(() => {
     const useHubData = teacherMode ? viewAsStudent && isCourseNavigation : !!context?.courseId;
@@ -747,48 +749,38 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                           margin: '20px 0',
                         }}
                       />
-                      <div className="flashcards-hub-filters" style={{ flexWrap: 'wrap', gap: 16, marginBottom: 16 }}>
-                        <label className="flashcards-hub-field">
-                          <span className="flashcards-hub-label">Unit</span>
-                          <select
-                            value={hubSelectedUnit}
-                            onChange={(e) => handleHubUnitChange(e.target.value)}
-                            className="flashcards-hub-select"
-                          >
-                            <option value="">— All —</option>
+                      <div className="teacher-settings-row teacher-settings-multiselect-row">
+                        <div className="teacher-settings-checkbox-group">
+                          <span className="teacher-settings-label">Units</span>
+                          <div className="teacher-settings-checkbox-list">
                             {hubUnits.map((u) => (
-                              <option key={u} value={u}>{u}</option>
+                              <label key={u} className="teacher-settings-checkbox-label">
+                                <input
+                                  type="checkbox"
+                                  checked={hubSelectedUnits.includes(u)}
+                                  onChange={() => toggleHubUnit(u)}
+                                />
+                                {u}
+                              </label>
                             ))}
-                          </select>
-                        </label>
-                        <label className="flashcards-hub-field">
-                          <span className="flashcards-hub-label">Section</span>
-                          <select
-                            value={hubSelectedSection}
-                            onChange={(e) => setHubSelectedSection(e.target.value)}
-                            className="flashcards-hub-select"
-                            disabled={!hubSelectedUnit}
-                          >
-                            <option value="">— All —</option>
+                          </div>
+                        </div>
+                        <div className="teacher-settings-checkbox-group">
+                          <span className="teacher-settings-label">Sections</span>
+                          <div className="teacher-settings-checkbox-list">
                             {hubSections.map((s) => (
-                              <option key={s} value={s}>{s}</option>
+                              <label key={s} className="teacher-settings-checkbox-label">
+                                <input
+                                  type="checkbox"
+                                  checked={hubSelectedSections.includes(s)}
+                                  onChange={() => toggleHubSection(s)}
+                                  disabled={hubSelectedUnits.length === 0}
+                                />
+                                {s}
+                              </label>
                             ))}
-                          </select>
-                        </label>
-                      </div>
-                      <div className="flashcards-menu-toggles" style={{ marginBottom: 16 }}>
-                        <span className="teacher-settings-label" style={{ marginRight: 8 }}>Decks:</span>
-                        {(['all', 'current', 'additional'] as const).map((mode) => (
-                          <label key={mode} className="flashcards-playlist-view-toggle">
-                            <input
-                              type="radio"
-                              name="hubFilterMode"
-                              checked={hubFilterMode === mode}
-                              onChange={() => setHubFilterMode(mode)}
-                            />
-                            {mode.charAt(0).toUpperCase() + mode.slice(1)}
-                          </label>
-                        ))}
+                          </div>
+                        </div>
                       </div>
                     </div>
                     <div className="flashcards-menu-toggles">
