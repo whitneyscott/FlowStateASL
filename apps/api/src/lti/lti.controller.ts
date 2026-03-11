@@ -9,13 +9,7 @@ import { AssessmentService } from '../assessment/assessment.service';
 import { setLtiToken, consumeLtiToken } from './lti-token.store';
 import { setOidcState, consumeOidcState } from './lti-oidc-state.store';
 import { setLastError, appendLtiLog } from '../common/last-error.store';
-
-function ltiErrorHtml(message: string, frontendUrl = 'http://localhost:4200'): string {
-  return `<!DOCTYPE html><html><head><title>LTI Launch Error</title>
-<style>body{font-family:sans-serif;margin:2em;background:#1a1a1a;color:#00ff88;} a{color:#00ff88;} pre{background:#000;padding:12px;border:2px solid #00ff88;}</style></head>
-<body><h1>LTI Launch Error</h1><pre>${message.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
-<p><a href="${frontendUrl}/flashcards?debug=1">View Bridge Debug Log</a> — Open this link to see the LTI launch log and errors.</p></body></html>`;
-}
+import { renderLtiLaunchErrorHtml } from './lti-error.util';
 
 @Controller('lti')
 export class LtiController {
@@ -245,7 +239,7 @@ export class LtiController {
       const msg = `LTI auth failed: ${canvasError}${canvasErrorDesc ? ` - ${canvasErrorDesc}` : ''}`;
       setLastError('/api/lti/launch', new Error(msg));
       appendLtiLog('launch', msg, { canvasError, canvasErrorDesc });
-      return res.status(400).type('html').send(ltiErrorHtml(msg, this.config.get<string>('FRONTEND_URL') ?? 'http://localhost:4200'));
+      return res.status(400).type('html').send(renderLtiLaunchErrorHtml(msg, { frontendUrl: this.config.get<string>('FRONTEND_URL') ?? 'http://localhost:4200' }));
     }
     const idToken = (body?.id_token ?? body?.idToken ?? '').toString().trim();
     const state = (body?.state ?? '').toString().trim();
@@ -254,20 +248,20 @@ export class LtiController {
       const msg = `Missing id_token or state. Body keys: ${bodyKeys.join(', ')}`;
       setLastError('/api/lti/launch', new Error(msg));
       appendLtiLog('launch', msg, { bodyKeys });
-      return res.status(400).type('html').send(ltiErrorHtml(msg, this.config.get<string>('FRONTEND_URL') ?? 'http://localhost:4200'));
+      return res.status(400).type('html').send(renderLtiLaunchErrorHtml(msg, { frontendUrl: this.config.get<string>('FRONTEND_URL') ?? 'http://localhost:4200' }));
     }
     const stored = consumeOidcState(state);
     if (!stored) {
       const msg = 'Invalid or expired state';
       setLastError('/api/lti/launch', new Error(msg));
       appendLtiLog('launch', msg);
-      return res.status(400).type('html').send(ltiErrorHtml(msg, this.config.get<string>('FRONTEND_URL') ?? 'http://localhost:4200'));
+      return res.status(400).type('html').send(renderLtiLaunchErrorHtml(msg, { frontendUrl: this.config.get<string>('FRONTEND_URL') ?? 'http://localhost:4200' }));
     }
     const result = await this.lti13.validateAndExtract(idToken);
     if ('error' in result) {
       setLastError('/api/lti/launch', new Error(result.error));
       appendLtiLog('launch', 'Invalid id_token', { reason: result.error });
-      return res.status(400).type('html').send(ltiErrorHtml(`Invalid id_token: ${result.error}`, this.config.get<string>('FRONTEND_URL') ?? 'http://localhost:4200'));
+      return res.status(400).type('html').send(renderLtiLaunchErrorHtml(`Invalid id_token: ${result.error}`, { frontendUrl: this.config.get<string>('FRONTEND_URL') ?? 'http://localhost:4200' }));
     }
     const ctx = result.context;
     appendLtiLog('launch', 'LTI context extracted', {
