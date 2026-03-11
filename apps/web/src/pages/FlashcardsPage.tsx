@@ -49,6 +49,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   >([]);
   const [hubSelectedUnits, setHubSelectedUnits] = useState<string[]>([]);
   const [hubSelectedSections, setHubSelectedSections] = useState<string[]>([]);
+  const [hubFilterMode, setHubFilterMode] = useState<'all' | 'current' | 'additional'>('all');
   const [lastSession, setLastSession] = useState<{ unit: string } | null>(null);
   const [view, setView] = useState<'menu' | 'study' | 'results' | 'playlist'>('menu');
   const [currentPlaylist, setCurrentPlaylist] = useState<{
@@ -181,12 +182,19 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     if (hubSelectedSections.length > 0) {
       list = list.filter((p) => hubSelectedSections.includes(p.section));
     }
+    const currentUnit = hubSelectedUnits[0];
+    const currentSection = hubSelectedSections[0];
+    if (hubFilterMode === 'current' && currentUnit && currentSection) {
+      list = list.filter((p) => p.unit === currentUnit && p.section === currentSection);
+    } else if (hubFilterMode === 'additional' && currentUnit && currentSection) {
+      list = list.filter((p) => !(p.unit === currentUnit && p.section === currentSection));
+    }
     return {
       hubUnits: units,
       hubSections: sections,
       filteredPlaylists: list.sort((a, b) => a.title.localeCompare(b.title)).map((p) => ({ id: p.id, title: p.title })),
     };
-  }, [allPlaylistsWithHierarchy, hubSelectedUnits, hubSelectedSections]);
+  }, [allPlaylistsWithHierarchy, hubSelectedUnits, hubSelectedSections, hubFilterMode]);
 
   const toggleHubUnit = useCallback((u: string) => {
     setHubSelectedUnits((prev) =>
@@ -730,6 +738,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                       </p>
                     )}
                     <div className="teacher-settings" style={{ marginBottom: 24 }}>
+                      <h2>Study materials</h2>
                       {courseSettings && (courseSettings.selectedCurriculums?.length > 0 || courseSettings.selectedUnits?.length > 0) && (
                         <label className="flashcards-playlist-view-toggle" style={{ marginBottom: 8, display: 'block' }}>
                           <input
@@ -749,38 +758,50 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                           margin: '20px 0',
                         }}
                       />
-                      <div className="teacher-settings-row teacher-settings-multiselect-row">
-                        <div className="teacher-settings-checkbox-group">
-                          <span className="teacher-settings-label">Units</span>
-                          <div className="teacher-settings-checkbox-list">
-                            {hubUnits.map((u) => (
-                              <label key={u} className="teacher-settings-checkbox-label">
-                                <input
-                                  type="checkbox"
-                                  checked={hubSelectedUnits.includes(u)}
-                                  onChange={() => toggleHubUnit(u)}
-                                />
-                                {u}
-                              </label>
-                            ))}
-                          </div>
+                      <div className="teacher-settings-checkbox-group" style={{ width: '100%', marginBottom: 20 }}>
+                        <span className="teacher-settings-label">Units</span>
+                        <div className="teacher-settings-checkbox-list">
+                          {hubUnits.map((u) => (
+                            <label key={u} className="teacher-settings-checkbox-label">
+                              <input
+                                type="checkbox"
+                                checked={hubSelectedUnits.includes(u)}
+                                onChange={() => toggleHubUnit(u)}
+                              />
+                              {u}
+                            </label>
+                          ))}
                         </div>
-                        <div className="teacher-settings-checkbox-group">
-                          <span className="teacher-settings-label">Sections</span>
-                          <div className="teacher-settings-checkbox-list">
-                            {hubSections.map((s) => (
-                              <label key={s} className="teacher-settings-checkbox-label">
-                                <input
-                                  type="checkbox"
-                                  checked={hubSelectedSections.includes(s)}
-                                  onChange={() => toggleHubSection(s)}
-                                  disabled={hubSelectedUnits.length === 0}
-                                />
-                                {s}
-                              </label>
-                            ))}
-                          </div>
+                      </div>
+                      <div className="teacher-settings-checkbox-group" style={{ width: '100%', marginBottom: 20 }}>
+                        <span className="teacher-settings-label">Sections</span>
+                        <div className="teacher-settings-checkbox-list">
+                          {hubSections.map((s) => (
+                            <label key={s} className="teacher-settings-checkbox-label">
+                              <input
+                                type="checkbox"
+                                checked={hubSelectedSections.includes(s)}
+                                onChange={() => toggleHubSection(s)}
+                                disabled={hubSelectedUnits.length === 0}
+                              />
+                              {s}
+                            </label>
+                          ))}
                         </div>
+                      </div>
+                      <div className="teacher-settings-toggle-wrap" style={{ flexDirection: 'row', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+                        <span className="teacher-settings-toggle-label">Decks</span>
+                        {(['all', 'current', 'additional'] as const).map((mode) => (
+                          <label key={mode} className="flashcards-playlist-view-toggle">
+                            <input
+                              type="radio"
+                              name="hubFilterMode"
+                              checked={hubFilterMode === mode}
+                              onChange={() => setHubFilterMode(mode)}
+                            />
+                            {mode.charAt(0).toUpperCase() + mode.slice(1)}
+                          </label>
+                        ))}
                       </div>
                     </div>
                     <div className="flashcards-menu-toggles">
