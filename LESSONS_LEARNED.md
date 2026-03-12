@@ -9,7 +9,7 @@ You need **two** separate Developer Keys in Canvas:
 | **LTI Key** | LTI 1.3 launch (login, launch, JWKS) | `LTI_CLIENT_ID` | Enforced—causes `invalid_scope` if used for OAuth |
 | **API Key** | OAuth to get Canvas API token | `CANVAS_OAUTH_CLIENT_ID`, `CANVAS_OAUTH_CLIENT_SECRET` | Off by default—required for OAuth flow |
 
-Create the **API Key** via Admin → Developer Keys → Add Developer Key → **Add API Key** (not LTI Key). Turn off "Enforce Scopes" on the API key. Add redirect URI `{APP_URL}/oauth/canvas/callback`. Put its Client ID and Secret in `.env`.
+Create the **API Key** via Admin → Developer Keys → Add Developer Key → **Add API Key** (not LTI Key). Turn off "Enforce Scopes" on the API key. Add redirect URI `{APP_URL}/api/oauth/canvas/callback`. Put its Client ID and Secret in `.env`.
 
 After changing `.env`, **restart the NestJS server** (not Canvas). The app loads env at startup.
 
@@ -28,7 +28,7 @@ After changing `.env`, **restart the NestJS server** (not Canvas). The app loads
 - Don't hardcode `client_id` validation in the app—Canvas generates new IDs per installation.
 - Two redirect URIs are required:
   1. LTI launch: `{APP_URL}/api/lti/launch`
-  2. OAuth callback: `{APP_URL}/oauth/canvas/callback`
+  2. OAuth callback: `{APP_URL}/api/oauth/canvas/callback`
 - See "Two Developer Keys Required" above—LTI Key for launch, API Key for OAuth.
 
 ## LTI 1.3 Endpoints and Flow
@@ -108,3 +108,10 @@ ngrok adds several layers of friction that you don't have with fully local devel
 - The Developer Key includes **link_selection** (LtiDeepLinkingRequest) and **course_navigation** (LtiResourceLinkRequest). Both use the same `target_link_uri`.
 - **course_navigation** works out of the box—launch from the sidebar, redirect to flashcards/prompter.
 - **link_selection** (adding tool from module "External Tool" picker) may require a dedicated Deep Linking response handler in the future. For now, prefer course navigation for launch.
+
+## Canvas Submissions API and User ID
+
+- **Canvas OAuth tokens are typically 64 characters** — this is normal. Do not assume truncation.
+- **LTI `$Canvas.user.id` may not be substituted** — In some launch contexts (e.g. course navigation), custom field `$Canvas.user.id` can arrive as null or the literal string. Do not rely on `ctx.canvasUserId` for Canvas API calls.
+- **Submissions write uses token owner** — `POST /api/v1/courses/:id/assignments/:id/submissions` (no user ID in path) creates/updates the submission for the authenticated user. This works correctly for student self-submit.
+- **Submissions GET requires numeric Canvas user ID** — `GET /api/v1/.../submissions/:user_id` expects the Canvas numeric ID. LTI `sub` (opaque UUID) is not recognized. **Fix**: resolve the ID from the token via `GET /api/v1/users/self`; use the returned `id` for the submissions GET. See `CanvasService.getCurrentCanvasUserId()` and `saveProgressToCanvas` verification.

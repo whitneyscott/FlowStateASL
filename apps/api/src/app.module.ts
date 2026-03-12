@@ -13,6 +13,7 @@ import { LtiModule } from './lti/lti.module';
 import { DebugModule } from './debug/debug.module';
 import { SubmissionModule } from './submission/submission.module';
 import { CourseSettingsModule } from './course-settings/course-settings.module';
+import { PromptModule } from './prompt/prompt.module';
 import { PromptConfigEntity } from './assessment/entities/prompt-config.entity';
 import { BlockedAttemptEntity } from './assessment/entities/blocked-attempt.entity';
 import { AssessmentSessionEntity } from './assessment/entities/assessment-session.entity';
@@ -21,6 +22,8 @@ import { CourseSettingsEntity } from './course-settings/entities/course-settings
 import { SproutPlaylistEntity } from './sproutvideo/entities/sprout-playlist.entity';
 import { SproutPlaylistVideoEntity } from './sproutvideo/entities/sprout-playlist-video.entity';
 import { SyncMetadataEntity } from './sproutvideo/entities/sync-metadata.entity';
+import { AssignmentPromptEntity } from './prompt/entities/assignment-prompt.entity';
+import { StudentResetEntity } from './prompt/entities/student-reset.entity';
 
 const isProduction = process.env.NODE_ENV === 'production';
 const webRoot = join(__dirname, '..', '..', 'web');
@@ -56,6 +59,8 @@ const webRoot = join(__dirname, '..', '..', 'web');
           SproutPlaylistEntity,
           SproutPlaylistVideoEntity,
           SyncMetadataEntity,
+          AssignmentPromptEntity,
+          StudentResetEntity,
         ],
         migrations: [__dirname + '/migrations/*{.ts,.js}'],
         migrationsRun: false,
@@ -70,6 +75,7 @@ const webRoot = join(__dirname, '..', '..', 'web');
     DebugModule,
     SubmissionModule,
     CourseSettingsModule,
+    PromptModule,
   ],
   providers: [RoutingLogMiddleware],
 })

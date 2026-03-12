@@ -3,8 +3,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'crypto';
 import { Repository } from 'typeorm';
 import { AssessmentSessionEntity } from '../assessment/entities/assessment-session.entity';
+import { appendLtiLog } from '../common/last-error.store';
 import { CanvasService } from '../canvas/canvas.service';
 import { CourseSettingsService } from '../course-settings/course-settings.service';
+import { LtiAgsService } from '../lti/lti-ags.service';
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
 import type { SubmitFlashcardDto } from './dto/submit-flashcard.dto';
 
@@ -84,6 +86,7 @@ export class SubmissionService {
     private readonly sessionRepo: Repository<AssessmentSessionEntity>,
     private readonly canvas: CanvasService,
     private readonly courseSettings: CourseSettingsService,
+    private readonly ltiAgs: LtiAgsService,
   ) {}
 
   private async saveProgressToCanvas(
@@ -99,10 +102,12 @@ export class SubmissionService {
         ctx.canvasBaseUrl,
         token,
       );
+    const numericUserId = await this.canvas.getCurrentCanvasUserId(canvasOverride, token);
+    const apiUserId = numericUserId ?? ctx.canvasUserId ?? ctx.userId;
     const existing = await this.canvas.getSubmission(
       ctx.courseId,
       progressAssignmentId,
-      ctx.userId,
+      apiUserId,
       canvasOverride,
       token,
     );
@@ -118,25 +123,35 @@ export class SubmissionService {
     }
     const bodyJson = JSON.stringify({ results });
 
-    // Canvas PUT does NOT support submission[body]—only POST create does.
-    // For existing submissions, POST creates a new attempt with our body.
-    await this.canvas.createSubmissionWithBody(
-      ctx.courseId,
+    appendLtiLog('submission', 'saveProgressToCanvas (Step 10)', {
       progressAssignmentId,
-      ctx.userId,
-      bodyJson,
-      canvasOverride,
-      token,
-    );
+      deckCount: deckIdsToSave.length,
+      tokenSource: ctx.canvasAccessToken ? 'session (launcher token)' : 'null',
+      submittingForUserId: ctx.userId,
+    });
 
-    // Verify: re-fetch submission and confirm our data is present
-    const verified = await this.canvas.getSubmission(
-      ctx.courseId,
-      progressAssignmentId,
-      ctx.userId,
-      canvasOverride,
-      token,
-    );
+    // Use writeSubmissionBody (Step 9); it calls createSubmissionWithBody internally.
+    await this.canvas.writeSubmissionBody(ctx, progressAssignmentId, bodyJson, token);
+
+    // Verify: re-fetch submission using the token owner's Canvas ID (same source as the write)
+    let verified: { body?: string } | null = null;
+    if (numericUserId) {
+      verified = await this.canvas.getSubmission(
+        ctx.courseId,
+        progressAssignmentId,
+        numericUserId,
+        canvasOverride,
+        token,
+      );
+    }
+    if (!verified?.body?.trim()) {
+      verified = await this.canvas.getSubmissionForCurrentUser(
+        ctx.courseId,
+        progressAssignmentId,
+        canvasOverride,
+        token,
+      );
+    }
     if (!verified?.body?.trim()) {
       throw new Error(
         `Verification failed: submission for user ${ctx.userId} on Flashcard Progress assignment (${progressAssignmentId}) has no body. ` +
@@ -166,9 +181,26 @@ export class SubmissionService {
   async submitFlashcard(ctx: LtiContext, dto: SubmitFlashcardDto): Promise<{
     synced: boolean;
     error?: string;
-    debug?: { progressSaved: boolean; gradeSent?: boolean; details: string };
+    debug?: {
+      progressSaved: boolean;
+      gradeSent?: boolean;
+      details: string;
+      canvasRequest?: {
+        tokenSource: string;
+        tokenPreview: string;
+        submittingForUserId: string;
+        as_user_idInRequest: boolean;
+        note?: string;
+      };
+    };
   }> {
     const { points, isGraded } = this.calculateGrade(dto);
+    appendLtiLog('submission', 'submitFlashcard branch', {
+      dtoMode: dto.mode ?? '(absent)',
+      isGraded,
+      points,
+      branch: !isGraded ? 'REST only (tutorial — AGS never called)' : 'REST then AGS (graded)',
+    });
     const assignmentId = ctx.assignmentId || ctx.resourceLinkId || '0';
 
     const existing = await this.sessionRepo.findOne({
@@ -211,10 +243,21 @@ export class SubmissionService {
         return { synced: true, debug: { progressSaved: true, details: 'Progress saved to Flashcard Progress assignment.' } };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
+        const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
+        const tokenPreview = token ? `${token.slice(0, 4)}...${token.slice(-4)} (len=${token.length})` : 'MISSING';
         return {
           synced: false,
           error: msg,
-          debug: { progressSaved: false, details: `Progress failed to save. Reason: ${msg}` },
+          debug: {
+            progressSaved: false,
+            details: `Progress failed to save. Reason: ${msg}`,
+            canvasRequest: {
+              tokenSource: ctx.canvasAccessToken ? 'session (launcher\'s OAuth token)' : 'null',
+              tokenPreview,
+              submittingForUserId: ctx.userId,
+              as_user_idInRequest: false,
+            },
+          },
         };
       }
     }
@@ -223,21 +266,49 @@ export class SubmissionService {
       await this.saveProgressToCanvas(ctx, dto);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
+      const tokenPreview = token ? `${token.slice(0, 4)}...${token.slice(-4)} (len=${token.length})` : 'MISSING';
       return {
         synced: false,
         error: msg,
         debug: {
           progressSaved: false,
           details: `Progress failed to save. Reason: ${msg} Complete Canvas OAuth (Teacher Settings) and ensure the Flashcard Progress assignment exists and is published.`,
+          canvasRequest: {
+            tokenSource: ctx.canvasAccessToken ? 'session (launcher\'s OAuth token)' : 'null',
+            tokenPreview,
+            submittingForUserId: ctx.userId,
+            as_user_idInRequest: false,
+            note: 'actAsUser not used → no as_user_id (self-submit)',
+          },
         },
       };
     }
 
     await this.sessionRepo.delete(row.id);
 
-    // TODO: Replace with rubric criterion scoring once gate assignments and rubric system are implemented.
-    // submitGrade(lisOutcomeServiceUrl, lisResultSourcedid, dto.score, dto.scoreTotal) — STUBBED OUT
+    let gradeSent = false;
+    if (isGraded) {
+      try {
+        await this.ltiAgs.submitGradeViaAgs(ctx, { score: points, scoreMaximum: 100 });
+        gradeSent = true;
+        appendLtiLog('submission', 'submitGradeViaAgs (Step 12) success', { score: points, scoreMaximum: 100 });
+      } catch (agsErr) {
+        const agsMsg = agsErr instanceof Error ? agsErr.message : String(agsErr);
+        console.warn('[Submission] AGS grade passback failed:', agsMsg);
+        appendLtiLog('submission', 'submitGradeViaAgs (Step 12) failed', { error: agsMsg });
+      }
+    }
 
-    return { synced: true, debug: { progressSaved: true, gradeSent: false, details: 'Progress saved to Flashcard Progress assignment submission body.' } };
+    return {
+      synced: true,
+      debug: {
+        progressSaved: true,
+        gradeSent,
+        details: gradeSent
+          ? 'Progress saved and grade sent to Canvas via AGS.'
+          : 'Progress saved to Flashcard Progress assignment submission body.',
+      },
+    };
   }
 }

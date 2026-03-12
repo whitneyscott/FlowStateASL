@@ -4,9 +4,11 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { appendLtiLog, getLastCanvasApiResponse } from '../common/last-error.store';
 import { CanvasService, CanvasTokenExpiredError } from '../canvas/canvas.service';
+import type { LtiContext } from '../common/interfaces/lti-context.interface';
 import { CourseSettingsEntity } from './entities/course-settings.entity';
 
 const FLASHCARD_SETTINGS_ASSIGNMENT_TITLE = 'Flashcard Settings';
+const FLASHCARD_PROGRESS_TITLE = 'Flashcard Progress';
 const SETTINGS_CACHE_TTL_MS = 60_000; // 1 minute - reduces Canvas API calls across student-units/sections/playlists
 
 // In-memory cache: courseId -> { data, expiresAt }
@@ -446,6 +448,17 @@ export class CourseSettingsService {
     return (tokenOverride?.trim() || null) ?? null;
   }
 
+  /**
+   * Token for file upload operations (e.g. Prompter video). Mirrors PHP: prefer static
+   * CANVAS_API_TOKEN / CANVAS_ACCESS_TOKEN when set; fallback to OAuth. Static token has
+   * permission to initiate upload and attach files on behalf of students.
+   */
+  getTokenForFileUpload(oauthToken?: string | null): string | null {
+    const staticToken =
+      (this.config.get<string>('CANVAS_API_TOKEN') ?? this.config.get<string>('CANVAS_ACCESS_TOKEN'))?.trim() || null;
+    return staticToken ?? (oauthToken?.trim() || null) ?? null;
+  }
+
   async getProgressAssignmentId(
     courseId: string,
     canvasDomain?: string,
@@ -453,11 +466,25 @@ export class CourseSettingsService {
     tokenOverride?: string | null,
   ): Promise<string> {
     const token = (tokenOverride ?? '').trim() || null;
-    const override = canvasBaseUrl ?? this.config.get<string>('CANVAS_API_BASE_URL') ?? (canvasDomain ? `https://${canvasDomain}` : undefined);
-    return this.canvas.ensureFlashcardProgressAssignment(
+    const baseUrl = canvasBaseUrl ?? this.config.get<string>('CANVAS_API_BASE_URL') ?? (canvasDomain ? `https://${canvasDomain}` : undefined);
+    const ctx: LtiContext = {
       courseId,
-      override,
-      token,
-    );
+      assignmentId: '',
+      userId: '',
+      resourceLinkId: '',
+      moduleId: '',
+      toolType: 'flashcards',
+      roles: '',
+      canvasDomain,
+      canvasBaseUrl: baseUrl,
+    };
+    return this.canvas.ensureAssignmentForCourse(ctx, {
+      title: FLASHCARD_PROGRESS_TITLE,
+      description: 'Stores flashcard study progress and deck configuration (auto-created by ASL Express)',
+      submissionTypes: ['online_text_entry'],
+      pointsPossible: 0,
+      published: true,
+      omitFromFinalGrade: true,
+    }, token);
   }
 }

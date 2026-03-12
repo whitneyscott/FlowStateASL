@@ -37,7 +37,7 @@ export class PgConfigRepository implements IConfigRepository {
         configJson: config.configJson,
         resourceLinkTitle: config.resourceLinkTitle ?? null,
       },
-      ['course_id', 'resource_link_id'],
+      { conflictPaths: ['courseId', 'resourceLinkId'] },
     );
   }
 

@@ -34,6 +34,10 @@
 
 ⬜ Curriculum Fallback: Restore using the module's title for suggestions but fallback to dropdowns.
 
+⬜ Sections Blacklist: Add blacklist for section names (like curriculum blacklist) to hide certain sections from selection options.
+
+⬜ Teacher Blacklist UI: Add UI for teachers to set and edit what cannot appear in student decks (sections, playlists, etc.).
+
 ⬜ Point Awards: Add teacher setting to decide how to award points.
 
 ## Stage 4: Progress Tracking & Submission
@@ -45,6 +49,8 @@
 ✅ Tutorial Scoring: Ensure Tutorial mode does not award 100% credit.
 
 ⬜ Teacher Progress API: Add endpoint(s) to read submission-body progress data, including per-deck `incorrectItems` (`videoId`, `name`) for future teacher dashboard reporting.
+
+⬜ Student Progress Visibility: Make progress tracking visible to students.
 
 ## Stage 5: Expressive Mode & AI
 

@@ -17,6 +17,19 @@ export class PlaylistCacheService {
     private readonly videoRepo: Repository<SproutPlaylistVideoEntity>,
   ) {}
 
+  /** Appends curriculum NOT IN blacklist (exact match); returns next param index. */
+  private appendBlacklistNotCondition(
+    conditions: string[],
+    params: unknown[],
+    paramIndex: number,
+  ): number {
+    const blacklist = this.sproutVideo.getBlacklistForSql();
+    if (blacklist.length === 0) return paramIndex;
+    conditions.push(`curriculum != ALL($${paramIndex}::text[])`);
+    params.push(blacklist);
+    return paramIndex + 1;
+  }
+
   async getPlaylistItems(playlistId: string): Promise<SproutVideoItem[] | null> {
     const videos = await this.videoRepo.find({
       where: { playlistId },
@@ -33,16 +46,20 @@ export class PlaylistCacheService {
   }
 
   async getAllPlaylists(): Promise<Array<{ id: string; title: string; sproutUpdatedAt: Date | null }>> {
-    const rows = await this.playlistRepo.find({
-      select: ['id', 'deckTitle', 'curriculum', 'sproutUpdatedAt'],
-    });
-    return rows
-      .filter((r) => !this.sproutVideo.isBlacklisted(r.curriculum ?? ''))
-      .map((r) => ({
-        id: r.id,
-        title: r.deckTitle,
-        sproutUpdatedAt: r.sproutUpdatedAt,
-      }));
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    let paramIndex = 1;
+    paramIndex = this.appendBlacklistNotCondition(conditions, params, paramIndex);
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const rows = await this.playlistRepo.query(
+      `SELECT id, deck_title AS title, sprout_updated_at AS "sproutUpdatedAt" FROM sprout_playlists ${where} ORDER BY deck_title ASC`,
+      params,
+    ) as Array<{ id: string; title: string; sproutUpdatedAt: Date | null }>;
+    return rows.map((r) => ({
+      id: String(r.id),
+      title: String(r.title),
+      sproutUpdatedAt: r.sproutUpdatedAt,
+    }));
   }
 
   /** Returns playlists with video IDs, matching SproutPlaylist shape for CourseSettingsService.save */
@@ -76,21 +93,21 @@ export class PlaylistCacheService {
       .filter(Boolean);
     if (normalized.length === 0) return [];
 
-    const conditions: string[] = [];
+    const likeConditions: string[] = [];
     const params: string[] = [];
     for (let i = 0; i < normalized.length; i++) {
-      conditions.push(`LOWER(deck_title) LIKE $${i + 1}`);
+      likeConditions.push(`LOWER(deck_title) LIKE $${i + 1}`);
       params.push(`${normalized[i]}%`);
     }
-
+    const conditions: string[] = [`(${likeConditions.join(' OR ')})`];
+    this.appendBlacklistNotCondition(conditions, params, params.length + 1);
+    const where = `WHERE ${conditions.join(' AND ')}`;
     const rows = await this.playlistRepo.query(
-      `SELECT id, deck_title AS title, curriculum FROM sprout_playlists WHERE (${conditions.join(' OR ')}) ORDER BY deck_title ASC`,
+      `SELECT id, deck_title AS title FROM sprout_playlists ${where} ORDER BY deck_title ASC`,
       params,
-    ) as Array<{ id: string; title: string; curriculum: string }>;
+    ) as Array<{ id: string; title: string }>;
 
-    return rows
-      .filter((r) => !this.sproutVideo.isBlacklisted(r.curriculum ?? ''))
-      .map((r) => ({ id: String(r.id), title: String(r.title) }));
+    return rows.map((r) => ({ id: String(r.id), title: String(r.title) }));
   }
 
   async getPlaylistCount(): Promise<number> {
@@ -103,165 +120,43 @@ export class PlaylistCacheService {
   }
 
   async getDistinctCurricula(): Promise<string[]> {
-    try {
-      const rows = await this.playlistRepo.query(`
-        SELECT DISTINCT curriculum FROM sprout_playlists WHERE curriculum <> '' AND curriculum IS NOT NULL ORDER BY curriculum ASC
-      `) as Array<{ curriculum: string }>;
-      return rows.map((r) => String(r.curriculum)).filter(Boolean);
-    } catch (err) {
-      try {
-        const rows = await this.playlistRepo.query(`
-          SELECT DISTINCT TRIM(SPLIT_PART(title, '.', 1)) AS curriculum FROM sprout_playlists
-          WHERE title IS NOT NULL AND TRIM(SPLIT_PART(title, '.', 1)) <> ''
-          ORDER BY 1 ASC
-        `) as Array<{ curriculum: string }>;
-        return rows.map((r) => String(r.curriculum)).filter(Boolean);
-      } catch (fallbackErr) {
-        console.error('[PlaylistCache] getDistinctCurricula failed:', err, fallbackErr);
-        return [];
-      }
-    }
+    const conditions: string[] = ["curriculum <> ''", 'curriculum IS NOT NULL'];
+    const params: unknown[] = [];
+    let paramIndex = 1;
+    paramIndex = this.appendBlacklistNotCondition(conditions, params, paramIndex);
+    const where = `WHERE ${conditions.join(' AND ')}`;
+    const rows = await this.playlistRepo.query(
+      `SELECT DISTINCT curriculum FROM sprout_playlists ${where} ORDER BY curriculum ASC`,
+      params,
+    ) as Array<{ curriculum: string }>;
+    return rows.map((r) => String(r.curriculum)).filter(Boolean);
   }
 
   async getDistinctUnits(curricula: string[]): Promise<string[]> {
-    try {
-      const normalized = curricula.map((c) => c.trim()).filter(Boolean);
-      if (normalized.length === 0) {
-        const rows = await this.playlistRepo.query(`
-          SELECT DISTINCT unit FROM sprout_playlists WHERE unit <> '' AND unit IS NOT NULL ORDER BY unit ASC
-        `) as Array<{ unit: string }>;
-        return rows.map((r) => String(r.unit)).filter(Boolean);
-      }
-
-      const rows = await this.playlistRepo.query(
-        `SELECT DISTINCT unit FROM sprout_playlists WHERE unit <> '' AND curriculum = ANY($1) ORDER BY unit ASC`,
-        [normalized],
-      ) as Array<{ unit: string }>;
-      return rows.map((r) => String(r.unit)).filter(Boolean);
-    } catch (err) {
-      try {
-        const normalized = curricula.map((c) => c.trim()).filter(Boolean);
-        if (normalized.length === 0) {
-          const rows = await this.playlistRepo.query(`
-            SELECT DISTINCT TRIM(SPLIT_PART(title, '.', 2)) AS unit FROM sprout_playlists
-            WHERE title IS NOT NULL AND TRIM(SPLIT_PART(title, '.', 2)) <> ''
-            ORDER BY 1 ASC
-          `) as Array<{ unit: string }>;
-          return rows.map((r) => String(r.unit)).filter(Boolean);
-        }
-        const rows = await this.playlistRepo.query(
-          `SELECT DISTINCT TRIM(SPLIT_PART(title, '.', 2)) AS unit FROM sprout_playlists
-          WHERE TRIM(SPLIT_PART(title, '.', 1)) = ANY($1) AND TRIM(SPLIT_PART(title, '.', 2)) <> ''
-          ORDER BY 1 ASC`,
-          [normalized],
-        ) as Array<{ unit: string }>;
-        return rows.map((r) => String(r.unit)).filter(Boolean);
-      } catch (fallbackErr) {
-        console.error('[PlaylistCache] getDistinctUnits failed:', err, fallbackErr);
-        return [];
-      }
+    const normalized = curricula.map((c) => c.trim()).filter(Boolean);
+    const conditions: string[] = ["unit <> ''", 'unit IS NOT NULL'];
+    const params: unknown[] = [];
+    let paramIndex = 1;
+    if (normalized.length > 0) {
+      conditions.push(`curriculum = ANY($${paramIndex})`);
+      params.push(normalized);
+      paramIndex++;
     }
+    paramIndex = this.appendBlacklistNotCondition(conditions, params, paramIndex);
+    const where = `WHERE ${conditions.join(' AND ')}`;
+    const rows = await this.playlistRepo.query(
+      `SELECT DISTINCT unit FROM sprout_playlists ${where} ORDER BY unit ASC`,
+      params,
+    ) as Array<{ unit: string }>;
+    return rows.map((r) => String(r.unit)).filter(Boolean);
   }
 
   async getPlaylistsByCurriculaAndUnits(
     curricula: string[],
     units: string[],
   ): Promise<Array<{ id: string; title: string }>> {
-    try {
-      const normalizedCurricula = curricula.map((c) => c.trim()).filter(Boolean);
-      const normalizedUnits = units.map((u) => u.trim()).filter(Boolean);
-
-      if (normalizedCurricula.length === 0 && normalizedUnits.length === 0) {
-        try {
-          const rows = await this.playlistRepo.find({
-            select: ['id', 'deckTitle', 'curriculum'],
-            order: { deckTitle: 'ASC' },
-          });
-          return rows
-            .filter((r) => !this.sproutVideo.isBlacklisted(r.curriculum ?? ''))
-            .map((r) => ({ id: r.id, title: r.deckTitle, curriculum: r.curriculum }));
-        } catch {
-          const rows = await this.playlistRepo.query(
-            `SELECT id, deck_title AS title, curriculum FROM sprout_playlists ORDER BY deck_title ASC`,
-          ) as Array<{ id: string; title: string; curriculum: string }>;
-          return rows
-            .filter((r) => !this.sproutVideo.isBlacklisted(r.curriculum ?? ''))
-            .map((r) => ({ id: String(r.id), title: String(r.title), curriculum: String(r.curriculum ?? '') }));
-        }
-      }
-
-      const conditions: string[] = [];
-      const params: unknown[] = [];
-      let paramIndex = 1;
-
-      if (normalizedCurricula.length > 0) {
-        conditions.push(`curriculum = ANY($${paramIndex})`);
-        params.push(normalizedCurricula);
-        paramIndex++;
-      }
-      if (normalizedUnits.length > 0) {
-        conditions.push(`unit = ANY($${paramIndex})`);
-        params.push(normalizedUnits);
-        paramIndex++;
-      }
-
-      const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-      const rows = await this.playlistRepo.query(
-        `SELECT id, deck_title AS title, curriculum FROM sprout_playlists ${where} ORDER BY deck_title ASC`,
-        params,
-      ) as Array<{ id: string; title: string; curriculum: string }>;
-
-      return rows
-        .filter((r) => !this.sproutVideo.isBlacklisted(r.curriculum ?? ''))
-        .map((r) => ({ id: String(r.id), title: String(r.title), curriculum: String(r.curriculum ?? '') }));
-    } catch (err) {
-      try {
-        const normalizedCurricula = curricula.map((c) => c.trim()).filter(Boolean);
-        const normalizedUnits = units.map((u) => u.trim()).filter(Boolean);
-        if (normalizedCurricula.length === 0 && normalizedUnits.length === 0) {
-          const rows = await this.playlistRepo.query(
-            `SELECT id, deck_title AS title, curriculum FROM sprout_playlists ORDER BY deck_title ASC`,
-          ) as Array<{ id: string; title: string; curriculum: string }>;
-          return rows
-            .filter((r) => !this.sproutVideo.isBlacklisted(r.curriculum ?? ''))
-            .map((r) => ({ id: String(r.id), title: String(r.title), curriculum: String(r.curriculum ?? '') }));
-        }
-        const conds: string[] = [];
-        const prms: unknown[] = [];
-        let idx = 1;
-        if (normalizedCurricula.length > 0) {
-          conds.push(`TRIM(SPLIT_PART(title, '.', 1)) = ANY($${idx})`);
-          prms.push(normalizedCurricula);
-          idx++;
-        }
-        if (normalizedUnits.length > 0) {
-          conds.push(`TRIM(SPLIT_PART(title, '.', 2)) = ANY($${idx})`);
-          prms.push(normalizedUnits);
-          idx++;
-        }
-        const where = `WHERE ${conds.join(' AND ')}`;
-        const rows = await this.playlistRepo.query(
-          `SELECT id, COALESCE(NULLIF(TRIM(array_to_string((string_to_array(title, '.'))[4:], '.')), ''), title) AS title, curriculum FROM sprout_playlists ${where} ORDER BY title ASC`,
-          prms,
-        ) as Array<{ id: string; title: string; curriculum: string }>;
-        return rows
-          .filter((r) => !this.sproutVideo.isBlacklisted(r.curriculum ?? ''))
-          .map((r) => ({ id: String(r.id), title: String(r.title), curriculum: String(r.curriculum ?? '') }));
-      } catch (fallbackErr) {
-        console.error('[PlaylistCache] getPlaylistsByCurriculaAndUnits failed:', err, fallbackErr);
-        return [];
-      }
-    }
-  }
-
-  /** Same filtering as getPlaylistsByCurriculaAndUnits but returns unit and section for frontend filtering. */
-  async getPlaylistsByCurriculaAndUnitsWithHierarchy(
-    curricula: string[],
-    units: string[],
-  ): Promise<Array<{ id: string; title: string; unit: string; section: string }>> {
     const normalizedCurricula = curricula.map((c) => c.trim()).filter(Boolean);
     const normalizedUnits = units.map((u) => u.trim()).filter(Boolean);
-
     const conditions: string[] = [];
     const params: unknown[] = [];
     let paramIndex = 1;
@@ -276,20 +171,49 @@ export class PlaylistCacheService {
       params.push(normalizedUnits);
       paramIndex++;
     }
-
+    paramIndex = this.appendBlacklistNotCondition(conditions, params, paramIndex);
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
     const rows = await this.playlistRepo.query(
-      `SELECT id, deck_title AS title, unit, section, curriculum FROM sprout_playlists ${where} ORDER BY deck_title ASC`,
+      `SELECT id, deck_title AS title FROM sprout_playlists ${where} ORDER BY deck_title ASC`,
       params,
-    ) as Array<{ id: string; title: string; unit: string; section: string; curriculum: string }>;
-    return rows
-      .filter((r) => !this.sproutVideo.isBlacklisted(r.curriculum ?? ''))
-      .map((r) => ({
-        id: String(r.id),
-        title: String(r.title),
-        unit: String(r.unit ?? ''),
-        section: String(r.section ?? ''),
-      }));
+    ) as Array<{ id: string; title: string }>;
+    return rows.map((r) => ({ id: String(r.id), title: String(r.title) }));
+  }
+
+  /** Same filtering as getPlaylistsByCurriculaAndUnits but returns curriculum, unit, section for frontend filtering. */
+  async getPlaylistsByCurriculaAndUnitsWithHierarchy(
+    curricula: string[],
+    units: string[],
+  ): Promise<Array<{ id: string; title: string; curriculum: string; unit: string; section: string }>> {
+    const normalizedCurricula = curricula.map((c) => c.trim()).filter(Boolean);
+    const normalizedUnits = units.map((u) => u.trim()).filter(Boolean);
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    let paramIndex = 1;
+
+    if (normalizedCurricula.length > 0) {
+      conditions.push(`curriculum = ANY($${paramIndex})`);
+      params.push(normalizedCurricula);
+      paramIndex++;
+    }
+    if (normalizedUnits.length > 0) {
+      conditions.push(`unit = ANY($${paramIndex})`);
+      params.push(normalizedUnits);
+      paramIndex++;
+    }
+    paramIndex = this.appendBlacklistNotCondition(conditions, params, paramIndex);
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const rows = await this.playlistRepo.query(
+      `SELECT id, deck_title AS title, curriculum, unit, section FROM sprout_playlists ${where} ORDER BY deck_title ASC`,
+      params,
+    ) as Array<{ id: string; title: string; curriculum: string; unit: string; section: string }>;
+    return rows.map((r) => ({
+      id: String(r.id),
+      title: String(r.title),
+      curriculum: String(r.curriculum ?? ''),
+      unit: String(r.unit ?? ''),
+      section: String(r.section ?? ''),
+    }));
   }
 
   async getDistinctUnitsByConstraints(
@@ -312,7 +236,7 @@ export class PlaylistCacheService {
       params.push(normalizedAllowedUnits);
       paramIndex++;
     }
-
+    paramIndex = this.appendBlacklistNotCondition(conditions, params, paramIndex);
     const rows = await this.playlistRepo.query(
       `SELECT DISTINCT unit FROM sprout_playlists WHERE ${conditions.join(' AND ')} ORDER BY unit ASC`,
       params,
@@ -344,7 +268,7 @@ export class PlaylistCacheService {
       params.push(normalizedAllowedUnits);
       paramIndex++;
     }
-
+    paramIndex = this.appendBlacklistNotCondition(conditions, params, paramIndex);
     const rows = await this.playlistRepo.query(
       `SELECT DISTINCT section FROM sprout_playlists WHERE ${conditions.join(' AND ')} ORDER BY section ASC`,
       params,
@@ -387,15 +311,13 @@ export class PlaylistCacheService {
       params.push(normalizedSection);
       paramIndex++;
     }
-
+    paramIndex = this.appendBlacklistNotCondition(conditions, params, paramIndex);
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
     const rows = await this.playlistRepo.query(
-      `SELECT id, deck_title AS title, curriculum FROM sprout_playlists ${where} ORDER BY deck_title ASC`,
+      `SELECT id, deck_title AS title FROM sprout_playlists ${where} ORDER BY deck_title ASC`,
       params,
-    ) as Array<{ id: string; title: string; curriculum: string }>;
-    return rows
-      .filter((r) => !this.sproutVideo.isBlacklisted(r.curriculum ?? ''))
-      .map((r) => ({ id: String(r.id), title: String(r.title) }));
+    ) as Array<{ id: string; title: string }>;
+    return rows.map((r) => ({ id: String(r.id), title: String(r.title) }));
   }
 
   async checkNeedsUpdate(cachedPlaylistUpdatedAt: Record<string, string>): Promise<boolean> {

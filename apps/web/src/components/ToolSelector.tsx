@@ -1,3 +1,4 @@
+import { NavLink } from 'react-router-dom';
 import type { LtiContext } from '@aslexpress/shared-types';
 
 const TEACHER_PATTERNS = ['instructor','administrator','faculty','teacher','staff','contentdeveloper','teachingassistant','ta'];
@@ -12,30 +13,32 @@ interface ToolSelectorProps {
   currentTool: 'flashcards' | 'prompter';
 }
 
+const navLinkClass = ({ isActive }: { isActive: boolean }) =>
+  `px-4 py-2 rounded font-semibold no-underline ${isActive ? 'bg-emerald-600 text-white' : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'}`;
+
 export function ToolSelector({ context, currentTool }: ToolSelectorProps) {
   const teacher = context && isTeacher(context.roles) && context.courseId && context.userId !== 'standalone';
-  if (!teacher) return null;
 
+  if (currentTool === 'prompter') {
+    if (!teacher) return null;
+    return (
+      <div className="w-full max-w-4xl mx-auto px-4 py-3 flex gap-2">
+        <NavLink to="/prompter" end className={navLinkClass}>Timer</NavLink>
+        <NavLink to="/config" className={navLinkClass}>Config</NavLink>
+        <NavLink to="/viewer" className={navLinkClass}>Grade</NavLink>
+      </div>
+    );
+  }
+
+  if (!teacher) return null;
   return (
     <div className="w-full max-w-4xl mx-auto px-4 py-3 flex gap-2">
-      <button
-        type="button"
-        className={`px-4 py-2 rounded font-semibold ${
-          currentTool === 'flashcards'
-            ? 'bg-emerald-600 text-white'
-            : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'
-        }`}
-      >
+      <span className="px-4 py-2 rounded font-semibold bg-emerald-600 text-white">
         Flashcards
-      </button>
-      <button
-        type="button"
-        disabled
-        className="px-4 py-2 rounded font-semibold bg-zinc-800 text-zinc-500 cursor-not-allowed"
-        title="Coming soon"
-      >
-        Prompt Manager (inactive)
-      </button>
+      </span>
+      <span className="px-4 py-2 rounded font-semibold bg-zinc-800 text-zinc-500" title="Use Prompter LTI placement">
+        Prompt Manager
+      </span>
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { appendLtiLog, setLastCanvasApiResponse } from '../common/last-error.store';
+import type { LtiContext } from '../common/interfaces/lti-context.interface';
 
 export class CanvasUploadChunkError extends Error {
   constructor(
@@ -96,6 +97,45 @@ export class CanvasService {
       .replace(/'/g, '&apos;');
   }
 
+  /**
+   * Initiate file upload to the token owner's personal files (users/self/files).
+   * Use for Option 1: student uploads to their files, then we attach via submission[file_ids][].
+   */
+  async initiateUserFileUpload(
+    filename: string,
+    size: number,
+    contentType: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<{ uploadUrl: string; uploadParams: Record<string, string> }> {
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/users/self/files`;
+    const form = new FormData();
+    form.append('name', filename);
+    form.append('size', String(size));
+    form.append('content_type', contentType);
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { Authorization: this.getAuthHeaders(tokenOverride).Authorization },
+      body: form,
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Canvas initiate user file upload failed: ${res.status} ${text}`);
+    }
+    const data = (await res.json()) as {
+      upload_url?: string;
+      upload_params?: Record<string, string>;
+    };
+    if (!data.upload_url || !data.upload_params) {
+      throw new Error('Canvas did not return upload_url and upload_params');
+    }
+    return {
+      uploadUrl: data.upload_url,
+      uploadParams: data.upload_params,
+    };
+  }
+
   async initiateFileUpload(
     courseId: string,
     assignmentId: string,
@@ -107,7 +147,8 @@ export class CanvasService {
     tokenOverride?: string | null,
   ): Promise<{ uploadUrl: string; uploadParams: Record<string, string> }> {
     const base = this.getBaseUrl(domainOverride);
-    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}/files`;
+    // Use "self" so Canvas treats the token owner as the submitter (student token allowed per Canvas file upload docs).
+    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/self/files`;
     const form = new FormData();
     form.append('name', filename);
     form.append('size', String(size));
@@ -191,6 +232,33 @@ export class CanvasService {
         e instanceof Error ? e.message : 'Upload failed',
         lastSuccessOffset,
       );
+    }
+  }
+
+  /**
+   * Attach an uploaded file to an existing submission (PUT file_ids).
+   * Mirrors PHP upload_handler.php: same endpoint and body.
+   * Use a token with permission to act on behalf of the user (e.g. CANVAS_API_TOKEN).
+   */
+  async attachFileToSubmission(
+    courseId: string,
+    assignmentId: string,
+    userId: string,
+    fileId: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<void> {
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}`;
+    const body = { submission: { file_ids: [fileId] } };
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: this.getAuthHeaders(tokenOverride),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Canvas attach file to submission failed: ${res.status} ${text}`);
     }
   }
 
@@ -375,7 +443,7 @@ export class CanvasService {
     assignmentId: string,
     domainOverride?: string,
     tokenOverride?: string | null,
-  ): Promise<{ description?: string } | null> {
+  ): Promise<{ description?: string; points_possible?: number; rubric?: Array<unknown> } | null> {
     const base = this.getBaseUrl(domainOverride);
     const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}`;
     const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
@@ -383,8 +451,8 @@ export class CanvasService {
       if (res.status === 401) throw new CanvasTokenExpiredError(401);
       return null;
     }
-    const data = (await res.json()) as { description?: string };
-    return { description: data.description };
+    const data = (await res.json()) as { description?: string; points_possible?: number; rubric?: Array<unknown> };
+    return { description: data.description, points_possible: data.points_possible, rubric: data.rubric };
   }
 
   async updateAssignmentDescription(
@@ -405,6 +473,59 @@ export class CanvasService {
       const text = await res.text();
       throw new Error(`Canvas update assignment description failed: ${res.status} ${text}`);
     }
+  }
+
+  /**
+   * Find or create an assignment for a course. Shared by Flashcards, Prompter, etc.
+   * Token is the Canvas OAuth token (callers pass from session / CourseSettingsService.getEffectiveCanvasToken).
+   */
+  async ensureAssignmentForCourse(
+    ctx: LtiContext,
+    config: {
+      title: string;
+      description?: string;
+      submissionTypes?: string[];
+      pointsPossible?: number;
+      published?: boolean;
+      omitFromFinalGrade?: boolean;
+    },
+    tokenOverride?: string | null,
+  ): Promise<string> {
+    const baseUrl =
+      ctx.canvasBaseUrl ??
+      (ctx.canvasDomain ? `https://${ctx.canvasDomain}` : this.config.get<string>('CANVAS_API_BASE_URL'));
+    const domainOverride = baseUrl ?? undefined;
+
+    const existing = await this.findAssignmentByTitle(ctx.courseId, config.title, domainOverride, tokenOverride);
+    if (existing) {
+      appendLtiLog('canvas', 'ensureAssignmentForCourse (Step 7)', { title: config.title, result: 'found', assignmentId: existing });
+      return existing;
+    }
+
+    const assignmentGroupId = await this.ensureAssignmentGroup(
+      ctx.courseId,
+      config.title,
+      0,
+      domainOverride,
+      tokenOverride,
+    );
+
+    const created = await this.createAssignment(
+      ctx.courseId,
+      config.title,
+      {
+        submissionTypes: config.submissionTypes ?? ['online_text_entry'],
+        pointsPossible: config.pointsPossible ?? 0,
+        published: config.published ?? true,
+        description: config.description ?? '',
+        assignmentGroupId,
+        omitFromFinalGrade: config.omitFromFinalGrade ?? false,
+        tokenOverride,
+      },
+      domainOverride,
+    );
+    appendLtiLog('canvas', 'ensureAssignmentForCourse (Step 7)', { title: config.title, result: 'created', assignmentId: created });
+    return created;
   }
 
   async ensureFlashcardProgressAssignment(
@@ -444,6 +565,23 @@ export class CanvasService {
     );
   }
 
+  /**
+   * Resolve the numeric Canvas user ID for the current user (token holder).
+   * Use when LTI ctx.canvasUserId is unavailable (e.g. $Canvas.user.id not substituted).
+   */
+  async getCurrentCanvasUserId(
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<string | null> {
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/users/self`;
+    const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { id?: number };
+    const id = data?.id;
+    return id != null ? String(id) : null;
+  }
+
   async getSubmission(
     courseId: string,
     assignmentId: string,
@@ -455,10 +593,48 @@ export class CanvasService {
     const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}`;
     const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
     if (!res.ok) return null;
-    const data = (await res.json()) as { body?: string };
-    return { body: data.body };
+    const data = (await res.json()) as { body?: string; submission?: { body?: string } };
+    const body = data.body ?? data.submission?.body ?? undefined;
+    appendLtiLog('canvas', 'getSubmission response', {
+      responseKeys: Object.keys(data),
+      hasBody: !!body,
+      bodyLength: body?.length ?? 0,
+    });
+    return { body };
   }
 
+  /**
+   * Get the current user's submission (token holder). Use when canvasUserId is unavailable
+   * and the single-user GET fails (e.g. LTI sub is opaque, not Canvas numeric ID).
+   */
+  async getSubmissionForCurrentUser(
+    courseId: string,
+    assignmentId: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<{ body?: string } | null> {
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions`;
+    const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
+    if (!res.ok) return null;
+    const data = (await res.json()) as Array<{ body?: string }> | { body?: string };
+    const list = Array.isArray(data) ? data : [data];
+    const submission = list[0];
+    const body = submission?.body ?? undefined;
+    appendLtiLog('canvas', 'getSubmissionForCurrentUser response', {
+      listLength: list.length,
+      hasBody: !!body,
+      bodyLength: body?.length ?? 0,
+    });
+    return body != null ? { body } : null;
+  }
+
+  /**
+   * Create or update a submission body for an assignment.
+   * When the token belongs to the submitting user (student self-submit), do not use as_user_id:
+   * Canvas requires grading permission for as_user_id and returns 401 Invalid as_user_id for students.
+   * The submission is created for the authenticated user (token holder) when as_user_id is omitted.
+   */
   async createSubmissionWithBody(
     courseId: string,
     assignmentId: string,
@@ -466,24 +642,86 @@ export class CanvasService {
     bodyText: string,
     domainOverride?: string,
     tokenOverride?: string | null,
+    /** Omit as_user_id when token belongs to the submitting user (student self-submit). Default false = self-submit. */
+    actAsUser?: boolean,
   ): Promise<void> {
     const base = this.getBaseUrl(domainOverride);
-    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions`;
-    const body = {
-      submission: {
-        submission_type: 'online_text_entry',
-        body: bodyText,
-      },
-    };
-    const res = await fetch(url + '?as_user_id=' + encodeURIComponent(userId), {
-      method: 'POST',
-      headers: this.getAuthHeaders(tokenOverride),
-      body: JSON.stringify(body),
+    const baseUrl = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions`;
+    const url = actAsUser ? `${baseUrl}?as_user_id=${encodeURIComponent(userId)}` : baseUrl;
+    const urlContainsAsUserId = actAsUser === true;
+    const tokenPreview = tokenOverride ? `${String(tokenOverride).slice(0, 4)}...${String(tokenOverride).slice(-4)} (len=${String(tokenOverride).length})` : 'MISSING';
+    appendLtiLog('canvas', 'createSubmissionWithBody HTTP request', {
+      userId,
+      actAsUser: !!actAsUser,
+      as_user_idInRequest: urlContainsAsUserId,
+      requestUrl: urlContainsAsUserId ? `${baseUrl}?as_user_id=<userId>` : baseUrl,
+      tokenPreview,
     });
+    const params = new URLSearchParams();
+    params.append('submission[submission_type]', 'online_text_entry');
+    params.append('submission[body]', bodyText);
+    appendLtiLog('canvas', 'createSubmissionWithBody POST body', {
+      contentType: 'application/x-www-form-urlencoded',
+      bodyLength: bodyText?.length ?? 0,
+      paramKeys: ['submission[submission_type]', 'submission[body]'],
+    });
+    const authHeaders = this.getAuthHeaders(tokenOverride);
+    const headers = {
+      ...authHeaders,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    };
+    const res = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: params.toString(),
+    });
+    const responseText = await res.text();
     if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Canvas create submission with body failed: ${res.status} ${text}`);
+      throw new Error(`Canvas create submission with body failed: ${res.status} ${responseText}`);
     }
+    try {
+      const created = JSON.parse(responseText) as { body?: string; submission_type?: string };
+      appendLtiLog('canvas', 'createSubmissionWithBody POST response', {
+        status: res.status,
+        responseHasBody: !!created?.body,
+        responseBodyLength: created?.body?.length ?? 0,
+        submission_type: created?.submission_type,
+      });
+    } catch {
+      appendLtiLog('canvas', 'createSubmissionWithBody POST response', { status: res.status, parseError: true });
+    }
+  }
+
+  /**
+   * Write submission body for an assignment. Uses Canvas OAuth token from tokenOverride.
+   * Callers (e.g. SubmissionService) pass token from session/CourseSettingsService.getEffectiveCanvasToken.
+   * Tools that need to merge with existing must call getSubmission first, then writeSubmissionBody with the final body.
+   */
+  async writeSubmissionBody(
+    ctx: LtiContext,
+    assignmentId: string,
+    bodyContent: string,
+    tokenOverride?: string | null,
+  ): Promise<void> {
+    const token = tokenOverride?.trim() || null;
+    if (!token) {
+      throw new Error('Canvas OAuth access token required for writeSubmissionBody (pass from session/getEffectiveCanvasToken)');
+    }
+    appendLtiLog('canvas', 'writeSubmissionBody (Step 10)', {
+      assignmentId,
+      bodyLength: bodyContent?.length ?? 0,
+      userId: ctx.userId,
+      tokenPreview: token ? `${token.slice(0, 4)}...${token.slice(-4)}` : 'MISSING',
+    });
+    const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
+    await this.createSubmissionWithBody(
+      ctx.courseId,
+      assignmentId,
+      ctx.userId,
+      bodyContent,
+      domainOverride,
+      token,
+    );
   }
 
   async putSubmissionBody(
@@ -506,6 +744,137 @@ export class CanvasService {
       const text = await res.text();
       throw new Error(`Canvas put submission body failed: ${res.status} ${text}`);
     }
+  }
+
+  /** List submissions for an assignment (teacher). Include submission_comments for grading UI. */
+  async listSubmissions(
+    courseId: string,
+    assignmentId: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<
+    Array<{
+      user_id: number;
+      user?: { id: number; name?: string };
+      body?: string;
+      score?: number;
+      grade?: string;
+      submission_comments?: Array<{ id: number; comment: string; author?: { display_name?: string } }>;
+      attachment?: { url?: string };
+      attachments?: Array<{ url?: string; id?: number }>;
+    }>
+  > {
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions?include[]=user&include[]=submission_comments&per_page=100`;
+    const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Canvas list submissions failed: ${res.status} ${text}`);
+    }
+    const data = (await res.json()) as unknown;
+    return Array.isArray(data) ? data : [];
+  }
+
+  /** Add a comment to a submission. Teacher grading flow. */
+  async addSubmissionComment(
+    courseId: string,
+    assignmentId: string,
+    userId: string,
+    textComment: string,
+    options?: { attempt?: number },
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<{ commentId?: number }> {
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}?include[]=submission_comments`;
+    const body: { comment: { text_comment: string; attempt?: number } } = {
+      comment: { text_comment: textComment },
+    };
+    if (options?.attempt != null) body.comment.attempt = options.attempt;
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: this.getAuthHeaders(tokenOverride),
+      body: JSON.stringify({ comment: body.comment }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Canvas add comment failed: ${res.status} ${text}`);
+    }
+    const data = (await res.json()) as { submission_comments?: Array<{ id?: number; comment?: string }> };
+    const comments = data.submission_comments ?? [];
+    const match = comments.find((c) => c.comment?.includes(textComment.slice(0, 50)));
+    return { commentId: match?.id ?? comments[comments.length - 1]?.id };
+  }
+
+  /** Edit a submission comment. */
+  async editSubmissionComment(
+    courseId: string,
+    assignmentId: string,
+    userId: string,
+    commentId: string,
+    textComment: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<void> {
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}/comments/${commentId}`;
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: this.getAuthHeaders(tokenOverride),
+      body: JSON.stringify({ comment: textComment }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Canvas edit comment failed: ${res.status} ${text}`);
+    }
+  }
+
+  /** Delete a submission comment. */
+  async deleteSubmissionComment(
+    courseId: string,
+    assignmentId: string,
+    userId: string,
+    commentId: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<void> {
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}/comments/${commentId}`;
+    const res = await fetch(url, {
+      method: 'DELETE',
+      headers: this.getAuthHeaders(tokenOverride),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Canvas delete comment failed: ${res.status} ${text}`);
+    }
+  }
+
+  /** Put grade and/or rubric on a submission (teacher). Uses Canvas REST; for AGS use LtiAgsService.submitGradeViaAgs. */
+  async putSubmissionGrade(
+    courseId: string,
+    assignmentId: string,
+    userId: string,
+    options: { postedGrade?: string | null; rubricAssessment?: Record<string, unknown> },
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<{ score?: number }> {
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}`;
+    const body: { submission?: { posted_grade?: string | null }; rubric_assessment?: Record<string, unknown> } = {};
+    if (options.postedGrade !== undefined) body.submission = { posted_grade: options.postedGrade };
+    if (options.rubricAssessment) body.rubric_assessment = options.rubricAssessment;
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: this.getAuthHeaders(tokenOverride),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Canvas put grade failed: ${res.status} ${text}`);
+    }
+    const data = (await res.json()) as { score?: number };
+    return { score: data.score };
   }
 
   // --- Announcement API (Flashcard Settings) ---

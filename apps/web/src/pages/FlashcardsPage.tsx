@@ -45,8 +45,9 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   const [playlistsLoading, setPlaylistsLoading] = useState(true);
   const [courseSettings, setCourseSettings] = useState<{ selectedCurriculums: string[]; selectedUnits: string[]; sproutAccountId?: string } | null>(null);
   const [allPlaylistsWithHierarchy, setAllPlaylistsWithHierarchy] = useState<
-    Array<{ id: string; title: string; unit: string; section: string }>
+    Array<{ id: string; title: string; curriculum: string; unit: string; section: string }>
   >([]);
+  const [hubSelectedCurricula, setHubSelectedCurricula] = useState<string[]>([]);
   const [hubSelectedUnits, setHubSelectedUnits] = useState<string[]>([]);
   const [hubSelectedSections, setHubSelectedSections] = useState<string[]>([]);
   const [hubFilterMode, setHubFilterMode] = useState<'all' | 'current' | 'additional'>('current');
@@ -121,11 +122,12 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
       } else {
         setDeckLoadError(null);
       }
-      type Pl = { id: string; title: string; unit: string; section: string };
+      type Pl = { id: string; title: string; curriculum: string; unit: string; section: string };
       const list: Pl[] = (Array.isArray(data?.playlists) ? data.playlists : []).map(
-        (p: { id?: string; title: string; unit?: string; section?: string }) => ({
+        (p: { id?: string; title: string; curriculum?: string; unit?: string; section?: string }) => ({
           id: String(p.id ?? p.title),
           title: String(p.title),
+          curriculum: String(p.curriculum ?? ''),
           unit: String(p.unit ?? ''),
           section: String(p.section ?? ''),
         }),
@@ -145,10 +147,16 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
         }
       }
 
+      const teacherCurricula = csState?.selectedCurriculums ?? [];
+      const teacherUnits = csState?.selectedUnits ?? [];
+      setHubSelectedCurricula(teacherCurricula.length > 0 ? teacherCurricula : []);
       const units: string[] = [...new Set(list.map((p: Pl) => p.unit).filter(Boolean))].sort();
-      const initialUnits = units.length > 0
-        ? (preferredUnit && units.includes(preferredUnit) ? [preferredUnit] : [units[0]])
-        : [];
+      const initialUnits =
+        teacherUnits.length > 0
+          ? teacherUnits
+          : units.length > 0
+            ? (preferredUnit && units.includes(preferredUnit) ? [preferredUnit] : [units[0]])
+            : [];
       setHubSelectedUnits(initialUnits);
       setHubSelectedSections([]);
     } finally {
@@ -166,13 +174,22 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     }
   }, [teacherMode, viewAsStudent, isCourseNavigation, context?.courseId, loadBatchData]);
 
-  const { hubUnits, hubSections, filteredPlaylists } = useMemo(() => {
+  const { hubCurricula, hubUnits, hubSections, filteredPlaylists } = useMemo(() => {
+    const teacherCurricula = courseSettings?.selectedCurriculums ?? [];
     const teacherUnits = courseSettings?.selectedUnits ?? [];
     let list = allPlaylistsWithHierarchy;
     if (hubFilterMode === 'current') {
-      list = teacherUnits.length > 0 ? list.filter((p) => teacherUnits.includes(p.unit)) : list;
+      list = list.filter((p) => {
+        const matchCurr = teacherCurricula.length === 0 || teacherCurricula.includes(p.curriculum);
+        const matchUnit = teacherUnits.length === 0 || teacherUnits.includes(p.unit);
+        return matchCurr && matchUnit;
+      });
     } else if (hubFilterMode === 'additional') {
       list = teacherUnits.length > 0 ? list.filter((p) => !teacherUnits.includes(p.unit)) : [];
+    }
+    const curricula = [...new Set(list.map((p) => p.curriculum).filter(Boolean))].sort();
+    if (hubSelectedCurricula.length > 0) {
+      list = list.filter((p) => hubSelectedCurricula.includes(p.curriculum));
     }
     const units = [...new Set(list.map((p) => p.unit).filter(Boolean))].sort();
     const sections =
@@ -186,11 +203,18 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
       list = list.filter((p) => hubSelectedSections.includes(p.section));
     }
     return {
+      hubCurricula: curricula,
       hubUnits: units,
       hubSections: sections,
       filteredPlaylists: list.sort((a, b) => a.title.localeCompare(b.title)).map((p) => ({ id: p.id, title: p.title })),
     };
-  }, [allPlaylistsWithHierarchy, courseSettings?.selectedUnits, hubSelectedUnits, hubSelectedSections, hubFilterMode]);
+  }, [allPlaylistsWithHierarchy, courseSettings?.selectedCurriculums, courseSettings?.selectedUnits, hubSelectedCurricula, hubSelectedUnits, hubSelectedSections, hubFilterMode]);
+
+  const toggleHubCurriculum = useCallback((c: string) => {
+    setHubSelectedCurricula((prev) =>
+      prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]
+    );
+  }, []);
 
   const toggleHubUnit = useCallback((u: string) => {
     setHubSelectedUnits((prev) =>
@@ -206,9 +230,17 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
 
   const handleHubFilterModeChange = useCallback((mode: 'all' | 'current' | 'additional') => {
     setHubFilterMode(mode);
-    setHubSelectedUnits([]);
+    const teacherCurricula = courseSettings?.selectedCurriculums ?? [];
+    const teacherUnits = courseSettings?.selectedUnits ?? [];
+    if (mode === 'current' && (teacherCurricula.length > 0 || teacherUnits.length > 0)) {
+      setHubSelectedCurricula(teacherCurricula);
+      setHubSelectedUnits(teacherUnits);
+    } else {
+      setHubSelectedCurricula([]);
+      setHubSelectedUnits([]);
+    }
     setHubSelectedSections([]);
-  }, []);
+  }, [courseSettings?.selectedCurriculums, courseSettings?.selectedUnits]);
 
   useEffect(() => {
     const useHubData = teacherMode ? viewAsStudent && isCourseNavigation : !!context?.courseId;
@@ -482,11 +514,27 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
         synced?: boolean;
         error?: string;
         message?: string;
-        debug?: { progressSaved?: boolean; gradeSent?: boolean; details: string };
+        debug?: {
+          progressSaved?: boolean;
+          gradeSent?: boolean;
+          details: string;
+          canvasRequest?: {
+            tokenSource: string;
+            tokenPreview: string;
+            submittingForUserId: string;
+            as_user_idInRequest: boolean;
+            note?: string;
+          };
+        };
       };
       const ok = res.ok && data.synced !== false;
-      setLastApiResult(endpoint, res.status, ok);
-      if (data.debug?.details) setLastSubmissionDetails(data.debug.details);
+      if (data.debug?.details) {
+        let details = data.debug.details;
+        if (data.debug.canvasRequest) {
+          details += `\n[Canvas request debug] tokenSource=${data.debug.canvasRequest.tokenSource} | tokenPreview=${data.debug.canvasRequest.tokenPreview} | submittingForUserId=${data.debug.canvasRequest.submittingForUserId} | as_user_idInRequest=${data.debug.canvasRequest.as_user_idInRequest}${data.debug.canvasRequest.note ? ` | ${data.debug.canvasRequest.note}` : ''}`;
+        }
+        setLastSubmissionDetails(details);
+      }
 
       const logLines = (prev: string[]) => [
         ...prev,
@@ -768,6 +816,21 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                           margin: '20px 0',
                         }}
                       />
+                      <div className="teacher-settings-checkbox-group" style={{ width: '100%', marginBottom: 20 }}>
+                        <span className="teacher-settings-label">Curriculum</span>
+                        <div className="teacher-settings-checkbox-list">
+                          {hubCurricula.map((c) => (
+                            <label key={c} className="teacher-settings-checkbox-label">
+                              <input
+                                type="checkbox"
+                                checked={hubSelectedCurricula.includes(c)}
+                                onChange={() => toggleHubCurriculum(c)}
+                              />
+                              {c}
+                            </label>
+                          ))}
+                        </div>
+                      </div>
                       <div className="teacher-settings-checkbox-group" style={{ width: '100%', marginBottom: 20 }}>
                         <span className="teacher-settings-label">Units</span>
                         <div className="teacher-settings-checkbox-list">

@@ -15,6 +15,13 @@ const LTI_RESOURCE_LINK = 'https://purl.imsglobal.org/spec/lti/claim/resource_li
 const LTI_CONTEXT = 'https://purl.imsglobal.org/spec/lti/claim/context';
 const LTI_CUSTOM = 'https://purl.imsglobal.org/spec/lti/claim/custom';
 const LTI_DEPLOYMENT_ID = 'https://purl.imsglobal.org/spec/lti/claim/deployment_id';
+/** AGS endpoint claim: { lineitems, lineitem?, scope[] } */
+const LTI_AGS_ENDPOINT = 'https://purl.imsglobal.org/spec/lti-ags/claim/endpoint';
+/** Maps custom.tool_type from LTI JWT to our toolType. Unmapped values default to 'flashcards'. */
+const CUSTOM_TOOL_TYPE_MAP: Record<string, 'flashcards' | 'prompter'> = {
+  prompter: 'prompter',
+};
+
 const TEACHER_URIS = [
   'http://purl.imsglobal.org/vocab/lis/v2/membership#Instructor',
   'http://purl.imsglobal.org/vocab/lis/v2/membership#Administrator',
@@ -153,12 +160,18 @@ export class Lti13LaunchService {
     // For Canvas API: use custom.course_id ($Canvas.course.id = numeric) over context.id (opaque LTI hash)
     const courseId = (custom.course_id ?? context.id ?? '').toString();
     const userId = sub;
+    const canvasUserId = (custom.user_id ?? '').toString().trim() || undefined;
     const resourceLinkId = (resourceLink.id ?? '').toString();
     const resourceLinkTitle = resourceLink.title;
     const assignmentId = (custom.assignment_id ?? '').toString().trim();
     const moduleId = (custom.module_id ?? '').toString().trim();
     const rolesStr = Array.isArray(roles) ? roles.join(',') : String(roles);
-    const toolType = (custom.tool_type === 'prompter' ? 'prompter' : 'flashcards') as 'flashcards' | 'prompter';
+    const customToolType = (custom.tool_type ?? '').toString().trim();
+    const toolType = CUSTOM_TOOL_TYPE_MAP[customToolType] ?? 'flashcards';
+
+    const agsEndpoint = payload[LTI_AGS_ENDPOINT] as { lineitems?: string; lineitem?: string } | undefined;
+    const agsLineitemsUrl = (agsEndpoint?.lineitems ?? '').toString().trim() || undefined;
+    const agsLineitemUrl = (agsEndpoint?.lineitem ?? '').toString().trim() || undefined;
 
     const iss = payload.iss as string;
     let canvasDomain: string | undefined;
@@ -177,13 +190,17 @@ export class Lti13LaunchService {
       courseId,
       assignmentId,
       userId,
+      canvasUserId,
       resourceLinkId,
       moduleId,
       toolType,
+      customToolTypeFromJwt: customToolType || '(absent)',
       roles: rolesStr,
       resourceLinkTitle,
       canvasDomain,
       canvasBaseUrl,
+      agsLineitemsUrl,
+      agsLineitemUrl,
     };
   }
 

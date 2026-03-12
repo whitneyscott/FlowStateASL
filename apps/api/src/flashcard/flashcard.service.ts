@@ -146,7 +146,7 @@ export class FlashcardService {
     canvasBaseUrl?: string,
     canvasAccessToken?: string | null,
   ): Promise<{
-    playlists: Array<{ id: string; title: string; unit: string; section: string }>;
+    playlists: Array<{ id: string; title: string; curriculum: string; unit: string; section: string }>;
     selectedCurriculums: string[];
     selectedUnits: string[];
     sproutAccountId?: string;
@@ -167,7 +167,13 @@ export class FlashcardService {
       curricula,
       units,
     );
-    const playlists = rows.map((p) => ({ id: p.id, title: p.title, unit: p.unit, section: p.section }));
+    const playlists = rows.map((p) => ({
+      id: p.id,
+      title: p.title,
+      curriculum: p.curriculum,
+      unit: p.unit,
+      section: p.section,
+    }));
 
     return {
       playlists,
@@ -280,9 +286,9 @@ export class FlashcardService {
     const result: Record<string, { completed: number }> = {};
     try {
       const canvasOverride = canvasBaseUrl ?? canvasDomain;
-      const progressAssignmentId =
-        await this.courseSettings.getProgressAssignmentId(courseId, canvasDomain, canvasBaseUrl);
       const token = await this.courseSettings.getEffectiveCanvasToken(courseId, canvasAccessToken);
+      const progressAssignmentId =
+        await this.courseSettings.getProgressAssignmentId(courseId, canvasDomain, canvasBaseUrl, token);
       const sub = await this.canvas.getSubmission(
         courseId,
         progressAssignmentId,

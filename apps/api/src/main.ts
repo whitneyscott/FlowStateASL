@@ -43,6 +43,19 @@ async function bootstrap() {
   );
   console.log('[Session] Using PostgreSQL store');
 
+  // In development only: clear all sessions on startup for a clean slate
+  if (process.env.NODE_ENV !== 'production') {
+    try {
+      const result = await pool.query('DELETE FROM session');
+      console.log(`[Session] Cleared ${result.rowCount ?? 0} session(s) (dev startup)`);
+    } catch (err) {
+      const code = (err as { code?: string })?.code;
+      if (code !== '42P01') {
+        console.warn('[Session] Dev clear failed:', (err as Error).message);
+      }
+    }
+  }
+
   if (isProduction) {
     const webRoot = join(__dirname, '..', '..', 'web');
     const indexPath = join(webRoot, 'index.html');

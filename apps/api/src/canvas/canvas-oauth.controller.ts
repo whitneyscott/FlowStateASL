@@ -74,6 +74,7 @@ export class CanvasOAuthController {
     @Query('error') error?: string,
     @Query('error_description') errorDescription?: string,
   ) {
+    appendLtiLog('oauth', 'OAuth callback REACHED', { url: req.url, hasCode: !!code, hasState: !!state });
     appendLtiLog('oauth', 'Canvas OAuth callback', { hasCode: !!code, hasState: !!state, error: error ?? null });
 
     if (error) {
@@ -130,6 +131,13 @@ export class CanvasOAuthController {
       const appUrl = (this.config.get<string>('FRONTEND_URL') ?? 'http://localhost:4200').replace(/\/$/, '');
       return res.redirect(`${appUrl}/flashcards?oauth_error=Failed+to+get+access+token`);
     }
+
+    const tok = tokenData.access_token!;
+    appendLtiLog('oauth', 'Token from Canvas (before storage)', {
+      accessTokenLength: tok.length,
+      first4: tok.slice(0, 4),
+      last4: tok.slice(-4),
+    });
 
     if (req.session) {
       req.session.canvasAccessToken = tokenData.access_token;

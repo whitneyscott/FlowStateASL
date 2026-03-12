@@ -10,6 +10,8 @@ import { setLtiToken, consumeLtiToken } from './lti-token.store';
 import { setOidcState, consumeOidcState } from './lti-oidc-state.store';
 import { setLastError, appendLtiLog } from '../common/last-error.store';
 import { renderLtiLaunchErrorHtml } from './lti-error.util';
+import { getRedirectPathForToolType } from './lti-redirect.util';
+import { persistLtiContextAndRedirect } from './lti-launch-finish.util';
 
 @Controller('lti')
 export class LtiController {
@@ -73,21 +75,7 @@ export class LtiController {
       return res.status(400).send('Missing LTI parameters');
     }
     ctx.toolType = 'prompter';
-    if (this.ltiService.isTeacherRole(ctx.roles) && ctx.assignmentId && ctx.resourceLinkTitle) {
-      try {
-        ctx.assignmentNameSynced = await this.assessmentService.syncAssignmentNameIfNeeded(
-          ctx.courseId,
-          ctx.assignmentId,
-          ctx.resourceLinkId || '',
-          ctx.resourceLinkTitle,
-          ctx.canvasDomain,
-          ctx.canvasBaseUrl,
-          (req.session as { canvasAccessToken?: string })?.canvasAccessToken,
-        );
-      } catch {
-        ctx.assignmentNameSynced = false;
-      }
-    }
+    /* Do not rename assignment - prompter is placed in the assignment; leave title unchanged. */
     const token = randomBytes(24).toString('hex');
     setLtiToken(token, ctx);
     if (req.session) {
@@ -270,28 +258,12 @@ export class LtiController {
       canvasBaseUrl: ctx.canvasBaseUrl ?? '(none)',
       canvasDomain: ctx.canvasDomain ?? '(none)',
     });
-    if (ctx.toolType === 'prompter' && this.ltiService.isTeacherRole(ctx.roles) && ctx.assignmentId && ctx.resourceLinkTitle) {
-      try {
-        ctx.assignmentNameSynced = await this.assessmentService.syncAssignmentNameIfNeeded(
-          ctx.courseId,
-          ctx.assignmentId,
-          ctx.resourceLinkId || '',
-          ctx.resourceLinkTitle,
-          ctx.canvasDomain,
-          ctx.canvasBaseUrl,
-          (req.session as { canvasAccessToken?: string })?.canvasAccessToken,
-        );
-      } catch {
-        ctx.assignmentNameSynced = false;
-      }
-    }
-    const token = randomBytes(24).toString('hex');
-    setLtiToken(token, ctx);
+    /* Prompter: do NOT rename the assignment - the tool is placed in the assignment; leave title unchanged. */
     const base = this.config.get<string>('FRONTEND_URL') ?? '';
-    const path = ctx.toolType === 'prompter' ? '/prompter' : '/flashcards';
-    const finalRedirect = `${base}${path}?lti_token=${token}`;
+    const path = getRedirectPathForToolType(ctx.toolType, this.ltiService.isTeacherRole(ctx.roles));
+    ctx.redirectPath = path;
+    appendLtiLog('launch', 'Redirect path (Step 2)', { path, toolType: ctx.toolType, redirectUrl: `${base}${path}?lti_token=***` });
 
-    const isTeacher = this.ltiService.isTeacherRole(ctx.roles);
     const needsOAuth = !(req.session as { canvasAccessToken?: string })?.canvasAccessToken;
     const oauthConfigured =
       !!this.config.get<string>('CANVAS_OAUTH_CLIENT_ID') &&
@@ -303,27 +275,21 @@ export class LtiController {
       needsOAuth,
       oauthConfigured,
       canvasBaseUrl: canvasBaseUrl ?? '(none)',
-      isTeacher,
+      isTeacher: this.ltiService.isTeacherRole(ctx.roles),
       hasCanvasAccessToken: !!(req.session as { canvasAccessToken?: string })?.canvasAccessToken,
     });
 
-    if (req.session) {
-      req.session.ltiContext = ctx;
-      req.session.save((err) => {
-        if (err) setLastError('/api/lti/launch', err);
-        if (needsOAuth && oauthConfigured && canvasBaseUrl) {
-          const apiBase = this.config.get<string>('APP_URL') ?? `http://localhost:${this.config.get('PORT') ?? 3000}`;
-          const oauthInitUrl = `${apiBase}/api/oauth/canvas?returnTo=${encodeURIComponent(finalRedirect)}`;
-          appendLtiLog('launch', 'User without Canvas token — redirecting to OAuth init', { oauthInitUrl });
-          res.redirect(oauthInitUrl);
-        } else {
-          appendLtiLog('launch', 'Success - redirecting', { redirectUrl: finalRedirect });
-          res.redirect(finalRedirect);
-        }
-      });
-    } else {
-      appendLtiLog('launch', 'Success - redirecting (no session)', { redirectUrl: finalRedirect });
-      res.redirect(finalRedirect);
-    }
+    const buildRedirectUrl = (token: string) => `${base}${path}?lti_token=${token}`;
+    const options =
+      needsOAuth && oauthConfigured && canvasBaseUrl
+        ? {
+            oauthInitUrlBuilder: (token: string) => {
+              const apiBase = this.config.get<string>('APP_URL') ?? `http://localhost:${this.config.get('PORT') ?? 3000}`;
+              return `${apiBase}/api/oauth/canvas?returnTo=${encodeURIComponent(buildRedirectUrl(token))}`;
+            },
+          }
+        : undefined;
+
+    persistLtiContextAndRedirect(req, res, ctx, buildRedirectUrl, options);
   }
 }

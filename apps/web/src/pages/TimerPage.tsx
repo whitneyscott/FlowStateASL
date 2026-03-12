@@ -1,8 +1,364 @@
-export default function TimerPage() {
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { LtiContext } from '@aslexpress/shared-types';
+import { useDebug } from '../contexts/DebugContext';
+import * as promptApi from '../api/prompt.api';
+import './PrompterPage.css';
+
+interface TimerPageProps {
+  context: LtiContext | null;
+}
+
+function simpleFingerprint(): string {
+  const ua = navigator.userAgent;
+  const lang = navigator.language;
+  return btoa(ua + '|' + lang).slice(0, 32);
+}
+
+export default function TimerPage({ context }: TimerPageProps) {
+  const { setLastFunction, setLastApiResult, setLastApiError } = useDebug();
+  const [config, setConfig] = useState<promptApi.PromptConfig | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [phase, setPhase] = useState<'access' | 'warmup' | 'preflight' | 'record' | 'upload' | 'done'>('access');
+  const [accessCode, setAccessCode] = useState('');
+  const [accessError, setAccessError] = useState<string | null>(null);
+  const [blocked, setBlocked] = useState(false);
+  const [secondsLeft, setSecondsLeft] = useState(0);
+  const [recordSecondsLeft, setRecordSecondsLeft] = useState(0);
+  const [promptIndex, setPromptIndex] = useState(0);
+  const [recording, setRecording] = useState(false);
+  const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [preflightReady, setPreflightReady] = useState(false);
+  const [preflightError, setPreflightError] = useState<string | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const submitOnStopRef = useRef(false);
+  const pendingPromptRef = useRef('');
+  const autoFinishFiredRef = useRef(false);
+
+  const doSubmit = useCallback(
+    async (promptSnapshot: string, blob: Blob | null) => {
+      setSubmitError(null);
+      setPhase(blob ? 'upload' : 'done');
+      try {
+        setLastFunction('POST /api/prompt/save-prompt');
+        await promptApi.savePrompt(promptSnapshot);
+        setLastApiResult('POST /api/prompt/save-prompt', 200, true);
+        setLastFunction('POST /api/prompt/submit');
+        await promptApi.submitPrompt(promptSnapshot);
+        setLastApiResult('POST /api/prompt/submit', 200, true);
+        if (blob) {
+          setLastFunction('POST /api/prompt/upload-video');
+          await promptApi.uploadVideo(blob, `asl_submission_${Date.now()}.webm`);
+          setLastApiResult('POST /api/prompt/upload-video', 200, true);
+        }
+        setPhase('done');
+      } catch (e) {
+        setSubmitError(e instanceof Error ? e.message : 'Submit failed');
+        setLastApiError('POST /api/prompt/submit', 0, String(e));
+      }
+    },
+    [setLastFunction, setLastApiResult, setLastApiError]
+  );
+
+  useEffect(() => {
+    const el = videoRef.current;
+    const stream = streamRef.current;
+    if (el && stream) {
+      el.srcObject = stream;
+    }
+    return () => {
+      if (el) el.srcObject = null;
+    };
+  }, [phase, preflightReady]);
+
+  useEffect(() => {
+    if (phase !== 'preflight') return;
+    setPreflightReady(false);
+    setPreflightError(null);
+    let cancelled = false;
+    navigator.mediaDevices
+      .getUserMedia({ video: true, audio: true })
+      .then((stream) => {
+        if (cancelled) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        streamRef.current = stream;
+        setPreflightReady(true);
+      })
+      .catch(() => {
+        if (!cancelled) setPreflightError('Camera/mic access denied.');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [phase]);
+
+  const minutes = config?.minutes ?? 5;
+  const prompts = config?.prompts ?? [];
+  const needsAccessCode = !!config?.accessCode?.trim();
+
+  const loadConfig = useCallback(async () => {
+    if (!context?.courseId) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      setLastFunction('GET /api/prompt/config');
+      const data = await promptApi.getPromptConfig();
+      setLastApiResult('GET /api/prompt/config', 200, true);
+      setConfig(data ?? null);
+      if (!data?.accessCode?.trim()) {
+        setPhase('warmup');
+        setSecondsLeft((data?.minutes ?? 5) * 60);
+      }
+    } catch {
+      setConfig(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [context?.courseId, setLastFunction, setLastApiResult]);
+
+  useEffect(() => {
+    loadConfig();
+  }, [loadConfig]);
+
+  useEffect(() => {
+    if (phase !== 'warmup' || secondsLeft <= 0) return;
+    const t = setInterval(() => setSecondsLeft((s) => s - 1), 1000);
+    return () => clearInterval(t);
+  }, [phase, secondsLeft]);
+
+  useEffect(() => {
+    if (phase !== 'warmup' || secondsLeft > 0) return;
+    setPhase('preflight');
+  }, [phase, secondsLeft]);
+
+  const handleVerifyAccess = async () => {
+    setAccessError(null);
+    try {
+      setLastFunction('POST /api/prompt/verify-access');
+      const res = await promptApi.verifyAccess(accessCode, simpleFingerprint());
+      setLastApiResult('POST /api/prompt/verify-access', 200, true);
+      if (res.blocked) {
+        setBlocked(true);
+        setAccessError(`Too many attempts. Contact your teacher to reset.`);
+        return;
+      }
+      if (!res.success) {
+        setAccessError('Invalid code.');
+        return;
+      }
+      setPhase('warmup');
+      setSecondsLeft(minutes * 60);
+    } catch (e) {
+      setAccessError(e instanceof Error ? e.message : 'Verify failed');
+    }
+  };
+
+  const startPreflight = () => {
+    if (streamRef.current) setPhase('record');
+  };
+
+  const stopRecording = useCallback(() => {
+    recorderRef.current?.stop();
+    setRecording(false);
+  }, []);
+
+  const finishAndSubmit = useCallback(() => {
+    pendingPromptRef.current = prompts[promptIndex] ?? prompts[0] ?? '';
+    submitOnStopRef.current = true;
+    stopRecording();
+  }, [prompts, promptIndex, stopRecording]);
+
+  useEffect(() => {
+    if (phase === 'record') {
+      setRecordSecondsLeft(minutes * 60);
+      autoFinishFiredRef.current = false;
+    }
+  }, [phase, minutes]);
+
+  useEffect(() => {
+    if (phase !== 'record' || recordSecondsLeft > 0) return;
+    if (autoFinishFiredRef.current || !recording) return;
+    autoFinishFiredRef.current = true;
+    finishAndSubmit();
+  }, [phase, recordSecondsLeft, recording, finishAndSubmit]);
+
+  useEffect(() => {
+    if (phase !== 'record' || recordSecondsLeft <= 0) return;
+    const t = setInterval(() => setRecordSecondsLeft((s) => s - 1), 1000);
+    return () => clearInterval(t);
+  }, [phase, recordSecondsLeft]);
+
+  useEffect(() => {
+    if (phase !== 'record' || !streamRef.current || recorderRef.current) return;
+    const stream = streamRef.current;
+    chunksRef.current = [];
+    const recorder = new MediaRecorder(stream);
+    recorder.ondataavailable = (e) => {
+      if (e.data.size) chunksRef.current.push(e.data);
+    };
+    recorder.onstop = () => {
+      const blob = new Blob(chunksRef.current, { type: 'video/webm' });
+      setRecordedBlob(blob);
+      if (submitOnStopRef.current) {
+        submitOnStopRef.current = false;
+        const promptSnapshot = pendingPromptRef.current || (prompts[promptIndex] ?? prompts[0] ?? '');
+        doSubmit(promptSnapshot, blob);
+      }
+    };
+    recorder.start();
+    recorderRef.current = recorder;
+    setRecording(true);
+  }, [phase, prompts, promptIndex, doSubmit]);
+
+  if (!context) {
+    return (
+      <div className="prompter-page">
+        <div className="prompter-card">
+          <p className="prompter-info-message">Launch from Canvas to continue.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="prompter-page">
+        <div className="prompter-card">
+          <p className="prompter-info-message">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (phase === 'access' && needsAccessCode) {
+    return (
+      <div className="prompter-page">
+        <div className="prompter-access-code-container">
+          <h1>Access Code</h1>
+          <p className="prompter-info-message">Please enter the access code provided by your instructor.</p>
+          <p className="prompter-info-message"><strong>You have 3 attempts.</strong></p>
+          {blocked && (
+            <p className="prompter-error-message">Too many attempts. Contact your teacher to reset.</p>
+          )}
+          {!blocked && (
+            <form onSubmit={(e) => { e.preventDefault(); handleVerifyAccess(); }}>
+              <input
+                type="text"
+                value={accessCode}
+                onChange={(e) => setAccessCode(e.target.value)}
+                placeholder="Enter Access Code"
+                className="prompter-access-code-input"
+                onKeyDown={(e) => e.key === 'Enter' && handleVerifyAccess()}
+              />
+              {accessError && <div className="prompter-error-message">{accessError}</div>}
+              <button type="button" onClick={handleVerifyAccess} className="prompter-btn-ready prompter-btn-full prompter-btn-lg">
+                Verify & Continue
+              </button>
+            </form>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (phase === 'warmup') {
+    const m = Math.floor(secondsLeft / 60);
+    const s = secondsLeft % 60;
+    const display = prompts[promptIndex] ?? (prompts[0] ?? 'Warm up. When the timer ends, you will record.');
+    return (
+      <div className="prompter-page">
+        <div className="prompter-card">
+          <div className="prompter-prompt-column prompter-prompt-column-center">
+            {display}
+          </div>
+          <div className="prompter-timer-display">{m}:{s < 10 ? '0' : ''}{s}</div>
+          <button type="button" onClick={() => setPhase('preflight')} className="prompter-btn-ready">Ready Early</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (phase === 'preflight') {
+    return (
+      <div className="prompter-page">
+        <div className="prompter-card">
+          <h1>Camera & Mic</h1>
+          <p className="prompter-info-message prompter-info-message-spaced">Allow camera and microphone to record your signing.</p>
+          <div className="prompter-video-container prompter-video-container-preflight">
+            {preflightError ? (
+              <p className="prompter-error-message">{preflightError}</p>
+            ) : preflightReady ? (
+              <video ref={videoRef} autoPlay muted playsInline />
+            ) : (
+              <p className="prompter-info-message">Requesting camera access...</p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={startPreflight}
+            className="prompter-btn-ready"
+            disabled={!preflightReady || !!preflightError}
+          >
+            Everything Looks Good - Start
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (phase === 'record') {
+    const rm = Math.floor(recordSecondsLeft / 60);
+    const rs = recordSecondsLeft % 60;
+    return (
+      <div className="prompter-page">
+        <div className="prompter-card">
+          <div className="prompter-timer-display-sm">
+            {rm}:{rs < 10 ? '0' : ''}{rs}
+          </div>
+          <div className="prompter-record-layout">
+            <div className="prompter-prompt-column" style={{ flex: '1 1 300px', maxWidth: 480 }}>
+              {prompts[promptIndex] ?? (prompts[0] ?? '')}
+            </div>
+            <div className="prompter-record-video-col">
+              <div className="prompter-video-container">
+                <video ref={videoRef} autoPlay muted playsInline />
+              </div>
+              {recording && (
+                <button type="button" onClick={finishAndSubmit} className="prompter-btn-danger">
+                  Finish & Submit to Canvas
+                </button>
+              )}
+            </div>
+          </div>
+          {submitError && <p className="prompter-error-message prompter-error-message-mt">{submitError}</p>}
+        </div>
+      </div>
+    );
+  }
+
+  if (phase === 'upload') {
+    return (
+      <div className="prompter-page">
+        <div className="prompter-card">
+          <p className="prompter-info-message">Uploading video...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-gray-50 p-8">
-      <h1 className="text-2xl font-bold text-gray-900">ASL Express Prompter</h1>
-      <p className="mt-2 text-gray-600">Timer / recording tool placeholder.</p>
+    <div className="prompter-page">
+      <div className="prompter-card">
+        <h1>Done</h1>
+        <p className="prompter-info-message">Your submission has been sent to Canvas.</p>
+      </div>
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { ToolSelector } from './components/ToolSelector';
 import FlashcardsPage from './pages/FlashcardsPage';
 import TimerPage from './pages/TimerPage';
 import TeacherConfigPage from './pages/TeacherConfigPage';
+import TeacherViewerPage from './pages/TeacherViewerPage';
 
 export default function AppRouter() {
   const { context, loading, error } = useLtiContext();
@@ -56,13 +57,23 @@ export default function AppRouter() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <div className="w-full max-w-4xl mx-auto px-4">
+      <div className="w-full max-w-4xl mx-auto px-4 py-4">
+        <ToolSelector context={context} currentTool="prompter" />
         <BridgeLog context={context} loading={false} error={null} />
       </div>
       <Routes>
-        <Route path="/prompter" element={<TimerPage />} />
-        <Route path="/config" element={<TeacherConfigPage />} />
-        <Route path="*" element={<Navigate to="/prompter" replace />} />
+        <Route path="/prompter" element={<TimerPage context={context} />} />
+        <Route path="/config" element={<TeacherConfigPage context={context} />} />
+        <Route path="/viewer" element={<TeacherViewerPage context={context} />} />
+        <Route
+          path="*"
+          element={
+            <Navigate
+              to={context && /instructor|administrator|faculty|teacher|staff|contentdeveloper|teachingassistant|ta/i.test(context.roles || '') ? '/config' : '/prompter'}
+              replace
+            />
+          }
+        />
       </Routes>
     </div>
   );

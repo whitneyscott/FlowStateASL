@@ -85,6 +85,18 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
         );
         newLines.push(`Teacher mode: ${isTeacher ? 'ON' : 'OFF'}`);
         newLines.push(`Tool: ${context.toolType}`);
+        if (context.customToolTypeFromJwt) {
+          newLines.push(`Tool type (Step 4): custom.tool_type="${context.customToolTypeFromJwt}" → ${context.toolType}`);
+        }
+        if (context.redirectPath) {
+          newLines.push(`Redirect path (Step 2): ${context.redirectPath}`);
+        }
+        if (context.agsLineitemsUrl || context.agsLineitemUrl) {
+          if (context.agsLineitemUrl) newLines.push(`AGS (Step 6): lineitem=${context.agsLineitemUrl}`);
+          if (context.agsLineitemsUrl) newLines.push(`AGS (Step 6): lineitems=${context.agsLineitemsUrl}`);
+        } else {
+          newLines.push(`AGS (Step 6): (absent — enable AGS on Developer Key for grade passback)`);
+        }
       }
     } else {
       newLines.push('No context available.');

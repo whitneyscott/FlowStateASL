@@ -51,6 +51,11 @@ export class SproutVideoService {
     return BLACKLIST.some((term) => term.toLowerCase() === normalized);
   }
 
+  /** Blacklist terms for SQL exact NOT match: WHERE curriculum != ALL($1). */
+  getBlacklistForSql(): string[] {
+    return [...BLACKLIST];
+  }
+
   /**
    * Lists all videos in a playlist using the playlist filter endpoint.
    * This is significantly cheaper than fetching each video by ID individually.

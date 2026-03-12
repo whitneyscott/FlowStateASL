@@ -2,9 +2,15 @@ export interface LtiContext {
   courseId: string;
   assignmentId: string;
   userId: string;
+  /** Canvas numeric user ID from custom user_id ($Canvas.user.id). Use for Canvas API submission GET. */
+  canvasUserId?: string;
   resourceLinkId: string;
   moduleId: string;
   toolType: 'flashcards' | 'prompter';
+  /** Raw custom.tool_type from LTI JWT (for Step 4 bridge debug). */
+  customToolTypeFromJwt?: string;
+  /** SPA path used for post-launch redirect (e.g. /flashcards). Set at launch for bridge debug log. */
+  redirectPath?: string;
   roles: string;
   resourceLinkTitle?: string;
   assignmentNameSynced?: boolean;
@@ -17,4 +23,8 @@ export interface LtiContext {
   canvasBaseUrl?: string;
   /** Canvas OAuth access token — from session after OAuth flow; use for Canvas API, not LTI JWT */
   canvasAccessToken?: string;
+  /** AGS lineitems URL from launch JWT (for Step 11b). Canvas sends when AGS is enabled on the Developer Key. */
+  agsLineitemsUrl?: string;
+  /** AGS single lineitem URL from launch JWT (optional; Canvas may send for specific resource links). */
+  agsLineitemUrl?: string;
 }

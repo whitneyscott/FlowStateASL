@@ -1,0 +1,59 @@
+{
+  "title": "ASL Express",
+  "description": "ASL Express: Flashcards and Prompter tools. Teachers add links via Link Selection (Deep Linking); students launch from Course Navigation or module links.",
+  "oidc_initiation_url": "https://flowstateasl.onrender.com/api/lti/oidc/login",
+  "target_link_uri": "https://flowstateasl.onrender.com/api/lti/launch",
+  "redirect_uris": ["https://flowstateasl.onrender.com/api/lti/launch"],
+  "scopes": [],
+  "extensions": [
+    {
+      "domain": "flowstateasl.onrender.com",
+      "tool_id": "asl-express",
+      "platform": "canvas.instructure.com",
+      "privacy_level": "public",
+      "settings": {
+        "text": "ASL Express",
+        "placements": [
+          {
+            "placement": "course_navigation",
+            "message_type": "LtiResourceLinkRequest",
+            "target_link_uri": "https://flowstateasl.onrender.com/api/lti/launch",
+            "text": "ASL Express",
+            "selection_height": 800,
+            "selection_width": 1000,
+            "custom_fields": {
+              "course_id": "$Canvas.course.id",
+              "assignment_id": "$Canvas.assignment.id",
+              "user_id": "$Canvas.user.id",
+              "module_id": "$Canvas.module.id",
+              "roles": "$Canvas.membership.roles"
+            }
+          },
+          {
+            "placement": "link_selection",
+            "message_type": "LtiDeepLinkingRequest",
+            "target_link_uri": "https://flowstateasl.onrender.com/api/lti/launch",
+            "text": "ASL Express (Flashcards or Prompter)",
+            "selection_height": 600,
+            "selection_width": 800,
+            "custom_fields": {
+              "course_id": "$Canvas.course.id",
+              "assignment_id": "$Canvas.assignment.id",
+              "user_id": "$Canvas.user.id",
+              "module_id": "$Canvas.module.id",
+              "roles": "$Canvas.membership.roles"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "public_jwk_url": "https://flowstateasl.onrender.com/api/lti/jwks",
+  "custom_fields": {
+    "course_id": "$Canvas.course.id",
+    "assignment_id": "$Canvas.assignment.id",
+    "user_id": "$Canvas.user.id",
+    "module_id": "$Canvas.module.id",
+    "roles": "$Canvas.membership.roles"
+  }
+}
