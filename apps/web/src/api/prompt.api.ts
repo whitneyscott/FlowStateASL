@@ -85,6 +85,26 @@ export async function uploadVideo(blob: Blob, filename: string): Promise<{ fileI
   return data as { fileId: string };
 }
 
+/**
+ * Deep Linking (homework_submission): POST video and get HTML form that auto-posts
+ * to Canvas deep_link_return_url. Caller should render the HTML (e.g. document.write)
+ * so the form submits and Canvas attaches the file.
+ */
+export async function submitDeepLink(blob: Blob, filename: string): Promise<string> {
+  const form = new FormData();
+  form.append('video', blob, filename);
+  const res = await fetch(base + '/submit-deep-link', {
+    method: 'POST',
+    body: form,
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error((data as { message?: string }).message ?? `HTTP ${res.status}`);
+  }
+  return res.text();
+}
+
 export interface PromptSubmission {
   userId: string;
   userName?: string;
@@ -93,6 +113,11 @@ export interface PromptSubmission {
   grade?: string;
   submissionComments?: Array<{ id: number; comment: string }>;
   videoUrl?: string;
+}
+
+export async function getSubmissionCount(): Promise<number> {
+  const data = await fetchJson<{ count: number }>(base + '/submission-count');
+  return data?.count ?? 0;
 }
 
 export async function getSubmissions(): Promise<PromptSubmission[]> {

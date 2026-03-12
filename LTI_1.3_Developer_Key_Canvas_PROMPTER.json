@@ -45,6 +45,22 @@
               "roles": "$Canvas.membership.roles",
               "tool_type": "prompter"
             }
+          },
+          {
+            "placement": "homework_submission",
+            "message_type": "LtiDeepLinkingRequest",
+            "target_link_uri": "https://flowstateasl.onrender.com/api/lti/launch",
+            "text": "ASL Express – Record video",
+            "selection_width": 1024,
+            "selection_height": 768,
+            "custom_fields": {
+              "course_id": "$Canvas.course.id",
+              "assignment_id": "$Canvas.assignment.id",
+              "user_id": "$Canvas.user.id",
+              "module_id": "$Canvas.module.id",
+              "roles": "$Canvas.membership.roles",
+              "tool_type": "prompter"
+            }
           }
         ]
       }

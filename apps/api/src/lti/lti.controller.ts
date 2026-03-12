@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Body, Res, Req, Query } from '@nestjs/common';
+import { Controller, Post, Get, Body, Res, Req, Query, Param } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { randomBytes } from 'crypto';
 import { ConfigService } from '@nestjs/config';
@@ -6,6 +6,7 @@ import { LtiService } from './lti.service';
 import { LtiJwksService } from './lti-jwks.service';
 import { Lti13LaunchService } from './lti13-launch.service';
 import { AssessmentService } from '../assessment/assessment.service';
+import { LtiDeepLinkFileStore } from './lti-deep-link-file.store';
 import { setLtiToken, consumeLtiToken } from './lti-token.store';
 import { setOidcState, consumeOidcState } from './lti-oidc-state.store';
 import { setLastError, appendLtiLog } from '../common/last-error.store';
@@ -21,6 +22,7 @@ export class LtiController {
     private readonly lti13: Lti13LaunchService,
     private readonly assessmentService: AssessmentService,
     private readonly config: ConfigService,
+    private readonly deepLinkFileStore: LtiDeepLinkFileStore,
   ) {}
 
   @Post('launch/flashcards')
@@ -133,6 +135,24 @@ export class LtiController {
   async jwks(@Res() res: Response) {
     const jwks = await this.ltiJwks.getJwks();
     res.json(jwks);
+  }
+
+  /**
+   * One-time file URL for Deep Linking: Canvas GETs this URL to download the submitted file.
+   * Token is consumed on first access.
+   */
+  @Get('deep-link-file/:token')
+  async deepLinkFile(
+    @Param('token') token: string,
+    @Res() res: Response,
+  ) {
+    const file = this.deepLinkFileStore.consume(token);
+    if (!file) {
+      return res.status(404).send('File not found or expired');
+    }
+    res.setHeader('Content-Type', file.contentType);
+    res.setHeader('Content-Disposition', 'attachment; filename="asl_submission.webm"');
+    return res.send(file.buffer);
   }
 
   @Get('oidc/login')

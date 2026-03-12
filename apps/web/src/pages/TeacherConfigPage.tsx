@@ -107,7 +107,6 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setMinutes(5);
     setPrompts([]);
     setAccessCode('');
-    setAssignmentName('');
     setSaving(true);
     setError(null);
     setSaved(false);

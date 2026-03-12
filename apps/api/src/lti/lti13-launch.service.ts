@@ -15,6 +15,8 @@ const LTI_RESOURCE_LINK = 'https://purl.imsglobal.org/spec/lti/claim/resource_li
 const LTI_CONTEXT = 'https://purl.imsglobal.org/spec/lti/claim/context';
 const LTI_CUSTOM = 'https://purl.imsglobal.org/spec/lti/claim/custom';
 const LTI_DEPLOYMENT_ID = 'https://purl.imsglobal.org/spec/lti/claim/deployment_id';
+/** Deep Linking request: deep_link_return_url and data. */
+const LTI_DL_SETTINGS = 'https://purl.imsglobal.org/spec/lti-dl/claim/deep_linking_settings';
 /** AGS endpoint claim: { lineitems, lineitem?, scope[] } */
 const LTI_AGS_ENDPOINT = 'https://purl.imsglobal.org/spec/lti-ags/claim/endpoint';
 /** Maps custom.tool_type from LTI JWT to our toolType. Unmapped values default to 'flashcards'. */
@@ -186,6 +188,19 @@ export class Lti13LaunchService {
       // ignore
     }
 
+    const messageType = (payload[LTI_MSG_TYPE] as string) ?? 'LtiResourceLinkRequest';
+    let deepLinkReturnUrl: string | undefined;
+    let deepLinkData: string | undefined;
+    if (messageType === 'LtiDeepLinkingRequest') {
+      const dlSettings = (payload[LTI_DL_SETTINGS] as { deep_link_return_url?: string; data?: string }) ?? {};
+      deepLinkReturnUrl = (dlSettings.deep_link_return_url ?? '').toString().trim() || undefined;
+      const dataVal = dlSettings.data;
+      deepLinkData = dataVal != null ? String(dataVal) : undefined;
+    }
+
+    const platformIss = iss?.toString().trim();
+    const deploymentId = (payload[LTI_DEPLOYMENT_ID] as string)?.toString().trim() || undefined;
+
     return {
       courseId,
       assignmentId,
@@ -201,6 +216,11 @@ export class Lti13LaunchService {
       canvasBaseUrl,
       agsLineitemsUrl,
       agsLineitemUrl,
+      messageType: messageType === 'LtiDeepLinkingRequest' ? 'LtiDeepLinkingRequest' : 'LtiResourceLinkRequest',
+      deepLinkReturnUrl,
+      deepLinkData,
+      platformIss,
+      deploymentId,
     };
   }
 

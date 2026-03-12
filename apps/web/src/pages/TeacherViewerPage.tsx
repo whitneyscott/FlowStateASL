@@ -36,6 +36,7 @@ function parseBody(body: string | undefined): { promptSnapshotHtml?: string; sub
 export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   const { setLastFunction, setLastApiResult, setLastApiError } = useDebug();
   const [submissions, setSubmissions] = useState<promptApi.PromptSubmission[]>([]);
+  const [submissionCount, setSubmissionCount] = useState<number | null>(null);
   const [assignment, setAssignment] = useState<{ pointsPossible?: number; rubric?: Array<unknown> } | null>(null);
   const [loading, setLoading] = useState(true);
   const [index, setIndex] = useState(0);
@@ -56,12 +57,14 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     setError(null);
     try {
       setLastFunction('GET /api/prompt/submissions');
-      const [subs, assign] = await Promise.all([
+      const [subs, assign, count] = await Promise.all([
         promptApi.getSubmissions(),
         promptApi.getAssignment(),
+        promptApi.getSubmissionCount(),
       ]);
       setLastApiResult('GET /api/prompt/submissions', 200, true);
       setSubmissions(Array.isArray(subs) ? subs : []);
+      setSubmissionCount(count);
       setAssignment(assign ?? null);
       setIndex(0);
     } catch (e) {
@@ -156,6 +159,9 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     <div className="prompter-page">
       <div className="prompter-card">
         <h1>Grade Submissions</h1>
+        {submissionCount != null && (
+          <p className="prompter-info-message prompter-viewer-count">{submissionCount} submission{submissionCount !== 1 ? 's' : ''}</p>
+        )}
         {error && <div className="prompter-alert-error">{error}</div>}
         <div className="prompter-viewer-nav">
           <button

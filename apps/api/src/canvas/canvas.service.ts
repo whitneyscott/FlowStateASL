@@ -528,6 +528,39 @@ export class CanvasService {
     return created;
   }
 
+  /** Find or create the "Prompt Manager – Grades" shadow assignment for gradebook column (grades only; video stays on visible assignment). */
+  async ensureShadowAssignment(
+    ctx: LtiContext,
+    config: { pointsPossible?: number },
+    tokenOverride?: string | null,
+  ): Promise<string> {
+    const title = 'Prompt Manager – Grades';
+    const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
+    const existing = await this.findAssignmentByTitle(ctx.courseId, title, domainOverride, tokenOverride);
+    if (existing) return existing;
+    const assignmentGroupId = await this.ensureAssignmentGroup(
+      ctx.courseId,
+      title,
+      config.pointsPossible ?? 100,
+      domainOverride,
+      tokenOverride,
+    );
+    return this.createAssignment(
+      ctx.courseId,
+      title,
+      {
+        submissionTypes: ['on_paper'],
+        pointsPossible: config.pointsPossible ?? 100,
+        published: true,
+        description: 'ASL Express Prompt Manager – grades only (video submitted on the main assignment).',
+        assignmentGroupId,
+        omitFromFinalGrade: false,
+        tokenOverride,
+      },
+      domainOverride,
+    );
+  }
+
   async ensureFlashcardProgressAssignment(
     courseId: string,
     domainOverride?: string,

@@ -18,4 +18,14 @@ export interface LtiContext {
   agsLineitemsUrl?: string;
   /** AGS single lineitem URL from launch JWT. */
   agsLineitemUrl?: string;
+  /** When message_type is LtiDeepLinkingRequest (e.g. homework_submission). */
+  messageType?: 'LtiResourceLinkRequest' | 'LtiDeepLinkingRequest';
+  /** Deep Linking: URL where the tool must POST the LtiDeepLinkingResponse JWT. */
+  deepLinkReturnUrl?: string;
+  /** Deep Linking: opaque data from platform to echo back in the response. */
+  deepLinkData?: string;
+  /** Platform issuer from launch JWT (for Deep Linking response aud). */
+  platformIss?: string;
+  /** Deployment ID from launch JWT (for Deep Linking response). */
+  deploymentId?: string;
 }

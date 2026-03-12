@@ -110,6 +110,38 @@ export class PromptController {
     return { status: 'success', fileId: result.fileId };
   }
 
+  /**
+   * Deep Linking (homework_submission): accept video, return HTML form that auto-posts
+   * LtiDeepLinkingResponse to Canvas deep_link_return_url so Canvas attaches the file.
+   */
+  @Post('submit-deep-link')
+  @UseInterceptors(FileInterceptor('video'))
+  async submitDeepLink(
+    @Req() req: Request,
+    @Res() res: Response,
+    @UploadedFile() file: { buffer?: Buffer; originalname?: string; mimetype?: string } | undefined,
+  ) {
+    const ctx = this.getCtx(req);
+    if (!file?.buffer) {
+      throw new BadRequestException('No video file provided');
+    }
+    const html = await this.prompt.submitDeepLink(
+      ctx,
+      Buffer.from(file.buffer),
+      file.mimetype || 'video/webm',
+      file.originalname,
+    );
+    return res.type('html').send(html);
+  }
+
+  @Get('submission-count')
+  @UseGuards(TeacherRoleGuard)
+  async getSubmissionCount(@Req() req: Request) {
+    const ctx = this.getCtx(req);
+    const count = await this.prompt.getSubmissionCount(ctx);
+    return { count };
+  }
+
   @Get('submissions')
   @UseGuards(TeacherRoleGuard)
   async getSubmissions(@Req() req: Request) {

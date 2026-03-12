@@ -42,14 +42,26 @@ export default function TimerPage({ context }: TimerPageProps) {
     async (promptSnapshot: string, blob: Blob | null) => {
       setSubmitError(null);
       setPhase(blob ? 'upload' : 'done');
+      const isDeepLink = context?.messageType === 'LtiDeepLinkingRequest';
       try {
         setLastFunction('POST /api/prompt/save-prompt');
         await promptApi.savePrompt(promptSnapshot);
         setLastApiResult('POST /api/prompt/save-prompt', 200, true);
-        setLastFunction('POST /api/prompt/submit');
-        await promptApi.submitPrompt(promptSnapshot);
-        setLastApiResult('POST /api/prompt/submit', 200, true);
-        if (blob) {
+        if (isDeepLink && blob) {
+          setLastFunction('POST /api/prompt/submit-deep-link');
+          const html = await promptApi.submitDeepLink(blob, `asl_submission_${Date.now()}.webm`);
+          setLastApiResult('POST /api/prompt/submit-deep-link', 200, true);
+          document.open();
+          document.write(html);
+          document.close();
+          return;
+        }
+        if (!isDeepLink) {
+          setLastFunction('POST /api/prompt/submit');
+          await promptApi.submitPrompt(promptSnapshot);
+          setLastApiResult('POST /api/prompt/submit', 200, true);
+        }
+        if (blob && !isDeepLink) {
           setLastFunction('POST /api/prompt/upload-video');
           await promptApi.uploadVideo(blob, `asl_submission_${Date.now()}.webm`);
           setLastApiResult('POST /api/prompt/upload-video', 200, true);
@@ -60,7 +72,7 @@ export default function TimerPage({ context }: TimerPageProps) {
         setLastApiError('POST /api/prompt/submit', 0, String(e));
       }
     },
-    [setLastFunction, setLastApiResult, setLastApiError]
+    [context?.messageType, setLastFunction, setLastApiResult, setLastApiError]
   );
 
   useEffect(() => {

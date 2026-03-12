@@ -3,9 +3,12 @@ import { ASSESSMENT_REPOSITORY, PROMPT_DATA_REPOSITORY } from '../data/tokens';
 import type { IAssessmentRepository } from '../data/interfaces/assessment-repository.interface';
 import type { IPromptDataRepository } from '../data/interfaces/prompt-data-repository.interface';
 import { appendLtiLog } from '../common/last-error.store';
+import { ConfigService } from '@nestjs/config';
 import { CanvasService } from '../canvas/canvas.service';
 import { CourseSettingsService } from '../course-settings/course-settings.service';
 import { LtiAgsService } from '../lti/lti-ags.service';
+import { LtiDeepLinkFileStore } from '../lti/lti-deep-link-file.store';
+import { LtiDeepLinkResponseService } from '../lti/lti-deep-link-response.service';
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
 import type { PromptConfigJson, PutPromptConfigDto } from './dto/prompt-config.dto';
 
@@ -38,9 +41,12 @@ export class PromptService {
   constructor(
     @Inject(ASSESSMENT_REPOSITORY) private readonly assessmentRepo: IAssessmentRepository,
     @Inject(PROMPT_DATA_REPOSITORY) private readonly promptDataRepo: IPromptDataRepository,
+    private readonly config: ConfigService,
     private readonly canvas: CanvasService,
     private readonly courseSettings: CourseSettingsService,
     private readonly ltiAgs: LtiAgsService,
+    private readonly deepLinkFileStore: LtiDeepLinkFileStore,
+    private readonly deepLinkResponse: LtiDeepLinkResponseService,
   ) {}
 
   private async getPrompterAssignmentId(ctx: LtiContext): Promise<string> {
@@ -126,6 +132,12 @@ export class PromptService {
       ...(dto.shadowAssignmentId !== undefined && { shadowAssignmentId: dto.shadowAssignmentId }),
       ...(dto.version !== undefined && { version: dto.version }),
     };
+    const shadowId = await this.canvas.ensureShadowAssignment(
+      ctx,
+      { pointsPossible: merged.pointsPossible },
+      token,
+    );
+    merged.shadowAssignmentId = shadowId;
     const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
     const description = `<div style="display:none">${JSON.stringify(merged)}</div>`;
     await this.canvas.updateAssignmentDescription(
@@ -250,6 +262,49 @@ export class PromptService {
     return { fileId };
   }
 
+  /**
+   * Deep Linking (e.g. homework_submission): store file for one-time GET, build LtiDeepLinkingResponse
+   * JWT and return HTML form that auto-posts to Canvas deep_link_return_url.
+   */
+  async submitDeepLink(
+    ctx: LtiContext,
+    buffer: Buffer,
+    contentType: string,
+    filename?: string,
+  ): Promise<string> {
+    if (ctx.messageType !== 'LtiDeepLinkingRequest' || !ctx.deepLinkReturnUrl) {
+      throw new Error('Deep Linking context required (messageType LtiDeepLinkingRequest and deepLinkReturnUrl)');
+    }
+    const token = this.deepLinkFileStore.set(buffer, contentType);
+    const appUrl = (this.config.get<string>('APP_URL') ?? '').trim().replace(/\/$/, '')
+      || `http://localhost:${this.config.get('PORT') ?? 3000}`;
+    const fileUrl = `${appUrl}/api/lti/deep-link-file/${token}`;
+    const title = filename?.replace(/\.[^.]+$/, '') || 'ASL submission';
+    const html = this.deepLinkResponse.buildResponseHtml(ctx, fileUrl, title);
+    appendLtiLog('prompt', 'submit-deep-link', {
+      courseId: ctx.courseId,
+      assignmentId: ctx.assignmentId,
+      userId: ctx.userId,
+      success: true,
+    });
+    return html;
+  }
+
+  /** Submission count for the visible assignment (for teacher UI). Uses ctx.assignmentId when present. */
+  async getSubmissionCount(ctx: LtiContext): Promise<number> {
+    const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
+    if (!token) return 0;
+    const assignmentId = ctx.assignmentId?.trim() || (await this.getPrompterAssignmentId(ctx));
+    const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
+    const list = await this.canvas.listSubmissions(
+      ctx.courseId,
+      assignmentId,
+      domainOverride,
+      token,
+    );
+    return list.filter((s) => s.attachment?.url || (s.attachments?.length ?? 0) > 0).length;
+  }
+
   async getSubmissions(ctx: LtiContext): Promise<
     Array<{
       userId: string;
@@ -296,10 +351,22 @@ export class PromptService {
     if (!token) {
       throw new Error('Canvas OAuth token required');
     }
-    const assignmentId = await this.getPrompterAssignmentId(ctx);
+    const config = await this.getConfig(ctx);
+    const shadowId = config?.shadowAssignmentId?.trim();
     const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
+    const assignmentId = shadowId || (await this.getPrompterAssignmentId(ctx));
 
-    if (rubricAssessment && Object.keys(rubricAssessment).length > 0) {
+    if (shadowId) {
+      const postedGrade = scoreMaximum > 0 ? `${score}/${scoreMaximum}` : String(score);
+      await this.canvas.putSubmissionGrade(
+        ctx.courseId,
+        assignmentId,
+        userId,
+        { postedGrade },
+        domainOverride,
+        token,
+      );
+    } else if (rubricAssessment && Object.keys(rubricAssessment).length > 0) {
       await this.canvas.putSubmissionGrade(
         ctx.courseId,
         assignmentId,
