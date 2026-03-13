@@ -5,6 +5,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Param,
   Post,
   Put,
   Req,
@@ -20,6 +21,7 @@ import { LtiLaunchGuard } from '../lti/guards/lti-launch.guard';
 import { TeacherRoleGuard } from '../common/guards/teacher-role.guard';
 import { CanvasTokenExpiredError } from '../canvas/canvas.service';
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
+import { sanitizeLtiContext } from '../common/utils/lti-context-value.util';
 import { PromptService } from './prompt.service';
 import { PutPromptConfigDto } from './dto/prompt-config.dto';
 import { VerifyAccessDto } from './dto/verify-access.dto';
@@ -32,22 +34,36 @@ import {
   DeleteCommentDto,
 } from './dto/comment.dto';
 import { ResetAttemptDto } from './dto/reset-attempt.dto';
+import { LtiDeepLinkFileStore } from '../lti/lti-deep-link-file.store';
 
 @Controller('prompt')
 @UseGuards(LtiLaunchGuard)
 export class PromptController {
-  constructor(private readonly prompt: PromptService) {}
+  constructor(
+    private readonly prompt: PromptService,
+    private readonly deepLinkFileStore: LtiDeepLinkFileStore,
+  ) {}
 
   private getCtx(req: Request): LtiContext {
-    const ctx = req.session?.ltiContext as LtiContext | undefined;
-    if (!ctx) throw new ForbiddenException('LTI context required');
+    const raw = req.session?.ltiContext as LtiContext | undefined;
+    if (!raw) throw new ForbiddenException('LTI context required');
+    const ctx = sanitizeLtiContext(raw) as LtiContext;
     const canvasAccessToken = (req.session as { canvasAccessToken?: string })?.canvasAccessToken;
     return { ...ctx, canvasAccessToken };
   }
 
+  /** Merge assignmentId from query into ctx for teacher endpoints (course_navigation has no assignment). */
+  private getCtxWithAssignment(req: Request): LtiContext {
+    const ctx = this.getCtx(req);
+    const q = req.query as { assignmentId?: string };
+    const aid = (q?.assignmentId ?? '').toString().trim();
+    if (aid) return { ...ctx, assignmentId: aid };
+    return ctx;
+  }
+
   @Get('config')
   async getConfig(@Req() req: Request, @Res() res: Response) {
-    const ctx = this.getCtx(req);
+    const ctx = this.getCtxWithAssignment(req);
     try {
       const config = await this.prompt.getConfig(ctx);
       return res.json(config);
@@ -63,9 +79,20 @@ export class PromptController {
   }
 
   @Put('config')
-  async putConfig(@Req() req: Request, @Body() dto: PutPromptConfigDto) {
-    const ctx = this.getCtx(req);
-    await this.prompt.putConfig(ctx, dto);
+  async putConfig(@Req() req: Request, @Res() res: Response, @Body() dto: PutPromptConfigDto) {
+    const ctx = this.getCtxWithAssignment(req);
+    try {
+      await this.prompt.putConfig(ctx, dto);
+      return res.status(204).send();
+    } catch (err) {
+      if (err instanceof CanvasTokenExpiredError) {
+        return res.status(401).json({
+          error: 'Canvas token expired',
+          redirectToOAuth: true,
+        });
+      }
+      throw err;
+    }
   }
 
   @Post('verify-access')
@@ -111,6 +138,24 @@ export class PromptController {
   }
 
   /**
+   * Retrieve a submission video by token (from ltiResourceLink custom.submission_token).
+   * Streams the stored video buffer. Returns 404 if token is missing or expired.
+   */
+  @Get('submission/:token')
+  async getSubmission(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Param() params: { token: string },
+  ) {
+    const token = (params?.token ?? '').toString().trim();
+    if (!token) return res.status(404).send();
+    const file = this.deepLinkFileStore.get(token);
+    if (!file) return res.status(404).send('Not found or expired');
+    res.setHeader('Content-Type', file.contentType);
+    return res.send(file.buffer);
+  }
+
+  /**
    * Deep Linking (homework_submission): accept video, return HTML form that auto-posts
    * LtiDeepLinkingResponse to Canvas deep_link_return_url so Canvas attaches the file.
    */
@@ -137,7 +182,7 @@ export class PromptController {
   @Get('submission-count')
   @UseGuards(TeacherRoleGuard)
   async getSubmissionCount(@Req() req: Request) {
-    const ctx = this.getCtx(req);
+    const ctx = this.getCtxWithAssignment(req);
     const count = await this.prompt.getSubmissionCount(ctx);
     return { count };
   }
@@ -145,14 +190,14 @@ export class PromptController {
   @Get('submissions')
   @UseGuards(TeacherRoleGuard)
   async getSubmissions(@Req() req: Request) {
-    const ctx = this.getCtx(req);
+    const ctx = this.getCtxWithAssignment(req);
     return this.prompt.getSubmissions(ctx);
   }
 
   @Post('grade')
   @HttpCode(HttpStatus.OK)
   async grade(@Req() req: Request, @Body() dto: GradeDto) {
-    const ctx = this.getCtx(req);
+    const ctx = this.getCtxWithAssignment(req);
     await this.prompt.grade(
       ctx,
       dto.userId,
@@ -168,7 +213,7 @@ export class PromptController {
   @HttpCode(HttpStatus.OK)
   @UseGuards(TeacherRoleGuard)
   async addComment(@Req() req: Request, @Body() dto: AddCommentDto) {
-    const ctx = this.getCtx(req);
+    const ctx = this.getCtxWithAssignment(req);
     const result = await this.prompt.addComment(
       ctx,
       dto.userId,
@@ -182,7 +227,7 @@ export class PromptController {
   @Post('comment/edit')
   @HttpCode(HttpStatus.OK)
   async editComment(@Req() req: Request, @Body() dto: EditCommentDto) {
-    const ctx = this.getCtx(req);
+    const ctx = this.getCtxWithAssignment(req);
     await this.prompt.editComment(ctx, dto.userId, dto.commentId, dto.time, dto.text);
     return { ok: true };
   }
@@ -191,7 +236,7 @@ export class PromptController {
   @HttpCode(HttpStatus.OK)
   @UseGuards(TeacherRoleGuard)
   async deleteComment(@Req() req: Request, @Body() dto: DeleteCommentDto) {
-    const ctx = this.getCtx(req);
+    const ctx = this.getCtxWithAssignment(req);
     await this.prompt.deleteComment(ctx, dto.userId, dto.commentId);
     return { ok: true };
   }
@@ -199,7 +244,7 @@ export class PromptController {
   @Post('reset-attempt')
   @HttpCode(HttpStatus.OK)
   async resetAttempt(@Req() req: Request, @Body() dto: ResetAttemptDto) {
-    const ctx = this.getCtx(req);
+    const ctx = this.getCtxWithAssignment(req);
     await this.prompt.resetAttempt(ctx, dto.userId);
     return { ok: true };
   }
@@ -207,8 +252,93 @@ export class PromptController {
   @Get('assignment')
   @UseGuards(TeacherRoleGuard)
   async getAssignment(@Req() req: Request) {
-    const ctx = this.getCtx(req);
+    const ctx = this.getCtxWithAssignment(req);
     const result = await this.prompt.getAssignmentForGrading(ctx);
     return result ?? { pointsPossible: null, rubric: null };
+  }
+
+  @Get('configured-assignments')
+  @UseGuards(TeacherRoleGuard)
+  async getConfiguredAssignments(@Req() req: Request, @Res() res: Response) {
+    const ctx = this.getCtx(req);
+    try {
+      const list = await this.prompt.getConfiguredAssignments(ctx);
+      return res.json(list);
+    } catch (err) {
+      if (err instanceof CanvasTokenExpiredError) {
+        return res.status(401).json({
+          error: 'Canvas token expired',
+          redirectToOAuth: true,
+        });
+      }
+      throw err;
+    }
+  }
+
+  @Get('modules')
+  @UseGuards(TeacherRoleGuard)
+  async getModules(@Req() req: Request, @Res() res: Response) {
+    const ctx = this.getCtx(req);
+    try {
+      const list = await this.prompt.getModules(ctx);
+      return res.json(list);
+    } catch (err) {
+      if (err instanceof CanvasTokenExpiredError) {
+        return res.status(401).json({
+          error: 'Canvas token expired',
+          redirectToOAuth: true,
+        });
+      }
+      throw err;
+    }
+  }
+
+  @Post('modules')
+  @HttpCode(HttpStatus.CREATED)
+  @UseGuards(TeacherRoleGuard)
+  async createModule(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Body() body: { name?: string; position?: number },
+  ) {
+    const ctx = this.getCtx(req);
+    const name = (body?.name ?? '').toString().trim() || 'New Module';
+    const position = typeof body?.position === 'number' ? body.position : undefined;
+    try {
+      const module = await this.prompt.createModule(ctx, name, position);
+      return res.status(HttpStatus.CREATED).json(module);
+    } catch (err) {
+      if (err instanceof CanvasTokenExpiredError) {
+        return res.status(401).json({
+          error: 'Canvas token expired',
+          redirectToOAuth: true,
+        });
+      }
+      throw err;
+    }
+  }
+
+  @Post('create-assignment')
+  @HttpCode(HttpStatus.CREATED)
+  @UseGuards(TeacherRoleGuard)
+  async createAssignment(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Body() body: { name?: string },
+  ) {
+    const ctx = this.getCtx(req);
+    const name = (body?.name ?? '').toString().trim() || 'ASL Express Assignment';
+    try {
+      const result = await this.prompt.createPromptManagerAssignment(ctx, name);
+      return res.status(HttpStatus.CREATED).json(result);
+    } catch (err) {
+      if (err instanceof CanvasTokenExpiredError) {
+        return res.status(401).json({
+          error: 'Canvas token expired',
+          redirectToOAuth: true,
+        });
+      }
+      throw err;
+    }
   }
 }

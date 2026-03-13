@@ -37,4 +37,6 @@ export interface LtiContext {
   platformIss?: string;
   /** Deployment ID from launch JWT (for Deep Linking response). */
   deploymentId?: string;
+  /** From ltiResourceLink custom: when viewing a homework submission, Canvas passes this. */
+  submissionToken?: string;
 }

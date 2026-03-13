@@ -43,11 +43,13 @@ export default function TimerPage({ context }: TimerPageProps) {
       setSubmitError(null);
       setPhase(blob ? 'upload' : 'done');
       const isDeepLink = context?.messageType === 'LtiDeepLinkingRequest';
+      let lastEndpoint = 'POST /api/prompt/save-prompt';
       try {
         setLastFunction('POST /api/prompt/save-prompt');
         await promptApi.savePrompt(promptSnapshot);
         setLastApiResult('POST /api/prompt/save-prompt', 200, true);
         if (isDeepLink && blob) {
+          lastEndpoint = 'POST /api/prompt/submit-deep-link';
           setLastFunction('POST /api/prompt/submit-deep-link');
           const html = await promptApi.submitDeepLink(blob, `asl_submission_${Date.now()}.webm`);
           setLastApiResult('POST /api/prompt/submit-deep-link', 200, true);
@@ -57,11 +59,13 @@ export default function TimerPage({ context }: TimerPageProps) {
           return;
         }
         if (!isDeepLink) {
+          lastEndpoint = 'POST /api/prompt/submit';
           setLastFunction('POST /api/prompt/submit');
           await promptApi.submitPrompt(promptSnapshot);
           setLastApiResult('POST /api/prompt/submit', 200, true);
         }
         if (blob && !isDeepLink) {
+          lastEndpoint = 'POST /api/prompt/upload-video';
           setLastFunction('POST /api/prompt/upload-video');
           await promptApi.uploadVideo(blob, `asl_submission_${Date.now()}.webm`);
           setLastApiResult('POST /api/prompt/upload-video', 200, true);
@@ -69,7 +73,7 @@ export default function TimerPage({ context }: TimerPageProps) {
         setPhase('done');
       } catch (e) {
         setSubmitError(e instanceof Error ? e.message : 'Submit failed');
-        setLastApiError('POST /api/prompt/submit', 0, String(e));
+        setLastApiError(lastEndpoint, 0, String(e));
       }
     },
     [context?.messageType, setLastFunction, setLastApiResult, setLastApiError]
@@ -244,6 +248,19 @@ export default function TimerPage({ context }: TimerPageProps) {
       <div className="prompter-page">
         <div className="prompter-card">
           <p className="prompter-info-message">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  const isDeepLink = context?.messageType === 'LtiDeepLinkingRequest';
+  if (isDeepLink && config === null && !loading) {
+    return (
+      <div className="prompter-page">
+        <div className="prompter-card">
+          <p className="prompter-info-message">
+            This assignment is not configured for ASL Express. Please use the standard file upload tab instead.
+          </p>
         </div>
       </div>
     );

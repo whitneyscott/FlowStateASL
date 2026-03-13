@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Body, Res, Req, Query, Param } from '@nestjs/common';
+import { Controller, Post, Get, Body, Res, Req, Param } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { randomBytes } from 'crypto';
 import { ConfigService } from '@nestjs/config';
@@ -13,6 +13,7 @@ import { setLastError, appendLtiLog } from '../common/last-error.store';
 import { renderLtiLaunchErrorHtml } from './lti-error.util';
 import { getRedirectPathForToolType } from './lti-redirect.util';
 import { persistLtiContextAndRedirect } from './lti-launch-finish.util';
+import { sanitizeLtiContext } from '../common/utils/lti-context-value.util';
 
 @Controller('lti')
 export class LtiController {
@@ -98,7 +99,7 @@ export class LtiController {
     const ctx = req.session?.ltiContext;
     if (ctx) {
       console.log('[LTI] context from session', { courseId: ctx.courseId, roles: ctx.roles?.slice(0, 30) });
-      return ctx;
+      return sanitizeLtiContext(ctx);
     }
     const token = (req.query.lti_token as string) ?? '';
     if (token) {
@@ -106,7 +107,7 @@ export class LtiController {
       if (tokenCtx) {
         console.log('[LTI] context from token', { courseId: tokenCtx.courseId });
         if (req.session) {
-          req.session.ltiContext = tokenCtx;
+          req.session.ltiContext = sanitizeLtiContext(tokenCtx) as typeof tokenCtx;
           req.session.save((err) => {
             if (err) console.error('[LTI] session save failed after lti_token', err);
             else console.log('[LTI] session saved with ltiContext, sessionId=', req.sessionID?.slice(0, 16));
@@ -114,7 +115,7 @@ export class LtiController {
         } else {
           console.warn('[LTI] lti_token success but req.session is null - no cookie will be set');
         }
-        return tokenCtx;
+        return sanitizeLtiContext(tokenCtx);
       }
       console.warn('[LTI] lti_token present but consumeLtiToken returned null (token unknown/expired, possible multi-instance)');
     } else {
@@ -138,21 +139,47 @@ export class LtiController {
   }
 
   /**
-   * One-time file URL for Deep Linking: Canvas GETs this URL to download the submitted file.
-   * Token is consumed on first access.
+   * Serve deep-link video file for Canvas to fetch (file content item).
+   * Supports Range requests for seeking.
    */
   @Get('deep-link-file/:token')
   async deepLinkFile(
-    @Param('token') token: string,
+    @Param('token') tokenParam: string,
+    @Req() req: Request,
     @Res() res: Response,
   ) {
-    const file = this.deepLinkFileStore.consume(token);
-    if (!file) {
-      return res.status(404).send('File not found or expired');
+    const token = (tokenParam ?? '').toString().trim();
+    if (!token) return res.status(404).send();
+    const file = this.deepLinkFileStore.get(token);
+    if (!file) return res.status(404).send('Not found or expired');
+    const buffer = file.buffer;
+    const size = buffer.length;
+    const contentType = file.contentType || 'video/webm';
+
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Content-Length', String(size));
+
+    const range = req.headers.range;
+    if (range) {
+      const match = range.match(/^bytes=(\d*)-(\d*)$/);
+      if (match) {
+        let start = match[1] ? parseInt(match[1], 10) : 0;
+        let end = match[2] ? parseInt(match[2], 10) : size - 1;
+        if (Number.isNaN(start)) start = 0;
+        if (Number.isNaN(end) || end >= size) end = size - 1;
+        if (start > end) {
+          return res.status(416).setHeader('Content-Range', `bytes */${size}`).send();
+        }
+        const chunk = buffer.subarray(start, end + 1);
+        res.status(206);
+        res.setHeader('Content-Length', String(chunk.length));
+        res.setHeader('Content-Range', `bytes ${start}-${end}/${size}`);
+        return res.send(chunk);
+      }
     }
-    res.setHeader('Content-Type', file.contentType);
-    res.setHeader('Content-Disposition', 'attachment; filename="asl_submission.webm"');
-    return res.send(file.buffer);
+
+    return res.send(buffer);
   }
 
   @Get('oidc/login')
@@ -176,14 +203,15 @@ export class LtiController {
     const targetLinkUri = (params.target_link_uri ?? params.targetLinkUri ?? '').toString().trim();
     const ltiMessageHint = (params.lti_message_hint ?? params.ltiMessageHint ?? '').toString().trim() || undefined;
     const clientIdParam = (params.client_id ?? params.clientId ?? '').toString().trim() || undefined;
-    const ltiClientIdEnv = (this.config.get<string>('LTI_CLIENT_ID') ?? '').trim();
+    const ltiClientIdEnv = (this.config.get<string>('LTI_CLIENT_ID') ?? process.env.LTI_CLIENT_ID ?? '').trim();
+    const prompterClientIdEnv = (this.config.get<string>('LTI_PROMPTER_CLIENT_ID') ?? process.env.LTI_PROMPTER_CLIENT_ID ?? '').trim();
     // MUST use client_id from Canvas (request) so we use the key Canvas is launching with
-    const clientId = (clientIdParam ?? ltiClientIdEnv ?? '').trim();
+    const clientId = (clientIdParam ?? ltiClientIdEnv ?? prompterClientIdEnv ?? '').trim();
     if (clientIdParam) {
       console.log('[LTI OIDC] client_id from Canvas:', clientId);
       appendLtiLog('oidc', 'client_id from Canvas', { clientId });
     } else {
-      console.warn('[LTI OIDC] WARNING: Canvas did NOT send client_id. Using LTI_CLIENT_ID from .env:', clientId);
+      console.warn('[LTI OIDC] WARNING: Canvas did NOT send client_id. Using .env fallback:', clientId);
       appendLtiLog('oidc', 'WARNING: Canvas did NOT send client_id, using .env fallback', { clientId });
     }
     const redirectUri = (this.config.get<string>('LTI_REDIRECT_URI') ?? '').trim();
@@ -277,12 +305,18 @@ export class LtiController {
       toolType: ctx.toolType,
       canvasBaseUrl: ctx.canvasBaseUrl ?? '(none)',
       canvasDomain: ctx.canvasDomain ?? '(none)',
+      hasSubmissionToken: !!ctx.submissionToken,
     });
-    /* Prompter: do NOT rename the assignment - the tool is placed in the assignment; leave title unchanged. */
     const base = this.config.get<string>('FRONTEND_URL') ?? '';
-    const path = getRedirectPathForToolType(ctx.toolType, this.ltiService.isTeacherRole(ctx.roles));
-    ctx.redirectPath = path;
-    appendLtiLog('launch', 'Redirect path (Step 2)', { path, toolType: ctx.toolType, redirectUrl: `${base}${path}?lti_token=***` });
+    /* When viewing an ltiResourceLink submission, redirect to review page */
+    const buildRedirectUrl = ctx.submissionToken
+      ? (_token: string) => `${base}/prompt/review?token=${encodeURIComponent(ctx.submissionToken!)}`
+      : (() => {
+          const path = getRedirectPathForToolType(ctx.toolType, this.ltiService.isTeacherRole(ctx.roles));
+          ctx.redirectPath = path;
+          appendLtiLog('launch', 'Redirect path (Step 2)', { path, toolType: ctx.toolType, redirectUrl: `${base}${path}?lti_token=***` });
+          return (token: string) => `${base}${path}?lti_token=${token}`;
+        })();
 
     const needsOAuth = !(req.session as { canvasAccessToken?: string })?.canvasAccessToken;
     const oauthConfigured =
@@ -299,9 +333,8 @@ export class LtiController {
       hasCanvasAccessToken: !!(req.session as { canvasAccessToken?: string })?.canvasAccessToken,
     });
 
-    const buildRedirectUrl = (token: string) => `${base}${path}?lti_token=${token}`;
     const options =
-      needsOAuth && oauthConfigured && canvasBaseUrl
+      needsOAuth && oauthConfigured && canvasBaseUrl && !ctx.submissionToken
         ? {
             oauthInitUrlBuilder: (token: string) => {
               const apiBase = this.config.get<string>('APP_URL') ?? `http://localhost:${this.config.get('PORT') ?? 3000}`;

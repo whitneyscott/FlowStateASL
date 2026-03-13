@@ -5,6 +5,8 @@ import * as jwt from 'jsonwebtoken';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const jwkToPem = require('jwk-to-pem') as (jwk: { kty: string; n?: string; e?: string }) => string;
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
+import { appendLtiLog } from '../common/last-error.store';
+import { resolveLtiContextValue } from '../common/utils/lti-context-value.util';
 
 const IS_DEV = process.env.NODE_ENV !== 'production';
 
@@ -44,8 +46,9 @@ export class Lti13LaunchService {
     const iss = unprotected.iss as string;
     const aud = unprotected.aud;
     const audStr = typeof aud === 'string' ? aud : Array.isArray(aud) ? aud[0] : String(aud ?? '');
-    const clientIdFromEnv = (this.config.get<string>('LTI_CLIENT_ID') ?? '').trim();
-    const allowedAudiences = [audStr, clientIdFromEnv].filter(Boolean);
+    const ltiClientId = (this.config.get<string>('LTI_CLIENT_ID') ?? process.env.LTI_CLIENT_ID ?? '').trim();
+    const prompterClientId = (this.config.get<string>('LTI_PROMPTER_CLIENT_ID') ?? process.env.LTI_PROMPTER_CLIENT_ID ?? '').trim();
+    const allowedAudiences = [audStr, ltiClientId, prompterClientId].filter(Boolean);
     const expectedAud = allowedAudiences.length ? allowedAudiences : undefined;
     if (!iss) {
       return { error: 'JWT missing iss claim' };
@@ -66,7 +69,11 @@ export class Lti13LaunchService {
     } catch (err) {
       const msg = (err as Error).message;
       const isKeySizeError = /2048|modulusLength/i.test(msg);
-      if (IS_DEV && isKeySizeError) {
+      // Error is from US verifying Canvas's id_token (launch JWT). Key is Canvas's from Canvas JWKS, not our LTI_PRIVATE_KEY.
+      if (isKeySizeError) {
+        appendLtiLog('launch', 'Key size error when verifying Canvas id_token', { msg, iss, aud: JSON.stringify(aud), isDev: IS_DEV });
+      }
+      if (isKeySizeError) {
         const fallback = await this.verifyWithLegacyKeySupport(idToken, iss, expectedAud, unprotected);
         if (fallback) verified = fallback;
         else return { error: `JWT verification failed: ${msg}. iss=${iss} aud=${JSON.stringify(aud)} exp=${unprotected.exp} iat=${unprotected.iat}` };
@@ -160,16 +167,18 @@ export class Lti13LaunchService {
     const roles = (payload[LTI_ROLES] as string[]) ?? [];
 
     // For Canvas API: use custom.course_id ($Canvas.course.id = numeric) over context.id (opaque LTI hash)
-    const courseId = (custom.course_id ?? context.id ?? '').toString();
+    const courseId = resolveLtiContextValue((custom.course_id ?? context.id ?? '').toString());
     const userId = sub;
-    const canvasUserId = (custom.user_id ?? '').toString().trim() || undefined;
-    const resourceLinkId = (resourceLink.id ?? '').toString();
+    const canvasUserIdRaw = resolveLtiContextValue((custom.user_id ?? '').toString());
+    const canvasUserId = canvasUserIdRaw || undefined;
+    const resourceLinkId = resolveLtiContextValue((resourceLink.id ?? '').toString());
     const resourceLinkTitle = resourceLink.title;
-    const assignmentId = (custom.assignment_id ?? '').toString().trim();
-    const moduleId = (custom.module_id ?? '').toString().trim();
+    const assignmentId = resolveLtiContextValue((custom.assignment_id ?? '').toString());
+    const moduleId = resolveLtiContextValue((custom.module_id ?? '').toString());
     const rolesStr = Array.isArray(roles) ? roles.join(',') : String(roles);
     const customToolType = (custom.tool_type ?? '').toString().trim();
     const toolType = CUSTOM_TOOL_TYPE_MAP[customToolType] ?? 'flashcards';
+    const submissionToken = (custom.submission_token ?? '').toString().trim() || undefined;
 
     const agsEndpoint = payload[LTI_AGS_ENDPOINT] as { lineitems?: string; lineitem?: string } | undefined;
     const agsLineitemsUrl = (agsEndpoint?.lineitems ?? '').toString().trim() || undefined;
@@ -221,6 +230,7 @@ export class Lti13LaunchService {
       deepLinkData,
       platformIss,
       deploymentId,
+      submissionToken,
     };
   }
 

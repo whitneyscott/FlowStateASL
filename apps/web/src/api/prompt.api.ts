@@ -10,11 +10,24 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
+/** Same as fetchJson but redirects to Canvas OAuth when API returns 401 + redirectToOAuth (token expired). */
+async function fetchJsonWithOAuthRedirect<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(url, { ...init, credentials: 'include' });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401 && (data as { redirectToOAuth?: boolean }).redirectToOAuth) {
+    window.location.href = `/api/oauth/canvas?returnTo=${encodeURIComponent(window.location.href)}`;
+    throw new Error('Redirecting to Canvas OAuth');
+  }
+  if (!res.ok) throw new Error((data as { message?: string }).message ?? `HTTP ${res.status}`);
+  return data as T;
+}
+
 export interface PromptConfig {
   minutes?: number;
   prompts?: string[];
   accessCode?: string;
   assignmentName?: string;
+  moduleId?: string;
   pointsPossible?: number;
   rubricId?: string;
   dueAt?: string;
@@ -24,21 +37,43 @@ export interface PromptConfig {
   shadowAssignmentId?: string;
 }
 
-export async function getPromptConfig(): Promise<PromptConfig | null> {
-  return fetchJson<PromptConfig | null>(base + '/config');
+export interface ConfiguredAssignment {
+  id: string;
+  name: string;
+  submissionCount: number;
+  ungradedCount: number;
 }
 
-export async function putPromptConfig(config: Partial<PromptConfig>): Promise<void> {
-  const res = await fetch(base + '/config', {
+export interface CanvasModule {
+  id: number;
+  name: string;
+  position: number;
+}
+
+function withAssignmentId(url: string, assignmentId?: string | null): string {
+  const aid = assignmentId?.trim();
+  if (!aid) return url;
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}assignmentId=${encodeURIComponent(aid)}`;
+}
+
+export async function getPromptConfig(assignmentId?: string | null): Promise<PromptConfig | null> {
+  return fetchJsonWithOAuthRedirect<PromptConfig | null>(withAssignmentId(base + '/config', assignmentId));
+}
+
+export async function putPromptConfig(config: Partial<PromptConfig>, assignmentId?: string | null): Promise<void> {
+  const res = await fetch(withAssignmentId(base + '/config', assignmentId), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(config),
     credentials: 'include',
   });
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    throw new Error((data as { message?: string }).message ?? `HTTP ${res.status}`);
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401 && (data as { redirectToOAuth?: boolean }).redirectToOAuth) {
+    window.location.href = `/api/oauth/canvas?returnTo=${encodeURIComponent(window.location.href)}`;
+    throw new Error('Redirecting to Canvas OAuth');
   }
+  if (!res.ok) throw new Error((data as { message?: string }).message ?? `HTTP ${res.status}`);
 }
 
 export async function verifyAccess(accessCode: string, fingerprint: string): Promise<{
@@ -115,23 +150,27 @@ export interface PromptSubmission {
   videoUrl?: string;
 }
 
-export async function getSubmissionCount(): Promise<number> {
-  const data = await fetchJson<{ count: number }>(base + '/submission-count');
+export async function getSubmissionCount(assignmentId?: string | null): Promise<number> {
+  const data = await fetchJson<{ count: number }>(withAssignmentId(base + '/submission-count', assignmentId));
   return data?.count ?? 0;
 }
 
-export async function getSubmissions(): Promise<PromptSubmission[]> {
-  return fetchJson<PromptSubmission[]>(base + '/submissions');
+export async function getSubmissions(assignmentId?: string | null): Promise<PromptSubmission[]> {
+  return fetchJson<PromptSubmission[]>(withAssignmentId(base + '/submissions', assignmentId));
 }
 
-export async function submitGrade(dto: {
-  userId: string;
-  score: number;
-  scoreMaximum?: number;
-  resultContent?: string;
-  rubricAssessment?: Record<string, unknown>;
-}): Promise<void> {
-  await fetch(base + '/grade', {
+export async function submitGrade(
+  dto: {
+    userId: string;
+    score: number;
+    scoreMaximum?: number;
+    resultContent?: string;
+    rubricAssessment?: Record<string, unknown>;
+  },
+  assignmentId?: string | null
+): Promise<void> {
+  const url = withAssignmentId(base + '/grade', assignmentId);
+  await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(dto),
@@ -139,8 +178,14 @@ export async function submitGrade(dto: {
   });
 }
 
-export async function addComment(userId: string, time: number, text: string, attempt?: number): Promise<{ commentId?: number }> {
-  return fetchJson(base + '/comment/add', {
+export async function addComment(
+  userId: string,
+  time: number,
+  text: string,
+  attempt?: number,
+  assignmentId?: string | null
+): Promise<{ commentId?: number }> {
+  return fetchJson(withAssignmentId(base + '/comment/add', assignmentId), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ userId, time, text, attempt }),
@@ -148,8 +193,14 @@ export async function addComment(userId: string, time: number, text: string, att
   });
 }
 
-export async function editComment(userId: string, commentId: string, time: number, text: string): Promise<void> {
-  await fetch(base + '/comment/edit', {
+export async function editComment(
+  userId: string,
+  commentId: string,
+  time: number,
+  text: string,
+  assignmentId?: string | null
+): Promise<void> {
+  await fetch(withAssignmentId(base + '/comment/edit', assignmentId), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ userId, commentId, time, text }),
@@ -157,8 +208,12 @@ export async function editComment(userId: string, commentId: string, time: numbe
   });
 }
 
-export async function deleteComment(userId: string, commentId: string): Promise<void> {
-  await fetch(base + '/comment/delete', {
+export async function deleteComment(
+  userId: string,
+  commentId: string,
+  assignmentId?: string | null
+): Promise<void> {
+  await fetch(withAssignmentId(base + '/comment/delete', assignmentId), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ userId, commentId }),
@@ -166,8 +221,8 @@ export async function deleteComment(userId: string, commentId: string): Promise<
   });
 }
 
-export async function resetAttempt(userId: string): Promise<void> {
-  await fetch(base + '/reset-attempt', {
+export async function resetAttempt(userId: string, assignmentId?: string | null): Promise<void> {
+  await fetch(withAssignmentId(base + '/reset-attempt', assignmentId), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ userId }),
@@ -175,6 +230,38 @@ export async function resetAttempt(userId: string): Promise<void> {
   });
 }
 
-export async function getAssignment(): Promise<{ pointsPossible?: number; rubric?: Array<unknown> } | null> {
-  return fetchJson(base + '/assignment');
+export async function getAssignment(assignmentId?: string | null): Promise<{
+  pointsPossible?: number;
+  rubric?: Array<unknown>;
+} | null> {
+  return fetchJson(withAssignmentId(base + '/assignment', assignmentId));
+}
+
+export async function getConfiguredAssignments(): Promise<ConfiguredAssignment[]> {
+  return fetchJsonWithOAuthRedirect<ConfiguredAssignment[]>(base + '/configured-assignments');
+}
+
+export async function getModules(): Promise<CanvasModule[]> {
+  return fetchJsonWithOAuthRedirect<CanvasModule[]>(base + '/modules');
+}
+
+export async function createModule(
+  name: string,
+  position?: number
+): Promise<CanvasModule> {
+  return fetchJsonWithOAuthRedirect<CanvasModule>(base + '/modules', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: name.trim() || 'New Module', position }),
+    credentials: 'include',
+  });
+}
+
+export async function createAssignment(name: string): Promise<{ assignmentId: string }> {
+  return fetchJsonWithOAuthRedirect<{ assignmentId: string }>(base + '/create-assignment', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+    credentials: 'include',
+  });
 }

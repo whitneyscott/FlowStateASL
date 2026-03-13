@@ -4,6 +4,7 @@ import * as crypto from 'crypto';
 import * as jwt from 'jsonwebtoken';
 import { appendLtiLog } from '../common/last-error.store';
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
+import { getLtiPrivateKeyPem } from './lti-key.util';
 
 const AGS_SCOPE_SCORE = 'https://purl.imsglobal.org/spec/lti-ags/scope/score';
 const AGS_SCOPE_LINEITEM = 'https://purl.imsglobal.org/spec/lti-ags/scope/lineitem';
@@ -33,14 +34,14 @@ export class LtiAgsService {
       throw new Error('AGS: canvasBaseUrl (from LTI iss) required for token request');
     }
     const tokenUrl = `${baseUrl}/login/oauth2/token`;
-    const clientId = (this.config.get<string>('LTI_CLIENT_ID') ?? '').trim();
+    const isPrompter = ctx.toolType === 'prompter';
+    const clientId = (isPrompter
+      ? (this.config.get<string>('LTI_PROMPTER_CLIENT_ID') ?? process.env.LTI_PROMPTER_CLIENT_ID ?? '')
+      : (this.config.get<string>('LTI_CLIENT_ID') ?? process.env.LTI_CLIENT_ID ?? '')).trim();
     if (!clientId) {
-      throw new Error('AGS: LTI_CLIENT_ID required for token request');
+      throw new Error(`AGS: ${isPrompter ? 'LTI_PROMPTER_CLIENT_ID' : 'LTI_CLIENT_ID'} required for token request`);
     }
-    const privateKeyPem = this.config.get<string>('LTI_PRIVATE_KEY')?.trim();
-    if (!privateKeyPem) {
-      throw new Error('AGS: LTI_PRIVATE_KEY required to sign JWT assertion');
-    }
+    const privateKeyPem = getLtiPrivateKeyPem(this.config);
 
     const now = Math.floor(Date.now() / 1000);
     const payload = {

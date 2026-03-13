@@ -1,6 +1,11 @@
 import 'reflect-metadata';
+import { config as loadDotenv } from 'dotenv';
+import { resolve } from 'path';
 import express from 'express';
 import { join } from 'path';
+
+// Load .env from workspace root before any other code (fixes LTI_PRIVATE_KEY etc.)
+loadDotenv({ path: resolve(process.cwd(), '.env') });
 import { Pool } from 'pg';
 import connectPgSimple from 'connect-pg-simple';
 import { NestFactory } from '@nestjs/core';

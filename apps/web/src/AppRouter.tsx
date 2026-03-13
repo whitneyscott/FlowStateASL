@@ -6,6 +6,7 @@ import FlashcardsPage from './pages/FlashcardsPage';
 import TimerPage from './pages/TimerPage';
 import TeacherConfigPage from './pages/TeacherConfigPage';
 import TeacherViewerPage from './pages/TeacherViewerPage';
+import PromptReviewPage from './pages/PromptReviewPage';
 
 export default function AppRouter() {
   const { context, loading, error } = useLtiContext();
@@ -65,6 +66,7 @@ export default function AppRouter() {
         <Route path="/prompter" element={<TimerPage context={context} />} />
         <Route path="/config" element={<TeacherConfigPage context={context} />} />
         <Route path="/viewer" element={<TeacherViewerPage context={context} />} />
+        <Route path="/prompt/review" element={<PromptReviewPage />} />
         <Route
           path="*"
           element={

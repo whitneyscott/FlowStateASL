@@ -15,11 +15,17 @@ export function useLtiContext() {
       ? `/api/lti/context?lti_token=${encodeURIComponent(ltiToken)}`
       : '/api/lti/context';
     setLastFunction(`GET ${url}`);
-    fetch(url, { credentials: 'include' })
-      .then((res) => {
-        if (!res.ok) throw new Error(res.statusText);
-        return res.json();
-      })
+    const attempt = async (retries = 3): Promise<Response> => {
+      const res = await fetch(url, { credentials: 'include' });
+      if (res.ok) return res;
+      if (retries > 1 && (res.status === 0 || res.status >= 502)) {
+        await new Promise((r) => setTimeout(r, 1500));
+        return attempt(retries - 1);
+      }
+      throw new Error(res.statusText);
+    };
+    attempt()
+      .then((res) => res.json())
       .then((data) => {
         console.log('[useLtiContext] loaded:', {
           source: ltiToken ? 'lti_token' : 'session',

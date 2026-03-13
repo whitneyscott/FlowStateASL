@@ -6,6 +6,10 @@ node_modules
 .env.local
 .env.*.local
 
+# LTI key files (never commit)
+apps/api/private-key.pem
+apps/api/public-key.pem
+
 # Build outputs
 dist
 tmp

@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { join } from 'path';
+import { appendLtiLog, setLastError } from './last-error.store';
 import { renderDebugPage } from './debug-page';
 
 @Catch()
@@ -23,6 +24,8 @@ export class DebugExceptionFilter implements ExceptionFilter {
           : HttpStatus.INTERNAL_SERVER_ERROR;
       const message =
         exception instanceof Error ? exception.message : String(exception);
+      setLastError(`${req.method} ${req.path}`, exception);
+      appendLtiLog('api-error', `${req.method} ${req.path}`, { message, status });
       if (!res.headersSent) {
         res.status(status).json({ message, error: 'Internal Server Error' });
       }

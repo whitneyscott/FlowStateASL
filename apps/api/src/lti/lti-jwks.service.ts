@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 import * as jose from 'jose';
+import { getLtiPrivateKeyPem } from './lti-key.util';
 
 export interface LtiJwksResult {
   keys: jose.JWK[];
@@ -10,28 +11,13 @@ export interface LtiJwksResult {
 @Injectable()
 export class LtiJwksService {
   private publicJwk: jose.JWK | null = null;
-  private generatedPrivateKey: string | null = null;
 
   constructor(private readonly config: ConfigService) {}
 
   private getPublicKey(): crypto.KeyObject {
-    const pem = this.config.get<string>('LTI_PRIVATE_KEY');
-    if (pem?.trim()) {
-      const priv = crypto.createPrivateKey(pem);
-      return crypto.createPublicKey(priv);
-    }
-    if (!this.generatedPrivateKey) {
-      const { privateKey } = crypto.generateKeyPairSync('rsa', {
-        modulusLength: 2048,
-        publicKeyEncoding: { type: 'spki', format: 'pem' },
-        privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
-      });
-      this.generatedPrivateKey = privateKey;
-      if (process.env.NODE_ENV !== 'production') {
-        console.log('[LTI] Generated RSA key pair (dev). Set LTI_PRIVATE_KEY in production.');
-      }
-    }
-    return crypto.createPublicKey(this.generatedPrivateKey!);
+    const pem = getLtiPrivateKeyPem(this.config);
+    const priv = crypto.createPrivateKey(pem);
+    return crypto.createPublicKey(priv);
   }
 
   async getPublicJwk(): Promise<jose.JWK> {

@@ -12,21 +12,44 @@ import { LtiDeepLinkResponseService } from '../lti/lti-deep-link-response.servic
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
 import type { PromptConfigJson, PutPromptConfigDto } from './dto/prompt-config.dto';
 
-const PROMPTER_ASSIGNMENT_TITLE = 'Prompt Manager Submissions';
-const MAX_ACCESS_ATTEMPTS = 3;
+const PROMPT_MANAGER_SETTINGS_ASSIGNMENT_TITLE = 'Prompt Manager Settings';
+const PROMPT_MANAGER_SETTINGS_ANNOUNCEMENT_TITLE = 'ASL Express Prompt Manager Settings';
 
-/** Extract JSON from Canvas assignment description (same pattern as course-settings). Canvas may wrap in HTML. */
-function extractPromptConfigFromDescription(raw: string): PromptConfigJson | null {
+interface PromptManagerSettingsBlob {
+  v?: number;
+  configs?: Record<string, PromptConfigJson>;
+  updatedAt?: string;
+}
+
+/** Extract video URL from Canvas submission (attachment, attachments, or versioned_attachments). */
+function getVideoUrlFromCanvasSubmission(s: {
+  attachment?: { url?: string };
+  attachments?: Array<{ url?: string }>;
+  versioned_attachments?: Array<Array<{ url?: string }>>;
+}): string | undefined {
+  if (s.attachment?.url) return s.attachment.url;
+  if (s.attachments?.[0]?.url) return s.attachments[0].url;
+  const va = s.versioned_attachments;
+  if (Array.isArray(va) && va.length > 0) {
+    const last = va[va.length - 1];
+    const arr = Array.isArray(last) ? last : [];
+    return arr[0]?.url;
+  }
+  return undefined;
+}
+
+/** Extract JSON from Canvas content. Canvas may wrap in HTML. */
+function extractJsonBlob(raw: string): PromptManagerSettingsBlob | null {
   const trimmed = raw?.trim();
   if (!trimmed) return null;
   try {
-    const parsed = JSON.parse(trimmed) as PromptConfigJson;
+    const parsed = JSON.parse(trimmed) as PromptManagerSettingsBlob;
     if (parsed && typeof parsed === 'object') return parsed;
   } catch {
     const jsonMatch = trimmed.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       try {
-        const parsed = JSON.parse(jsonMatch[0]) as PromptConfigJson;
+        const parsed = JSON.parse(jsonMatch[0]) as PromptManagerSettingsBlob;
         if (parsed && typeof parsed === 'object') return parsed;
       } catch {
         /* ignore */
@@ -49,71 +72,108 @@ export class PromptService {
     private readonly deepLinkResponse: LtiDeepLinkResponseService,
   ) {}
 
+  /**
+   * Resolve the visible assignment ID. In course_navigation, assignmentId comes from query param
+   * (controller merges into ctx). When empty, throw — do not fall back to "Prompt Manager Submissions".
+   */
   private async getPrompterAssignmentId(ctx: LtiContext): Promise<string> {
-    if (ctx.assignmentId?.trim()) {
-      appendLtiLog('prompt', 'assignment resolution (1.2)', {
-        courseId: ctx.courseId,
-        source: 'ctx.assignmentId',
-        result: 'found',
-        assignmentId: ctx.assignmentId,
-      });
-      return ctx.assignmentId.trim();
+    const id = ctx.assignmentId?.trim();
+    if (id) {
+      appendLtiLog('prompt', 'assignment resolution', { source: 'ctx.assignmentId', assignmentId: id });
+      return id;
     }
-    const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
-    if (!token) {
-      throw new Error('Canvas OAuth token required for Prompter assignment resolution');
-    }
-    const assignmentId = await this.canvas.ensureAssignmentForCourse(
-      ctx,
-      {
-        title: PROMPTER_ASSIGNMENT_TITLE,
-        description: 'ASL Express Prompt Manager submissions (auto-created)',
-        submissionTypes: ['online_text_entry', 'online_upload'],
-      },
+    throw new Error('Assignment ID required. In course_navigation, pass assignmentId as query parameter.');
+  }
+
+  private async ensurePromptManagerSettingsAssignment(
+    courseId: string,
+    domainOverride: string | undefined,
+    token: string,
+  ): Promise<string> {
+    const existing = await this.canvas.findAssignmentByTitle(
+      courseId,
+      PROMPT_MANAGER_SETTINGS_ASSIGNMENT_TITLE,
+      domainOverride,
       token,
     );
-    appendLtiLog('prompt', 'assignment resolution (1.2)', {
-      courseId: ctx.courseId,
-      source: 'ensureAssignmentForCourse',
-      result: 'created',
-      assignmentId,
-    });
-    return assignmentId;
+    if (existing) return existing;
+    return this.canvas.createAssignment(
+      courseId,
+      PROMPT_MANAGER_SETTINGS_ASSIGNMENT_TITLE,
+      {
+        submissionTypes: ['online_text_entry'],
+        pointsPossible: 0,
+        published: true,
+        description: 'Stores Prompt Manager config per assignment (auto-created by ASL Express)',
+        omitFromFinalGrade: true,
+        tokenOverride: token,
+      },
+      domainOverride,
+    );
+  }
+
+  private async readPromptManagerSettingsBlob(
+    courseId: string,
+    domainOverride: string | undefined,
+    token: string,
+  ): Promise<PromptManagerSettingsBlob | null> {
+    const settingsAssignmentId = await this.canvas.findAssignmentByTitle(
+      courseId,
+      PROMPT_MANAGER_SETTINGS_ASSIGNMENT_TITLE,
+      domainOverride,
+      token,
+    );
+    if (settingsAssignmentId) {
+      const assignment = await this.canvas.getAssignment(courseId, settingsAssignmentId, domainOverride, token);
+      const raw = assignment?.description?.trim() ?? '';
+      const blob = extractJsonBlob(raw);
+      if (blob) return blob;
+    }
+    const ann = await this.canvas.findSettingsAnnouncementByTitle(
+      courseId,
+      PROMPT_MANAGER_SETTINGS_ANNOUNCEMENT_TITLE,
+      token,
+      domainOverride,
+    );
+    if (ann?.message) {
+      return extractJsonBlob(ann.message);
+    }
+    return null;
   }
 
   async getConfig(ctx: LtiContext): Promise<PromptConfigJson | null> {
     const assignmentId = ctx.assignmentId?.trim();
     if (!assignmentId) {
-      appendLtiLog('prompt', 'config (1.1)', { action: 'get', courseId: ctx.courseId, reason: 'no_assignment_id' });
+      appendLtiLog('prompt', 'config', { action: 'get', courseId: ctx.courseId, reason: 'no_assignment_id' });
       return null;
     }
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
     if (!token) {
-      appendLtiLog('prompt', 'config (1.1)', { action: 'get', courseId: ctx.courseId, reason: 'no_canvas_token' });
+      appendLtiLog('prompt', 'config', { action: 'get', courseId: ctx.courseId, reason: 'no_canvas_token' });
       return null;
     }
     const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
-    const assignment = await this.canvas.getAssignment(ctx.courseId, assignmentId, domainOverride, token);
-    const rawDesc = assignment?.description?.trim() ?? '';
-    const parsed = extractPromptConfigFromDescription(rawDesc);
-    appendLtiLog('prompt', 'config (1.1)', {
+    const blob = await this.readPromptManagerSettingsBlob(ctx.courseId, domainOverride, token);
+    const config = blob?.configs?.[assignmentId] ?? null;
+    appendLtiLog('prompt', 'config', {
       action: 'get',
       courseId: ctx.courseId,
       assignmentId,
-      success: !!parsed,
+      success: !!config,
     });
-    return parsed;
+    return config ?? null;
   }
 
   async putConfig(ctx: LtiContext, dto: PutPromptConfigDto): Promise<void> {
     const assignmentId = ctx.assignmentId?.trim();
     if (!assignmentId) {
-      throw new Error('Tool must be placed in an assignment. No assignment ID in LTI context.');
+      throw new Error('Assignment ID required. In course_navigation, pass assignmentId as query parameter.');
     }
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
     if (!token) {
       throw new Error('Canvas OAuth token required. Complete the Canvas OAuth flow (launch via LTI as teacher).');
     }
+    const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
     const existing = await this.getConfig(ctx);
     const base: PromptConfigJson = existing ?? { minutes: 5, prompts: [], accessCode: '' };
     const merged: PromptConfigJson = {
@@ -123,6 +183,7 @@ export class PromptService {
       ...(dto.accessCode !== undefined && { accessCode: dto.accessCode }),
       ...(dto.assignmentName !== undefined && { assignmentName: dto.assignmentName }),
       ...(dto.assignmentGroupId !== undefined && { assignmentGroupId: dto.assignmentGroupId }),
+      ...(dto.moduleId !== undefined && { moduleId: dto.moduleId }),
       ...(dto.pointsPossible !== undefined && { pointsPossible: dto.pointsPossible }),
       ...(dto.rubricId !== undefined && { rubricId: dto.rubricId }),
       ...(dto.dueAt !== undefined && { dueAt: dto.dueAt }),
@@ -132,28 +193,109 @@ export class PromptService {
       ...(dto.shadowAssignmentId !== undefined && { shadowAssignmentId: dto.shadowAssignmentId }),
       ...(dto.version !== undefined && { version: dto.version }),
     };
+    const ctxWithAssignment = { ...ctx, assignmentId };
     const shadowId = await this.canvas.ensureShadowAssignment(
-      ctx,
+      ctxWithAssignment,
       { pointsPossible: merged.pointsPossible },
       token,
     );
     merged.shadowAssignmentId = shadowId;
-    const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
-    const description = `<div style="display:none">${JSON.stringify(merged)}</div>`;
+
+    const settingsAssignmentId = await this.ensurePromptManagerSettingsAssignment(
+      ctx.courseId,
+      domainOverride,
+      token,
+    );
+    const blob = await this.readPromptManagerSettingsBlob(ctx.courseId, domainOverride, token);
+    const configs = { ...(blob?.configs ?? {}), [assignmentId]: merged };
+    const payload: PromptManagerSettingsBlob = {
+      v: 1,
+      configs,
+      updatedAt: new Date().toISOString(),
+    };
+    const description = JSON.stringify(payload);
     await this.canvas.updateAssignmentDescription(
       ctx.courseId,
-      assignmentId,
+      settingsAssignmentId,
       description,
       domainOverride,
       token,
     );
-    appendLtiLog('prompt', 'config (1.1)', {
+
+    try {
+      const ann = await this.canvas.findSettingsAnnouncementByTitle(
+        ctx.courseId,
+        PROMPT_MANAGER_SETTINGS_ANNOUNCEMENT_TITLE,
+        token,
+        domainOverride,
+      );
+      if (ann) {
+        await this.canvas.updateSettingsAnnouncement(
+          ctx.courseId,
+          ann.id,
+          description,
+          token,
+          domainOverride,
+        );
+      } else {
+        await this.canvas.createSettingsAnnouncement(
+          ctx.courseId,
+          `⚠️ DO NOT DELETE — ${PROMPT_MANAGER_SETTINGS_ANNOUNCEMENT_TITLE}`,
+          description,
+          token,
+          domainOverride,
+        );
+      }
+    } catch (annErr) {
+      appendLtiLog('prompt', 'Announcement write failed (assignment backup OK)', {
+        error: annErr instanceof Error ? annErr.message : String(annErr),
+      });
+    }
+
+    appendLtiLog('prompt', 'config', {
       action: 'put',
       courseId: ctx.courseId,
       assignmentId,
-      source: 'assignment_description',
+      source: 'prompt_manager_settings',
       success: true,
     });
+
+    const moduleId = merged.moduleId?.trim();
+    if (moduleId) {
+      appendLtiLog('prompt', 'module placement: placing assignment in module', {
+        moduleId,
+        assignmentId,
+      });
+      try {
+        const result = await this.canvas.addAssignmentToModule(
+          ctx.courseId,
+          moduleId,
+          assignmentId,
+          domainOverride,
+          token,
+        );
+        if (result.created) {
+          appendLtiLog('prompt', 'module placement: assignment added successfully', {
+            moduleId,
+            assignmentId,
+            itemId: result.itemId,
+          });
+        } else {
+          appendLtiLog('prompt', 'module placement: assignment already in module', {
+            moduleId,
+            assignmentId,
+          });
+        }
+      } catch (modErr) {
+        appendLtiLog('prompt', 'module placement: failed to add assignment', {
+          moduleId,
+          assignmentId,
+          error: modErr instanceof Error ? modErr.message : String(modErr),
+        });
+      }
+    } else {
+      appendLtiLog('prompt', 'module placement: no module selected', {});
+    }
   }
 
   async verifyAccess(
@@ -272,15 +414,21 @@ export class PromptService {
     contentType: string,
     filename?: string,
   ): Promise<string> {
+    appendLtiLog('prompt', 'submitDeepLink: ENTER', {
+      courseId: ctx.courseId,
+      assignmentId: ctx.assignmentId,
+      userId: ctx.userId,
+      messageType: ctx.messageType,
+      deepLinkReturnUrl: !!ctx.deepLinkReturnUrl,
+    });
     if (ctx.messageType !== 'LtiDeepLinkingRequest' || !ctx.deepLinkReturnUrl) {
       throw new Error('Deep Linking context required (messageType LtiDeepLinkingRequest and deepLinkReturnUrl)');
     }
     const token = this.deepLinkFileStore.set(buffer, contentType);
-    const appUrl = (this.config.get<string>('APP_URL') ?? '').trim().replace(/\/$/, '')
-      || `http://localhost:${this.config.get('PORT') ?? 3000}`;
-    const fileUrl = `${appUrl}/api/lti/deep-link-file/${token}`;
-    const title = filename?.replace(/\.[^.]+$/, '') || 'ASL submission';
-    const html = this.deepLinkResponse.buildResponseHtml(ctx, fileUrl, title);
+    this.deepLinkFileStore.registerSubmissionToken(ctx.courseId, ctx.assignmentId, ctx.userId, token);
+    const title = 'ASL Express Video Submission';
+    appendLtiLog('prompt', 'submitDeepLink: calling buildResponseHtml', { token: token.slice(0, 8) + '...', title });
+    const html = await this.deepLinkResponse.buildResponseHtml(ctx, token, title);
     appendLtiLog('prompt', 'submit-deep-link', {
       courseId: ctx.courseId,
       assignmentId: ctx.assignmentId,
@@ -302,7 +450,11 @@ export class PromptService {
       domainOverride,
       token,
     );
-    return list.filter((s) => s.attachment?.url || (s.attachments?.length ?? 0) > 0).length;
+    return list.filter((s) => {
+      if (getVideoUrlFromCanvasSubmission(s)) return true;
+      const uid = String(s.user_id);
+      return !!this.deepLinkFileStore.getSubmissionToken(ctx.courseId, assignmentId, uid);
+    }).length;
   }
 
   async getSubmissions(ctx: LtiContext): Promise<
@@ -328,15 +480,25 @@ export class PromptService {
       domainOverride,
       token,
     );
-    return list.map((s) => ({
-      userId: String(s.user_id),
-      userName: s.user?.name,
-      body: s.body,
-      score: s.score,
-      grade: s.grade,
-      submissionComments: s.submission_comments?.map((c) => ({ id: c.id, comment: c.comment })) ?? [],
-      videoUrl: s.attachment?.url ?? s.attachments?.[0]?.url,
-    }));
+    return list.map((s) => {
+      const userId = String(s.user_id);
+      let videoUrl = getVideoUrlFromCanvasSubmission(s);
+      if (!videoUrl) {
+        const submissionToken = this.deepLinkFileStore.getSubmissionToken(ctx.courseId, assignmentId, userId);
+        if (submissionToken) {
+          videoUrl = `/api/prompt/submission/${encodeURIComponent(submissionToken)}`;
+        }
+      }
+      return {
+        userId,
+        userName: s.user?.name,
+        body: s.body,
+        score: s.score,
+        grade: s.grade,
+        submissionComments: s.submission_comments?.map((c) => ({ id: c.id, comment: c.comment })) ?? [],
+        videoUrl,
+      };
+    });
   }
 
   async grade(
@@ -483,5 +645,92 @@ export class PromptService {
     const raw = await this.canvas.getAssignment(ctx.courseId, assignmentId, domainOverride, token);
     if (!raw) return null;
     return { pointsPossible: raw.points_possible, rubric: raw.rubric };
+  }
+
+  /** Teacher only. Returns configured assignments with names and counts from Canvas. */
+  async getConfiguredAssignments(ctx: LtiContext): Promise<
+    Array<{ id: string; name: string; submissionCount: number; ungradedCount: number }>
+  > {
+    const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
+    if (!token) return [];
+    const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
+    const blob = await this.readPromptManagerSettingsBlob(ctx.courseId, domainOverride, token);
+    const configs = blob?.configs ?? {};
+    const assignmentIds = Object.keys(configs).filter(Boolean);
+    const result: Array<{ id: string; name: string; submissionCount: number; ungradedCount: number }> = [];
+    for (const aid of assignmentIds) {
+      const [assign, list] = await Promise.all([
+        this.canvas.getAssignment(ctx.courseId, aid, domainOverride, token),
+        this.canvas.listSubmissions(ctx.courseId, aid, domainOverride, token),
+      ]);
+      const name = assign?.name ?? configs[aid]?.assignmentName ?? `Assignment ${aid}`;
+      const withFiles = list.filter((s) => s.attachment?.url || (s.attachments?.length ?? 0) > 0);
+      const submissionCount = withFiles.length;
+      const ungradedCount = withFiles.filter((s) => s.workflow_state !== 'graded').length;
+      result.push({ id: aid, name, submissionCount, ungradedCount });
+    }
+    result.sort((a, b) => a.name.localeCompare(b.name));
+    return result;
+  }
+
+  /** Teacher only. Returns course modules for module selector. */
+  async getModules(ctx: LtiContext): Promise<Array<{ id: number; name: string; position: number }>> {
+    const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
+    if (!token) return [];
+    const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
+    return this.canvas.listModules(ctx.courseId, domainOverride, token);
+  }
+
+  /** Teacher only. Create a new module in the course. Position is 1-based. */
+  async createModule(
+    ctx: LtiContext,
+    name: string,
+    position?: number,
+  ): Promise<{ id: number; name: string; position: number }> {
+    const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
+    if (!token) {
+      throw new Error('Canvas OAuth token required. Complete the Canvas OAuth flow (launch via LTI as teacher).');
+    }
+    const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
+    return this.canvas.createModule(
+      ctx.courseId,
+      name.trim() || 'New Module',
+      position != null ? { position } : undefined,
+      domainOverride,
+      token,
+    );
+  }
+
+  /** Teacher only. Creates a Canvas assignment with online_upload and adds entry to configs map. */
+  async createPromptManagerAssignment(ctx: LtiContext, name: string): Promise<{ assignmentId: string }> {
+    const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
+    if (!token) {
+      throw new Error('Canvas OAuth token required. Complete the Canvas OAuth flow (launch via LTI as teacher).');
+    }
+    const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
+    const assignmentId = await this.canvas.createAssignment(
+      ctx.courseId,
+      name.trim() || 'ASL Express Assignment',
+      {
+        submissionTypes: ['online_upload'],
+        pointsPossible: 100,
+        published: true,
+        description: 'ASL video submission via ASL Express',
+        tokenOverride: token,
+      },
+      domainOverride,
+    );
+    const settingsAssignmentId = await this.ensurePromptManagerSettingsAssignment(ctx.courseId, domainOverride, token);
+    const blob = await this.readPromptManagerSettingsBlob(ctx.courseId, domainOverride, token);
+    const configs = { ...(blob?.configs ?? {}), [assignmentId]: { minutes: 5, prompts: [], accessCode: '', assignmentName: name } as PromptConfigJson };
+    const payload: PromptManagerSettingsBlob = {
+      v: 1,
+      configs,
+      updatedAt: new Date().toISOString(),
+    };
+    const description = JSON.stringify(payload);
+    await this.canvas.updateAssignmentDescription(ctx.courseId, settingsAssignmentId, description, domainOverride, token);
+    appendLtiLog('prompt', 'create-assignment', { courseId: ctx.courseId, assignmentId, name, success: true });
+    return { assignmentId };
   }
 }

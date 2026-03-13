@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
+import { resolveLtiContextValue } from '../utils/lti-context';
 import { useSearchParams } from 'react-router-dom';
 
 interface BridgeLogProps {
@@ -75,9 +76,10 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
       } else {
         newLines.push('LTI Launch Detected');
         newLines.push(`Course ID: ${context.courseId}`);
-        if (context.moduleId) newLines.push(`Module ID: ${context.moduleId}`);
-        if (context.assignmentId)
-          newLines.push(`Assignment ID: ${context.assignmentId}`);
+        const moduleId = resolveLtiContextValue(context.moduleId);
+        const assignmentId = resolveLtiContextValue(context.assignmentId);
+        if (moduleId) newLines.push(`Module ID: ${moduleId}`);
+        if (assignmentId) newLines.push(`Assignment ID: ${assignmentId}`);
         newLines.push(`Roles: ${context.roles || '(none)'}`);
         const teacherPatterns = ['instructor','administrator','teacher','ta','staff'];
         const isTeacher = context.roles && teacherPatterns.some((p) =>
@@ -140,10 +142,16 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
         }
       }
     }
-    // LTI launch log from backend (OIDC, launch steps, errors)
+    // LTI log: submission flow only (prompt, deep-link, api-error, lti-key)
     if (ltiLog.length > 0) {
-      newLines.push('--- LTI Launch Log ---');
-      newLines.push(...ltiLog);
+      const submissionTags = ['prompt', 'deep-link', 'api-error', 'lti-key'];
+      const submissionLines = ltiLog.filter((line) =>
+        submissionTags.some((tag) => line.includes(`[${tag}]`))
+      );
+      if (submissionLines.length > 0) {
+        newLines.push('--- Submission tracing ---');
+        newLines.push(...submissionLines);
+      }
     }
     setLines(newLines);
   }, [context, loading, error, sproutVideoAccessed, sproutVideoPlaylistsRetrieved, lastFunctionCalled, lastApiResult, lastApiError, lastSubmissionDetails, lastCourseSettings, lastServerError, ltiLog]);

@@ -3,7 +3,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ServeStaticModule } from '@nestjs/serve-static';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { RoutingLogMiddleware } from './common/routing-log.middleware';
 import { DataModule } from './data/data.module';
 import { CanvasModule } from './canvas/canvas.module';
@@ -30,7 +30,10 @@ const webRoot = join(__dirname, '..', '..', 'web');
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
+    ConfigModule.forRoot({
+      isGlobal: true,
+      envFilePath: [resolve(process.cwd(), '.env'), '.env'],
+    }),
     ScheduleModule.forRoot(),
     ...(isProduction
       ? [

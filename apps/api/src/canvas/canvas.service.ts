@@ -443,7 +443,7 @@ export class CanvasService {
     assignmentId: string,
     domainOverride?: string,
     tokenOverride?: string | null,
-  ): Promise<{ description?: string; points_possible?: number; rubric?: Array<unknown> } | null> {
+  ): Promise<{ name?: string; description?: string; points_possible?: number; rubric?: Array<unknown> } | null> {
     const base = this.getBaseUrl(domainOverride);
     const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}`;
     const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
@@ -451,8 +451,89 @@ export class CanvasService {
       if (res.status === 401) throw new CanvasTokenExpiredError(401);
       return null;
     }
-    const data = (await res.json()) as { description?: string; points_possible?: number; rubric?: Array<unknown> };
-    return { description: data.description, points_possible: data.points_possible, rubric: data.rubric };
+    const data = (await res.json()) as { name?: string; description?: string; points_possible?: number; rubric?: Array<unknown> };
+    return { name: data.name, description: data.description, points_possible: data.points_possible, rubric: data.rubric };
+  }
+
+  /** List course modules for module selector. */
+  async listModules(
+    courseId: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<Array<{ id: number; name: string; position: number }>> {
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/modules?per_page=50`;
+    const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Canvas list modules failed: ${res.status} ${text}`);
+    }
+    const data = (await res.json()) as Array<{ id: number; name: string; position: number }>;
+    return Array.isArray(data) ? data : [];
+  }
+
+  /** Add an assignment to a module. Idempotent: no-op if assignment already in module. */
+  async addAssignmentToModule(
+    courseId: string,
+    moduleId: string,
+    assignmentId: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<{ created: boolean; itemId?: number }> {
+    const base = this.getBaseUrl(domainOverride);
+    const listUrl = `${base}/api/v1/courses/${courseId}/modules/${moduleId}/items?per_page=50`;
+    const listRes = await fetch(listUrl, { headers: this.getAuthHeaders(tokenOverride) });
+    if (!listRes.ok) {
+      const text = await listRes.text();
+      throw new Error(`Canvas list module items failed: ${listRes.status} ${text}`);
+    }
+    const items = (await listRes.json()) as Array<{ content_id?: number; id?: number }>;
+    const aid = parseInt(assignmentId, 10);
+    const existing = Array.isArray(items) && items.some((i) => i.content_id === aid);
+    if (existing) {
+      return { created: false };
+    }
+    const url = `${base}/api/v1/courses/${courseId}/modules/${moduleId}/items`;
+    const body = { module_item: { type: 'Assignment', content_id: aid } };
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: this.getAuthHeaders(tokenOverride),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Canvas add assignment to module failed: ${res.status} ${text}`);
+    }
+    const created = (await res.json()) as { id?: number };
+    return { created: true, itemId: created?.id };
+  }
+
+  /** Create a course module. Position is 1-based; pass 1 for first, or modules.length+1 for end. */
+  async createModule(
+    courseId: string,
+    name: string,
+    options: { position?: number } | undefined,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<{ id: number; name: string; position: number }> {
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/modules`;
+    const body = {
+      module: {
+        name: name.trim() || 'New Module',
+        ...(options?.position != null && { position: options.position }),
+      },
+    };
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: this.getAuthHeaders(tokenOverride),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Canvas create module failed: ${res.status} ${text}`);
+    }
+    return res.json() as Promise<{ id: number; name: string; position: number }>;
   }
 
   async updateAssignmentDescription(
@@ -792,13 +873,15 @@ export class CanvasService {
       body?: string;
       score?: number;
       grade?: string;
+      workflow_state?: string;
       submission_comments?: Array<{ id: number; comment: string; author?: { display_name?: string } }>;
       attachment?: { url?: string };
       attachments?: Array<{ url?: string; id?: number }>;
+      versioned_attachments?: Array<Array<{ url?: string }>>;
     }>
   > {
     const base = this.getBaseUrl(domainOverride);
-    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions?include[]=user&include[]=submission_comments&per_page=100`;
+    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions?include[]=user&include[]=submission_comments&include[]=submission_history&per_page=100`;
     const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
     if (!res.ok) {
       const text = await res.text();
@@ -910,14 +993,16 @@ export class CanvasService {
     return { score: data.score };
   }
 
-  // --- Announcement API (Flashcard Settings) ---
+  // --- Announcement API (Settings storage: Flashcard + Prompt Manager) ---
 
   private static readonly FLASHCARD_SETTINGS_ANNOUNCEMENT_TITLE = 'ASL Express Flashcard Settings';
   private static readonly FLASHCARD_SETTINGS_ANNOUNCEMENT_TITLE_FULL =
     '⚠️ DO NOT DELETE — ASL Express Flashcard Settings';
 
-  async findFlashcardSettingsAnnouncement(
+  /** Generic: find announcement by title substring. Used by Flashcard and Prompt Manager settings. */
+  async findSettingsAnnouncementByTitle(
     courseId: string,
+    titleSubstring: string,
     tokenOverride: string | null,
     domainOverride?: string,
   ): Promise<{ id: number; title: string; message: string } | null> {
@@ -932,7 +1017,7 @@ export class CanvasService {
         if (res.status === 401) throw new CanvasTokenExpiredError(401);
         const info = { status: res.status, bodyPreview: rawBody.slice(0, 200) };
         setLastCanvasApiResponse({ status: res.status, statusText: res.statusText, bodyPreview: rawBody.slice(0, 200) });
-        appendLtiLog('canvas', 'findFlashcardSettingsAnnouncement failed', info);
+        appendLtiLog('canvas', 'findSettingsAnnouncementByTitle failed', info);
         return null;
       }
       const data = (() => {
@@ -943,9 +1028,7 @@ export class CanvasService {
         }
       })();
       const list = data ?? [];
-      const found = list.find((t) =>
-        String(t.title ?? '').includes(CanvasService.FLASHCARD_SETTINGS_ANNOUNCEMENT_TITLE),
-      );
+      const found = list.find((t) => String(t.title ?? '').includes(titleSubstring));
       if (found) {
         setLastCanvasApiResponse(null);
         return { id: found.id, title: found.title ?? '', message: found.message ?? '' };
@@ -957,17 +1040,19 @@ export class CanvasService {
     return null;
   }
 
-  async createFlashcardSettingsAnnouncement(
+  /** Generic: create announcement. Used by Flashcard and Prompt Manager settings. */
+  async createSettingsAnnouncement(
     courseId: string,
-    settings: { selectedCurriculums: string[]; selectedUnits: string[] },
+    title: string,
+    messageBody: string,
     tokenOverride: string | null,
     domainOverride?: string,
   ): Promise<number> {
     const base = this.getBaseUrl(domainOverride);
     const url = `${base}/api/v1/courses/${courseId}/discussion_topics`;
     const body = {
-      title: CanvasService.FLASHCARD_SETTINGS_ANNOUNCEMENT_TITLE_FULL,
-      message: JSON.stringify(settings),
+      title,
+      message: messageBody,
       is_announcement: true,
     };
     const res = await fetch(url, {
@@ -985,16 +1070,17 @@ export class CanvasService {
     return id;
   }
 
-  async updateFlashcardSettingsAnnouncement(
+  /** Generic: update announcement message. Used by Flashcard and Prompt Manager settings. */
+  async updateSettingsAnnouncement(
     courseId: string,
     topicId: number,
-    settings: { selectedCurriculums: string[]; selectedUnits: string[] },
+    messageBody: string,
     tokenOverride: string | null,
     domainOverride?: string,
   ): Promise<void> {
     const base = this.getBaseUrl(domainOverride);
     const url = `${base}/api/v1/courses/${courseId}/discussion_topics/${topicId}`;
-    const body = { message: JSON.stringify(settings) };
+    const body = { message: messageBody };
     const res = await fetch(url, {
       method: 'PUT',
       headers: this.getAuthHeaders(tokenOverride),
@@ -1006,4 +1092,48 @@ export class CanvasService {
     }
   }
 
+  async findFlashcardSettingsAnnouncement(
+    courseId: string,
+    tokenOverride: string | null,
+    domainOverride?: string,
+  ): Promise<{ id: number; title: string; message: string } | null> {
+    return this.findSettingsAnnouncementByTitle(
+      courseId,
+      CanvasService.FLASHCARD_SETTINGS_ANNOUNCEMENT_TITLE,
+      tokenOverride,
+      domainOverride,
+    );
+  }
+
+  async createFlashcardSettingsAnnouncement(
+    courseId: string,
+    settings: { selectedCurriculums: string[]; selectedUnits: string[] },
+    tokenOverride: string | null,
+    domainOverride?: string,
+  ): Promise<number> {
+    return this.createSettingsAnnouncement(
+      courseId,
+      CanvasService.FLASHCARD_SETTINGS_ANNOUNCEMENT_TITLE_FULL,
+      JSON.stringify(settings),
+      tokenOverride,
+      domainOverride,
+    );
+  }
+
+  async updateFlashcardSettingsAnnouncement(
+    courseId: string,
+    topicId: number,
+    settings: { selectedCurriculums: string[]; selectedUnits: string[] },
+    tokenOverride: string | null,
+    domainOverride?: string,
+  ): Promise<void> {
+    return this.updateSettingsAnnouncement(
+      courseId,
+      topicId,
+      JSON.stringify(settings),
+      tokenOverride,
+      domainOverride,
+    );
+  }
 }
+

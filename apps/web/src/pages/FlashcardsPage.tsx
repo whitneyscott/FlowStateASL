@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
+import { resolveLtiContextValue } from '../utils/lti-context';
 import { TeacherSettings } from '../components/TeacherSettings';
 import './FlashcardsPage.css';
 
@@ -37,9 +38,8 @@ interface FlashcardsPageProps {
 export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   const { setLastFunction, setSproutVideo, setLastApiResult, setLastApiError, setLastSubmissionDetails } = useDebug();
   const teacherMode = context && isTeacher(context.roles) && context.courseId && context.userId !== 'standalone';
-  const hasRealAssignment = context?.assignmentId && 
-    context.assignmentId !== '' && 
-    !context.assignmentId.toLowerCase().includes('$canvas.assignment');
+  const ctxAssignmentId = resolveLtiContextValue(context?.assignmentId);
+  const hasRealAssignment = !!ctxAssignmentId;
   const isCourseNavigation = !!(context?.courseId && !hasRealAssignment);
   const [playlists, setPlaylists] = useState<PlaylistItem[]>([]);
   const [playlistsLoading, setPlaylistsLoading] = useState(true);
