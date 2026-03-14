@@ -242,6 +242,15 @@
   margin-bottom: 15px;
 }
 
+.prompter-settings-section-mt {
+  margin-top: 16px;
+}
+
+.prompter-settings-label-block {
+  display: block;
+  margin-bottom: 4px;
+}
+
 .prompter-settings-assignment {
   border: 2px solid var(--prompter-canvas-blue);
   padding: 15px;
@@ -525,10 +534,148 @@
   flex: 1 1 200px;
 }
 
+.prompter-settings-top-actions {
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.prompter-btn-toggle-settings {
+  background: #f1f1f1;
+  color: #444;
+  border: 1px solid #ccc;
+  padding: 8px 16px;
+  font-size: 14px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.prompter-btn-sync {
+  min-width: 200px;
+  text-align: center;
+}
+
+.prompter-btn-grading {
+  display: inline-block;
+  text-align: center;
+  min-width: 200px;
+  text-decoration: none;
+}
+
+.prompter-settings-assignment-block {
+  border: 2px solid var(--prompter-canvas-blue);
+  padding: 15px;
+  border-radius: 8px;
+  background: #f0f7ff;
+}
+
+.prompter-settings-field {
+  margin-top: 10px;
+}
+
+.prompter-settings-field .prompter-settings-input {
+  margin-top: 4px;
+}
+
+.prompter-required {
+  color: var(--prompter-danger-red);
+}
+
+.prompter-hint {
+  font-size: 12px;
+  color: #666;
+  margin: 4px 0 0;
+}
+
+.prompter-new-group-input {
+  margin-top: 8px;
+}
+
+.prompter-new-group-input .prompter-settings-input {
+  margin-bottom: 4px;
+}
+
+.prompter-btn-generate {
+  background: #ffc107;
+  color: #000;
+  border: none;
+  padding: 8px 16px;
+  font-size: 14px;
+  border-radius: 5px;
+  cursor: pointer;
+  margin-top: 10px;
+}
+
+.prompter-btn-generate:hover {
+  filter: brightness(1.05);
+}
+
+.prompter-btn-add-pool {
+  padding: 6px 14px;
+  font-size: 14px;
+}
+
+.prompter-create-module-form {
+  margin-top: 12px;
+  padding: 12px;
+  background: #f8f9fa;
+  border-radius: 8px;
+}
+
+.prompter-create-module-form .prompter-settings-input {
+  margin-bottom: 8px;
+}
+
+.prompter-create-module-form .prompter-settings-actions-row {
+  margin-top: 8px;
+}
+
 .prompter-settings-config-form {
   margin-top: 20px;
   padding-top: 20px;
   border-top: 1px solid #eee;
+}
+
+/* PHP-style two-column layout (timer.php settings-two-col) */
+.prompter-settings-two-col {
+  display: flex;
+  align-items: stretch;
+  margin-bottom: 20px;
+  width: 100%;
+  min-height: 400px;
+}
+
+.prompter-settings-col-assignment {
+  flex: 0 0 45%;
+  min-width: 280px;
+  max-width: 70%;
+  overflow: auto;
+}
+
+.prompter-settings-col-prompts {
+  flex: 1;
+  min-width: 280px;
+  overflow: auto;
+  border: 2px solid #6f42c1;
+  padding: 15px;
+  border-radius: 8px;
+  background: #f8f5ff;
+  margin-left: 12px;
+}
+
+.prompter-settings-resize-handle {
+  flex: 0 0 12px;
+  cursor: col-resize;
+  background: #e0e0e0;
+  margin: 0 4px;
+  border-radius: 2px;
+}
+
+.prompter-settings-resize-handle:hover {
+  background: #ccc;
+}
+
+.prompter-settings-resize-handle:active {
+  background: var(--prompter-canvas-blue);
 }
 
 /* Confirmation modal */
@@ -683,6 +830,16 @@
 
 .prompter-viewer-feedback-text {
   font-size: 14px;
+}
+
+.prompter-viewer-select-prompt {
+  margin-bottom: 16px;
+}
+
+.prompter-viewer-assignment-select-wrap {
+  justify-content: center;
+  max-width: 400px;
+  margin: 0 auto;
 }
 
 .prompter-viewer-dropdown-row {
@@ -868,4 +1025,122 @@
   background: var(--prompter-canvas-blue);
   border-color: var(--prompter-canvas-blue);
   color: #fff;
+}
+
+.prompter-viewer-rubric-save-status {
+  font-size: 13px;
+  color: #0a0;
+  margin-left: 8px;
+}
+
+.prompter-viewer-resize-handle {
+  flex: 0 0 10px;
+  cursor: col-resize;
+  background: #e0e0e0;
+  min-width: 10px;
+}
+
+.prompter-viewer-resize-handle:hover {
+  background: #ccc;
+}
+
+.prompter-viewer-resize-handle:active {
+  background: var(--prompter-canvas-blue);
+}
+
+.prompter-viewer-grade-btn {
+  padding: 8px 16px;
+  background: var(--prompter-canvas-blue);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.prompter-viewer-grade-btn:hover {
+  filter: brightness(1.05);
+}
+
+.prompter-viewer-grade-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.prompter-viewer-textarea-wrap {
+  width: 100%;
+  max-width: 800px;
+  margin-top: 12px;
+}
+
+.prompter-viewer-textarea-wrap textarea {
+  width: 100%;
+  min-height: 80px;
+  padding: 10px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 14px;
+}
+
+.prompter-viewer-processing {
+  padding: 40px 20px;
+  color: #999;
+  text-align: center;
+}
+
+.prompter-viewer-no-submissions {
+  width: 100%;
+  max-width: 800px;
+  margin-bottom: 16px;
+  padding: 20px;
+  text-align: center;
+  background: #f9f9f9;
+  border-radius: 8px;
+}
+
+.prompter-viewer-no-submissions .prompter-viewer-grade-btn {
+  margin-top: 12px;
+}
+
+.prompter-viewer-now-playing-below {
+  width: 100%;
+  max-width: 800px;
+}
+
+.prompter-viewer-feedback-item {
+  display: block;
+}
+
+.prompter-viewer-feedback-content {
+  flex: 1;
+}
+
+.prompter-viewer-comment-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.prompter-viewer-comment-action-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+  background: #f0f0f0;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.prompter-viewer-comment-action-btn:hover {
+  background: #e0e0e0;
+}
+
+.prompter-viewer-comment-action-btn.danger {
+  background: #fee;
+  border-color: #fcc;
+  color: #c00;
+}
+
+.prompter-viewer-comment-action-btn.danger:hover {
+  background: #fdd;
 }

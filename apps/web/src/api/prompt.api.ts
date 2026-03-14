@@ -27,14 +27,27 @@ export interface PromptConfig {
   prompts?: string[];
   accessCode?: string;
   assignmentName?: string;
+  assignmentGroupId?: string;
+  newGroupName?: string;
   moduleId?: string;
   pointsPossible?: number;
   rubricId?: string;
+  instructions?: string;
   dueAt?: string;
   unlockAt?: string;
   lockAt?: string;
   allowedAttempts?: number;
-  shadowAssignmentId?: string;
+}
+
+export interface CanvasAssignmentGroup {
+  id: number;
+  name: string;
+}
+
+export interface CanvasRubric {
+  id: number;
+  title: string;
+  pointsPossible: number;
 }
 
 export interface ConfiguredAssignment {
@@ -148,6 +161,8 @@ export interface PromptSubmission {
   grade?: string;
   submissionComments?: Array<{ id: number; comment: string }>;
   videoUrl?: string;
+  attempt?: number;
+  rubricAssessment?: Record<string, unknown>;
 }
 
 export async function getSubmissionCount(assignmentId?: string | null): Promise<number> {
@@ -237,8 +252,36 @@ export async function getAssignment(assignmentId?: string | null): Promise<{
   return fetchJson(withAssignmentId(base + '/assignment', assignmentId));
 }
 
+export async function getAssignmentForViewer(assignmentId?: string | null): Promise<{
+  pointsPossible?: number;
+  rubric?: Array<unknown>;
+} | null> {
+  return fetchJson(withAssignmentId(base + '/assignment-for-viewer', assignmentId));
+}
+
+export async function getMySubmission(assignmentId?: string | null): Promise<PromptSubmission | null> {
+  return fetchJson(withAssignmentId(base + '/my-submission', assignmentId));
+}
+
 export async function getConfiguredAssignments(): Promise<ConfiguredAssignment[]> {
   return fetchJsonWithOAuthRedirect<ConfiguredAssignment[]>(base + '/configured-assignments');
+}
+
+export async function getAssignmentGroups(): Promise<CanvasAssignmentGroup[]> {
+  return fetchJsonWithOAuthRedirect<CanvasAssignmentGroup[]>(base + '/assignment-groups');
+}
+
+export async function getRubrics(): Promise<CanvasRubric[]> {
+  return fetchJsonWithOAuthRedirect<CanvasRubric[]>(base + '/rubrics');
+}
+
+export async function createAssignmentGroup(name: string): Promise<CanvasAssignmentGroup> {
+  return fetchJsonWithOAuthRedirect<CanvasAssignmentGroup>(base + '/assignment-groups', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+    credentials: 'include',
+  });
 }
 
 export async function getModules(): Promise<CanvasModule[]> {
@@ -257,11 +300,17 @@ export async function createModule(
   });
 }
 
-export async function createAssignment(name: string): Promise<{ assignmentId: string }> {
+export async function createAssignment(
+  name: string,
+  options?: { assignmentGroupId?: string; newGroupName?: string }
+): Promise<{ assignmentId: string }> {
+  const body: { name: string; assignmentGroupId?: string; newGroupName?: string } = { name };
+  if (options?.assignmentGroupId != null) body.assignmentGroupId = options.assignmentGroupId;
+  if (options?.newGroupName != null) body.newGroupName = options.newGroupName;
   return fetchJsonWithOAuthRedirect<{ assignmentId: string }>(base + '/create-assignment', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name }),
+    body: JSON.stringify(body),
     credentials: 'include',
   });
 }

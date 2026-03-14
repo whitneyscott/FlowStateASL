@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSearchParams, useNavigate, Link } from 'react-router-dom';
 import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
 import { resolveLtiContextValue } from '../utils/lti-context';
@@ -32,28 +32,43 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const [searchParams, setSearchParams] = useSearchParams();
   const assignmentIdFromUrl = searchParams.get('assignmentId') ?? '';
   const ctxAssignmentId = resolveLtiContextValue(context?.assignmentId);
-  const assignmentId = (ctxAssignmentId || assignmentIdFromUrl.trim()) || null;
+  const createMode = searchParams.get('create') === '1';
+  const assignmentId = createMode ? null : (ctxAssignmentId || assignmentIdFromUrl.trim()) || null;
 
   const [config, setConfig] = useState<promptApi.PromptConfig | null>(null);
   const [configuredAssignments, setConfiguredAssignments] = useState<promptApi.ConfiguredAssignment[]>([]);
+  const [loadingAssignments, setLoadingAssignments] = useState(false);
+  const [gradeDropdownValue, setGradeDropdownValue] = useState('');
+  const [configAssignValue, setConfigAssignValue] = useState('');
+  const [creatingAssignment, setCreatingAssignment] = useState(false);
+  const [createAssignName, setCreateAssignName] = useState('');
+  const [gradeConfirmModal, setGradeConfirmModal] = useState<{ name: string; id: string } | null>(null);
   const [modules, setModules] = useState<promptApi.CanvasModule[]>([]);
+  const [assignmentGroups, setAssignmentGroups] = useState<promptApi.CanvasAssignmentGroup[]>([]);
+  const [rubrics, setRubrics] = useState<promptApi.CanvasRubric[]>([]);
   const [loading, setLoading] = useState(true);
-  const [loadingAssignments, setLoadingAssignments] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [createName, setCreateName] = useState('');
-  const [creating, setCreating] = useState(false);
   const [minutes, setMinutes] = useState(5);
   const [prompts, setPrompts] = useState<string[]>([]);
   const [accessCode, setAccessCode] = useState('');
   const [moduleId, setModuleId] = useState<string>('');
-  const [gradeDropdownValue, setGradeDropdownValue] = useState('');
-  const [gradeConfirmModal, setGradeConfirmModal] = useState<{ name: string; id: string } | null>(null);
   const [createModuleName, setCreateModuleName] = useState('');
   const [createModulePosition, setCreateModulePosition] = useState<number | ''>('');
   const [creatingModule, setCreatingModule] = useState(false);
   const [showCreateModule, setShowCreateModule] = useState(false);
+  const [assignmentGroupId, setAssignmentGroupId] = useState<string>('');
+  const [rubricId, setRubricId] = useState<string>('');
+  const [createGroupName, setCreateGroupName] = useState('');
+  const [assignmentName, setAssignmentName] = useState('');
+  const [pointsPossible, setPointsPossible] = useState(10);
+  const [dueAt, setDueAt] = useState('');
+  const [unlockAt, setUnlockAt] = useState('');
+  const [lockAt, setLockAt] = useState('');
+  const [allowedAttempts, setAllowedAttempts] = useState(-1);
+  const [instructions, setInstructions] = useState('');
+  const [showSettings, setShowSettings] = useState(true);
 
   const teacher = context && isTeacher(context.roles);
   const hasLti = context?.courseId && context.userId !== 'standalone';
@@ -86,8 +101,33 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     }
   }, [teacher, hasLti, setLastFunction, setLastApiResult]);
 
-  const load = useCallback(async () => {
-    if (!hasLti || !assignmentId) {
+  const loadAssignmentGroups = useCallback(async () => {
+    if (!teacher || !hasLti) return;
+    try {
+      setLastFunction('GET /api/prompt/assignment-groups');
+      const list = await promptApi.getAssignmentGroups();
+      setLastApiResult('GET /api/prompt/assignment-groups', 200, true);
+      setAssignmentGroups(list ?? []);
+    } catch {
+      setAssignmentGroups([]);
+    }
+  }, [teacher, hasLti, setLastFunction, setLastApiResult]);
+
+  const loadRubrics = useCallback(async () => {
+    if (!teacher || !hasLti) return;
+    try {
+      setLastFunction('GET /api/prompt/rubrics');
+      const list = await promptApi.getRubrics();
+      setLastApiResult('GET /api/prompt/rubrics', 200, true);
+      setRubrics(list ?? []);
+    } catch {
+      setRubrics([]);
+    }
+  }, [teacher, hasLti, setLastFunction, setLastApiResult]);
+
+  const load = useCallback(async (overrideId?: string) => {
+    const id = overrideId ?? assignmentId;
+    if (!hasLti || !id) {
       setLoading(false);
       return;
     }
@@ -95,7 +135,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setError(null);
     try {
       setLastFunction('GET /api/prompt/config');
-      const data = await promptApi.getPromptConfig(assignmentId);
+      const data = await promptApi.getPromptConfig(id);
       setLastApiResult('GET /api/prompt/config', 200, true);
       setConfig(data ?? null);
       if (data) {
@@ -103,11 +143,29 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         setPrompts(Array.isArray(data.prompts) ? data.prompts : []);
         setAccessCode(data.accessCode ?? '');
         setModuleId(data.moduleId ?? '');
+        setAssignmentGroupId(data.assignmentGroupId ?? '');
+        setRubricId(data.rubricId ?? '');
+        setAssignmentName(data.assignmentName ?? '');
+        setPointsPossible(data.pointsPossible ?? 10);
+        setDueAt(data.dueAt ?? '');
+        setUnlockAt(data.unlockAt ?? '');
+        setLockAt(data.lockAt ?? '');
+        setAllowedAttempts(data.allowedAttempts ?? -1);
+        setInstructions(data.instructions ?? '');
       } else {
         setMinutes(5);
         setPrompts([]);
         setAccessCode('');
         setModuleId('');
+        setAssignmentGroupId('');
+        setRubricId('');
+        setAssignmentName('');
+        setPointsPossible(10);
+        setDueAt('');
+        setUnlockAt('');
+        setLockAt('');
+        setAllowedAttempts(-1);
+        setInstructions('');
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -119,58 +177,87 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   }, [hasLti, assignmentId, setLastFunction, setLastApiResult, setLastApiError]);
 
   useEffect(() => {
-    if (teacher && hasLti && needsAssignmentSelector) loadAssignments();
-  }, [teacher, hasLti, needsAssignmentSelector, loadAssignments]);
+    if (teacher && hasLti) loadAssignments();
+  }, [teacher, hasLti, loadAssignments]);
 
   useEffect(() => {
-    if (teacher && hasLti && assignmentId) {
-      load();
+    if (assignmentId) setConfigAssignValue(assignmentId);
+    else setConfigAssignValue('__new__');
+  }, [assignmentId]);
+
+  useEffect(() => {
+    if (teacher && hasLti) {
       loadModules();
+      loadAssignmentGroups();
+      loadRubrics();
+      if (assignmentId) load();
+      else setLoading(false);
     } else {
       setLoading(false);
     }
-  }, [teacher, hasLti, assignmentId, load, loadModules]);
+  }, [teacher, hasLti, assignmentId, load, loadModules, loadAssignmentGroups, loadRubrics]);
 
   const handleSave = async () => {
-    if (!teacher || !hasLti || !assignmentId) return;
+    if (!teacher || !hasLti) return;
     setSaving(true);
     setError(null);
     setSaved(false);
     try {
+      let targetId = assignmentId;
+      if (!targetId) {
+        // Course nav: create assignment first, then save config
+        setLastFunction('POST /api/prompt/create-assignment');
+        const { assignmentId: newId } = await promptApi.createAssignment(
+          assignmentName.trim() || 'ASL Express Assignment',
+          {
+            assignmentGroupId: assignmentGroupId || undefined,
+            newGroupName: assignmentGroupId === '__new__' ? createGroupName.trim() || undefined : undefined,
+          }
+        );
+        setLastApiResult('POST /api/prompt/create-assignment', 200, true);
+        targetId = newId;
+        if (assignmentGroupId === '__new__' && createGroupName.trim()) {
+          setAssignmentGroupId('');
+          setCreateGroupName('');
+          await loadAssignmentGroups();
+        }
+        setSearchParams({ assignmentId: newId });
+      }
       setLastFunction('PUT /api/prompt/config');
       await promptApi.putPromptConfig(
-        { minutes, prompts, accessCode, moduleId: moduleId || undefined },
-        assignmentId
+        {
+          minutes,
+          prompts,
+          accessCode,
+          assignmentName: assignmentName.trim() || undefined,
+          moduleId: moduleId || undefined,
+          assignmentGroupId: assignmentGroupId || undefined,
+          newGroupName: assignmentGroupId === '__new__' ? createGroupName.trim() || undefined : undefined,
+          rubricId: rubricId || undefined,
+          pointsPossible,
+          instructions: instructions.trim() || undefined,
+          dueAt: dueAt.trim() || undefined,
+          unlockAt: unlockAt.trim() || undefined,
+          lockAt: lockAt.trim() || undefined,
+          allowedAttempts,
+        },
+        targetId!
       );
       setLastApiResult('PUT /api/prompt/config', 200, true);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
+      if (assignmentGroupId === '__new__' && createGroupName.trim()) {
+        setAssignmentGroupId('');
+        setCreateGroupName('');
+        loadAssignmentGroups();
+      }
+      if (targetId) load(targetId ?? undefined);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(msg);
       setLastApiError('PUT /api/prompt/config', 0, msg);
     } finally {
       setSaving(false);
-    }
-  };
-
-  const handleCreateAssignment = async () => {
-    if (!teacher || !hasLti || creating) return;
-    setCreating(true);
-    setError(null);
-    try {
-      setLastFunction('POST /api/prompt/create-assignment');
-      const { assignmentId: newId } = await promptApi.createAssignment(createName.trim() || 'ASL Express Assignment');
-      setLastApiResult('POST /api/prompt/create-assignment', 200, true);
-      setCreateName('');
-      await loadAssignments();
-      setSearchParams({ assignmentId: newId });
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setError(msg);
-      setLastApiError('POST /api/prompt/create-assignment', 0, msg);
-    } finally {
-      setCreating(false);
     }
   };
 
@@ -199,6 +286,10 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     }
   };
 
+  const ASL_CODES = ['HELLO', 'THANK-YOU', 'PLEASE', 'SORRY', 'FRIEND', 'FAMILY', 'LOVE', 'HELP', 'LEARN', 'DEAF', 'SIGN', 'UNDERSTAND', 'COMMUNITY', 'CULTURE', 'PROUD', 'BEAUTIFUL', 'STRONG', 'TOGETHER', 'RESPECT', 'EQUAL', 'DEAF-PRIDE', 'SIGN-LANGUAGE', 'HANDS-UP', 'DEAF-GAIN', 'VISUAL-LANGUAGE', 'DEAF-HEART', 'SIGN-ON', 'HANDS-SPEAK'];
+  const generateAccessCode = () =>
+    setAccessCode(ASL_CODES[Math.floor(Math.random() * ASL_CODES.length)]);
+
   const addPrompt = () => setPrompts((p) => [...p, '']);
   const updatePrompt = (i: number, v: string) =>
     setPrompts((p) => {
@@ -208,30 +299,51 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     });
   const removePrompt = (i: number) => setPrompts((p) => p.filter((_, j) => j !== i));
 
-  const handleReset = async () => {
-    if (!teacher || !hasLti || !assignmentId) return;
-    setMinutes(5);
-    setPrompts([]);
-    setAccessCode('');
-    setModuleId('');
-    setSaving(true);
+  const handleConfigAssignSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const v = e.target.value;
+    setConfigAssignValue(v);
+    if (v === '__new__') {
+      setSearchParams({ create: '1' });
+      setAssignmentName('ASL Express Assignment');
+      setMinutes(5);
+      setPrompts([]);
+      setAccessCode('');
+      setModuleId('');
+      setAssignmentGroupId('');
+      setRubricId('');
+      setPointsPossible(10);
+      setDueAt('');
+      setUnlockAt('');
+      setLockAt('');
+      setAllowedAttempts(-1);
+      setInstructions('');
+    } else if (v) {
+      setSearchParams({ assignmentId: v });
+    }
+  };
+
+  const handleCreateNewAssignment = async () => {
+    if (!teacher || !hasLti || creatingAssignment) return;
+    const name = createAssignName.trim() || 'ASL Express Assignment';
+    setCreatingAssignment(true);
     setError(null);
-    setSaved(false);
     try {
-      setLastFunction('PUT /api/prompt/config');
-      await promptApi.putPromptConfig(
-        { minutes: 5, prompts: [], accessCode: '', assignmentName: '', moduleId: '' },
-        assignmentId
-      );
-      setLastApiResult('PUT /api/prompt/config', 200, true);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
+      setLastFunction('POST /api/prompt/create-assignment');
+      const { assignmentId: newId } = await promptApi.createAssignment(name, {
+        assignmentGroupId: assignmentGroupId || undefined,
+        newGroupName: assignmentGroupId === '__new__' ? createGroupName.trim() || undefined : undefined,
+      });
+      setLastApiResult('POST /api/prompt/create-assignment', 200, true);
+      setCreateAssignName('');
+      await loadAssignments();
+      setSearchParams({ assignmentId: newId });
+      setConfigAssignValue(newId);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(msg);
-      setLastApiError('PUT /api/prompt/config', 0, msg);
+      setLastApiError('POST /api/prompt/create-assignment', 0, msg);
     } finally {
-      setSaving(false);
+      setCreatingAssignment(false);
     }
   };
 
@@ -261,6 +373,45 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setGradeDropdownValue('');
   };
 
+  const handleReset = async () => {
+    if (!teacher || !hasLti) return;
+    setMinutes(5);
+    setPrompts([]);
+    setAccessCode('');
+    setModuleId('');
+    setAssignmentName('');
+    setPointsPossible(10);
+    setDueAt('');
+    setUnlockAt('');
+    setLockAt('');
+    setAllowedAttempts(-1);
+    setInstructions('');
+    if (!assignmentId) {
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    setSaved(false);
+    try {
+      setLastFunction('PUT /api/prompt/config');
+      await promptApi.putPromptConfig(
+        { minutes: 5, prompts: [], accessCode: '', assignmentName: '', moduleId: '', pointsPossible: 10, instructions: '', dueAt: '', unlockAt: '', lockAt: '', allowedAttempts: -1 },
+        assignmentId
+      );
+      setLastApiResult('PUT /api/prompt/config', 200, true);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg);
+      setLastApiError('PUT /api/prompt/config', 0, msg);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (!teacher || !context) {
     return (
       <div className="prompter-page">
@@ -271,105 +422,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     );
   }
 
-  // Assignment dropdown select (shared between both cards) - ALWAYS render when hasLti
-  const assignmentSelectOptions = (
-    <select
-      className="prompter-settings-input"
-      value={gradeDropdownValue}
-      onChange={handleGradeSelect}
-      disabled={loadingAssignments}
-    >
-      <option value="">
-        {loadingAssignments ? 'Loading assignments...' : '— Select Assignment to Grade —'}
-      </option>
-      {configuredAssignments.map((a) => (
-        <option key={a.id} value={a.id}>
-          {a.name} ({a.submissionCount} submissions, {a.ungradedCount} ungraded)
-        </option>
-      ))}
-    </select>
-  );
-
-  const configAssignSelectOptions = (
-    <select
-      className="prompter-settings-input"
-      value={assignmentId ?? ''}
-      onChange={(e) => {
-        const v = e.target.value;
-        if (v) setSearchParams({ assignmentId: v });
-        else setSearchParams({});
-      }}
-      disabled={loadingAssignments}
-    >
-      <option value="">
-        {loadingAssignments ? 'Loading...' : '— Select to configure —'}
-      </option>
-      {configuredAssignments.map((a) => (
-        <option key={a.id} value={a.id}>
-          {a.name}
-        </option>
-      ))}
-    </select>
-  );
-
-  if (hasLti && needsAssignmentSelector && !assignmentId) {
-    return (
-      <div className="prompter-page">
-        <div className="prompter-page-inner">
-          <h1 className="prompter-settings-page-title">Prompt Manager Settings</h1>
-          {error && <div className="prompter-alert-error">{error}</div>}
-
-          <div className="prompter-settings-card">
-            <h2 className="prompter-settings-card-title">Grade Submissions</h2>
-            <div className="prompter-settings-section">
-              <label className="prompter-settings-label">Assignment</label>
-              {assignmentSelectOptions}
-            </div>
-          </div>
-
-          <div className="prompter-settings-card">
-            <h2 className="prompter-settings-card-title">Configure Assignment</h2>
-            <div className="prompter-settings-section">
-              <label className="prompter-settings-label">Select existing assignment</label>
-              {configAssignSelectOptions}
-            </div>
-            <div className="prompter-settings-section" style={{ marginTop: 16 }}>
-              <label className="prompter-settings-label">Create new assignment</label>
-              <div className="prompter-settings-create-row">
-                <input
-                  type="text"
-                  value={createName}
-                  onChange={(e) => setCreateName(e.target.value)}
-                  placeholder="Assignment name"
-                  className="prompter-settings-input"
-                />
-                <button
-                  type="button"
-                  onClick={handleCreateAssignment}
-                  disabled={creating}
-                  className="prompter-btn-ready"
-                >
-                  {creating ? 'Creating...' : 'Create'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {gradeConfirmModal && (
-          <div className="prompter-modal-overlay" onClick={cancelGradeOpen}>
-            <div className="prompter-modal" onClick={(e) => e.stopPropagation()}>
-              <p>Opening <strong>{gradeConfirmModal.name}</strong> for Grading</p>
-              <div className="prompter-modal-actions">
-                <button type="button" onClick={confirmGradeOpen} className="prompter-btn-ready">OK</button>
-                <button type="button" onClick={cancelGradeOpen} className="prompter-btn-secondary">Cancel</button>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  }
+  const showForm = hasLti;
+  const effectiveAssignmentId = assignmentId;
 
   if (assignmentId && loading) {
     return (
@@ -380,6 +434,49 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       </div>
     );
   }
+
+  const assignmentGroupSelector = (
+    <div className="prompter-settings-section">
+      <label className="prompter-settings-label"><strong>Assignment Group:</strong></label>
+      <select
+        className="prompter-settings-input"
+        value={assignmentGroupId}
+        onChange={(e) => setAssignmentGroupId(e.target.value)}
+      >
+        <option value="">— Select Group —</option>
+        {assignmentGroups.map((g) => (
+          <option key={g.id} value={String(g.id)}>
+            {g.name}
+          </option>
+        ))}
+        <option value="__new__">+ Create New Group...</option>
+      </select>
+      {assignmentGroupId === '__new__' && (
+        <div className="prompter-new-group-input">
+          <input type="text" value={createGroupName} onChange={(e) => setCreateGroupName(e.target.value)} placeholder="New group name" className="prompter-settings-input" />
+          <p className="prompter-hint">Group will be created when you save.</p>
+        </div>
+      )}
+    </div>
+  );
+
+  const rubricSelector = (
+    <div className="prompter-settings-section">
+      <label className="prompter-settings-label"><strong>Rubric (optional):</strong></label>
+      <select
+        className="prompter-settings-input"
+        value={rubricId}
+        onChange={(e) => setRubricId(e.target.value)}
+      >
+        <option value="">— No Rubric —</option>
+        {rubrics.map((r) => (
+          <option key={r.id} value={String(r.id)}>
+            {r.title} ({r.pointsPossible} pts)
+          </option>
+        ))}
+      </select>
+    </div>
+  );
 
   const moduleSelector = (
     <div className="prompter-settings-section">
@@ -396,25 +493,19 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
           </option>
         ))}
       </select>
-      <button
-        type="button"
-        className="prompter-btn-start-sm prompter-btn-secondary"
-        style={{ marginTop: 8 }}
-        onClick={() => setShowCreateModule((s) => !s)}
-      >
+      <button type="button" className="prompter-btn-start-sm prompter-btn-secondary prompter-btn-mt" onClick={() => setShowCreateModule((s) => !s)}>
         + Create new module
       </button>
       {showCreateModule && (
-        <div className="prompter-create-module-form" style={{ marginTop: 12, padding: 12, background: '#f8f9fa', borderRadius: 8 }}>
+        <div className="prompter-create-module-form">
           <input
             type="text"
             value={createModuleName}
             onChange={(e) => setCreateModuleName(e.target.value)}
             placeholder="Module name"
             className="prompter-settings-input"
-            style={{ marginBottom: 8 }}
           />
-          <label className="prompter-settings-label" style={{ display: 'block', marginBottom: 4 }}>Placement in course</label>
+          <label className="prompter-settings-label prompter-settings-label-block">Placement in course</label>
           <select
             className="prompter-settings-input"
             value={createModulePosition}
@@ -422,7 +513,6 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
               const v = e.target.value;
               setCreateModulePosition(v === '' ? '' : Number(v));
             }}
-            style={{ marginBottom: 8 }}
           >
             <option value="">At end (default)</option>
             {Array.from({ length: Math.max(modules.length + 1, 1) }, (_, i) => i + 1).map((pos) => (
@@ -431,7 +521,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
               </option>
             ))}
           </select>
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div className="prompter-settings-actions-row">
             <button
               type="button"
               onClick={handleCreateModule}
@@ -449,6 +539,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     </div>
   );
 
+
   return (
     <div className="prompter-page">
       <div className="prompter-page-inner">
@@ -456,71 +547,158 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         {error && <div className="prompter-alert-error">{error}</div>}
         {saved && <div className="prompter-alert-success">Saved.</div>}
 
-        {needsAssignmentSelector && (
+        {showForm && (
           <>
-            <div className="prompter-settings-card">
-              <h2 className="prompter-settings-card-title">Grade Submissions</h2>
-              <div className="prompter-settings-section">
-                <label className="prompter-settings-label">Assignment</label>
-                {assignmentSelectOptions}
-              </div>
+            <div className="prompter-settings-actions-row prompter-settings-top-actions">
+              <button type="button" className="prompter-btn-toggle-settings" onClick={() => setShowSettings((s) => !s)}>
+                {showSettings ? 'Hide Settings' : 'Show Settings'}
+              </button>
+              <button type="button" className="prompter-btn-ready prompter-btn-sync" onClick={handleSave} disabled={saving}>
+                {saving ? 'Saving...' : 'Sync to Canvas'}
+              </button>
+              {effectiveAssignmentId && (
+                <Link
+                  to={`/viewer?assignmentId=${encodeURIComponent(effectiveAssignmentId)}&grading=1`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="prompter-btn-start prompter-btn-grading"
+                >
+                  Open for Grading
+                </Link>
+              )}
             </div>
-
-            <div className="prompter-settings-card">
-              <h2 className="prompter-settings-card-title">Configure Assignment</h2>
-              <div className="prompter-settings-section">
-                <label className="prompter-settings-label">Select assignment</label>
-                {configAssignSelectOptions}
-              </div>
-              <div className="prompter-settings-section">
-                <label className="prompter-settings-label">Create new assignment</label>
-                <div className="prompter-settings-create-row">
-                  <input
-                    type="text"
-                    value={createName}
-                    onChange={(e) => setCreateName(e.target.value)}
-                    placeholder="Assignment name"
-                    className="prompter-settings-input"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleCreateAssignment}
-                    disabled={creating}
-                    className="prompter-btn-ready"
-                  >
-                    {creating ? 'Creating...' : 'Create'}
-                  </button>
-                </div>
-              </div>
-
-              {assignmentId && (
-                <div className="prompter-settings-config-form">
-                  <div className="prompter-settings-section prompter-settings-assignment">
-                    <label className="prompter-settings-label"><strong>Warm Up Minutes:</strong></label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={60}
-                      value={minutes}
-                      onChange={(e) => setMinutes(Number(e.target.value) || 5)}
-                      className="prompter-settings-input prompter-settings-input-narrow"
-                    />
-                  </div>
-                  <div className="prompter-settings-section prompter-settings-access">
-                    <label className="prompter-settings-label"><strong>Access Code:</strong></label>
-                    <input
-                      type="text"
-                      value={accessCode}
-                      onChange={(e) => setAccessCode(e.target.value)}
-                      placeholder="Optional"
+            {hasLti && (
+              <div className="prompter-settings-card" style={{ marginBottom: 16 }}>
+                <h2 className="prompter-settings-card-title">Assignment to Configure</h2>
+                  <div className="prompter-settings-section">
+                    <label className="prompter-settings-label">Select an assignment or create new</label>
+                    <select
                       className="prompter-settings-input"
-                    />
+                      value={configAssignValue}
+                      onChange={handleConfigAssignSelect}
+                      disabled={loadingAssignments}
+                      style={{ maxWidth: 480 }}
+                    >
+                      <option value="__new__">+ Create new assignment</option>
+                      {configuredAssignments.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.name} ({a.submissionCount} submissions)
+                        </option>
+                      ))}
+                    </select>
                   </div>
-                  {moduleSelector}
-                  <div className="prompter-settings-section prompter-settings-prompts">
+                  {configAssignValue === '__new__' && (
+                    <div className="prompter-create-module-form" style={{ marginTop: 12 }}>
+                      <label className="prompter-settings-label">New assignment name</label>
+                      <input
+                        type="text"
+                        value={createAssignName}
+                        onChange={(e) => setCreateAssignName(e.target.value)}
+                        placeholder="e.g. ASL Warm-Up Submission"
+                        className="prompter-settings-input"
+                      />
+                      <div className="prompter-settings-field" style={{ marginTop: 8 }}>
+                        {assignmentGroupSelector}
+                      </div>
+                      <div className="prompter-settings-actions-row" style={{ marginTop: 12 }}>
+                        <button
+                          type="button"
+                          onClick={handleCreateNewAssignment}
+                          disabled={creatingAssignment}
+                          className="prompter-btn-ready"
+                        >
+                          {creatingAssignment ? 'Creating...' : 'Create Assignment'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+            )}
+            {hasLti && (
+              <div className="prompter-settings-card" style={{ marginBottom: 16 }}>
+                <h2 className="prompter-settings-card-title">Grade Submissions</h2>
+                  <div className="prompter-settings-section">
+                    <label className="prompter-settings-label">Select assignment for grading</label>
+                    <select
+                      className="prompter-settings-input"
+                      value={gradeDropdownValue}
+                      onChange={handleGradeSelect}
+                      disabled={loadingAssignments}
+                      style={{ maxWidth: 480 }}
+                    >
+                      <option value="">
+                        {loadingAssignments ? 'Loading assignments...' : '— Select Assignment to Grade —'}
+                      </option>
+                      {configuredAssignments.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.name} ({a.submissionCount} submissions, {a.ungradedCount} ungraded)
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+            )}
+          </>
+        )}
+
+        {showForm && (
+          <div className="prompter-settings-card">
+            <h2 className="prompter-settings-card-title">Configure Assignment</h2>
+            {showSettings && (
+              <div className="prompter-settings-config-form">
+                <div className="prompter-settings-two-col">
+                  <div className="prompter-settings-col-assignment">
+                    <div className="prompter-settings-section">
+                      <label className="prompter-settings-label"><strong>Warm Up Minutes:</strong></label>
+                      <input type="number" min={1} max={60} step={0.1} value={minutes} onChange={(e) => setMinutes(Number(e.target.value) || 5)} className="prompter-settings-input prompter-settings-input-narrow" />
+                    </div>
+                    <div className="prompter-settings-section prompter-settings-assignment-block">
+                      <label className="prompter-settings-label"><strong>Assignment Settings:</strong></label>
+                      <div className="prompter-settings-field">
+                        <label className="prompter-settings-label">Assignment Name: <span className="prompter-required">*</span></label>
+                        <input type="text" value={assignmentName} onChange={(e) => setAssignmentName(e.target.value)} placeholder="e.g. ASL Warm-Up Submission" className="prompter-settings-input" required />
+                      </div>
+                      {assignmentGroupSelector}
+                      <div className="prompter-settings-field">
+                        <label className="prompter-settings-label">Points Possible:</label>
+                        <input type="number" step={0.5} min={0} value={pointsPossible} onChange={(e) => setPointsPossible(Number(e.target.value) || 0)} className="prompter-settings-input prompter-settings-input-narrow" />
+                      </div>
+                      <div className="prompter-settings-field">
+                        <label className="prompter-settings-label">Due Date (optional):</label>
+                        <input type="datetime-local" value={dueAt} onChange={(e) => setDueAt(e.target.value)} className="prompter-settings-input" />
+                      </div>
+                      <div className="prompter-settings-field">
+                        <label className="prompter-settings-label">Available From (optional):</label>
+                        <input type="datetime-local" value={unlockAt} onChange={(e) => setUnlockAt(e.target.value)} className="prompter-settings-input" />
+                      </div>
+                      <div className="prompter-settings-field">
+                        <label className="prompter-settings-label">Available Until (optional):</label>
+                        <input type="datetime-local" value={lockAt} onChange={(e) => setLockAt(e.target.value)} className="prompter-settings-input" />
+                      </div>
+                      <div className="prompter-settings-field">
+                        <label className="prompter-settings-label">Allowed Attempts:</label>
+                        <input type="number" min={-1} value={allowedAttempts} onChange={(e) => setAllowedAttempts(Number(e.target.value) ?? -1)} className="prompter-settings-input prompter-settings-input-narrow" title="-1 = unlimited" />
+                        <span className="prompter-hint">(-1 = unlimited)</span>
+                      </div>
+                      <div className="prompter-settings-field">
+                        <label className="prompter-settings-label">Instructions (optional):</label>
+                        <p className="prompter-hint">Displayed in the assignment description and on the first screen students see.</p>
+                        <textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={4} placeholder="Instructions for students..." className="prompter-settings-input" />
+                      </div>
+                      {rubricSelector}
+                    </div>
+                    <div className="prompter-settings-section prompter-settings-access">
+                      <label className="prompter-settings-label"><strong>Access Code:</strong> (Required for students to start)</label>
+                      <input type="text" value={accessCode} onChange={(e) => setAccessCode(e.target.value)} placeholder="Enter or generate" className="prompter-settings-input prompter-access-code-input" required />
+                      <button type="button" className="prompter-btn-generate" onClick={generateAccessCode}>Generate ASL Code</button>
+                    </div>
+                    {moduleSelector}
+                  </div>
+                  <div className="prompter-settings-resize-handle" title="Column divider" />
+                  <div className="prompter-settings-col-prompts">
                     <div className="prompter-settings-header-row">
                       <label className="prompter-settings-label"><strong>Prompts (warm-up text)</strong></label>
-                      <button type="button" onClick={addPrompt} className="prompter-btn-start" style={{ padding: '6px 14px', fontSize: 14 }}>
+                      <button type="button" onClick={addPrompt} className="prompter-btn-add-pool">
                         + Add to Pool
                       </button>
                     </div>
@@ -539,92 +717,17 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                       </div>
                     ))}
                   </div>
-                  <div className="prompter-settings-save-row prompter-settings-actions-row">
-                    <button type="button" onClick={handleSave} disabled={saving} className="prompter-btn-ready">
-                      {saving ? 'Saving...' : 'Save'}
-                    </button>
-                    <button type="button" onClick={handleReset} disabled={saving} className="prompter-btn-secondary">
-                      Reset
-                    </button>
-                  </div>
                 </div>
-              )}
-            </div>
-          </>
-        )}
-
-        {!needsAssignmentSelector && (
-          <div className="prompter-settings-card">
-            <h2 className="prompter-settings-card-title">Configure Assignment</h2>
-            <div className="prompter-settings-section prompter-settings-assignment">
-              <label className="prompter-settings-label"><strong>Warm Up Minutes:</strong></label>
-              <input
-                type="number"
-                min={1}
-                max={60}
-                value={minutes}
-                onChange={(e) => setMinutes(Number(e.target.value) || 5)}
-                className="prompter-settings-input prompter-settings-input-narrow"
-              />
-            </div>
-            <div className="prompter-settings-section prompter-settings-access">
-              <label className="prompter-settings-label"><strong>Access Code:</strong></label>
-              <input
-                type="text"
-                value={accessCode}
-                onChange={(e) => setAccessCode(e.target.value)}
-                placeholder="Optional"
-                className="prompter-settings-input"
-              />
-            </div>
-            {modules.length > 0 && moduleSelector}
-            {modules.length === 0 && (
-              <div className="prompter-settings-section">
-                <label className="prompter-settings-label"><strong>Module:</strong></label>
-                <button
-                  type="button"
-                  className="prompter-btn-start-sm prompter-btn-secondary"
-                  onClick={() => setShowCreateModule((s) => !s)}
-                >
-                  + Create new module
-                </button>
-                {showCreateModule && (
-                  <div className="prompter-create-module-form" style={{ marginTop: 12, padding: 12, background: '#f8f9fa', borderRadius: 8 }}>
-                    <input
-                      type="text"
-                      value={createModuleName}
-                      onChange={(e) => setCreateModuleName(e.target.value)}
-                      placeholder="Module name"
-                      className="prompter-settings-input"
-                      style={{ marginBottom: 8 }}
-                    />
-                    <label className="prompter-settings-label">Placement: At end (first module)</label>
-                    <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                      <button type="button" onClick={handleCreateModule} disabled={creatingModule || !createModuleName.trim()} className="prompter-btn-ready">
-                        {creatingModule ? 'Creating...' : 'Create Module'}
-                      </button>
-                      <button type="button" onClick={() => { setShowCreateModule(false); setCreateModuleName(''); }} className="prompter-btn-secondary">Cancel</button>
-                    </div>
-                  </div>
-                )}
+                <div className="prompter-settings-save-row prompter-settings-actions-row">
+                  <button type="button" onClick={handleSave} disabled={saving} className="prompter-btn-ready">
+                    {saving ? 'Saving...' : 'Save'}
+                  </button>
+                  <button type="button" onClick={handleReset} disabled={saving} className="prompter-btn-secondary">
+                    Reset
+                  </button>
+                </div>
               </div>
             )}
-            <div className="prompter-settings-section prompter-settings-prompts">
-              <div className="prompter-settings-header-row">
-                <label className="prompter-settings-label"><strong>Prompts (warm-up text)</strong></label>
-                <button type="button" onClick={addPrompt} className="prompter-btn-start" style={{ padding: '6px 14px', fontSize: 14 }}>+ Add to Pool</button>
-              </div>
-              {prompts.map((p, i) => (
-                <div key={i} className="prompter-prompt-item-row">
-                  <textarea value={p} onChange={(e) => updatePrompt(i, e.target.value)} rows={2} className="prompter-settings-input" placeholder="Prompt text..." />
-                  <button type="button" onClick={() => removePrompt(i)} className="prompter-btn-remove">Remove</button>
-                </div>
-              ))}
-            </div>
-            <div className="prompter-settings-save-row prompter-settings-actions-row">
-              <button type="button" onClick={handleSave} disabled={saving} className="prompter-btn-ready">{saving ? 'Saving...' : 'Save'}</button>
-              <button type="button" onClick={handleReset} disabled={saving} className="prompter-btn-secondary">Reset</button>
-            </div>
           </div>
         )}
       </div>

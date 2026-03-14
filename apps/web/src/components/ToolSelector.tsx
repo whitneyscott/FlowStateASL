@@ -25,7 +25,7 @@ export function ToolSelector({ context, currentTool }: ToolSelectorProps) {
       <div className="w-full max-w-4xl mx-auto px-4 py-3 flex gap-2">
         <NavLink to="/prompter" end className={navLinkClass}>Timer</NavLink>
         <NavLink to="/config" className={navLinkClass}>Config</NavLink>
-        <NavLink to="/viewer" className={navLinkClass}>Grade</NavLink>
+        <NavLink to="/viewer?grading=1" className={navLinkClass}>Grade</NavLink>
       </div>
     );
   }

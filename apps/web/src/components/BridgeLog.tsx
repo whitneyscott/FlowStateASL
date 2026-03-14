@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
-import { resolveLtiContextValue } from '../utils/lti-context';
 import { useSearchParams } from 'react-router-dom';
 
 interface BridgeLogProps {
@@ -11,7 +10,7 @@ interface BridgeLogProps {
 }
 
 export function BridgeLog({ context, loading, error }: BridgeLogProps) {
-  const { sproutVideoAccessed, sproutVideoPlaylistsRetrieved, lastFunctionCalled, lastApiResult, lastApiError, lastSubmissionDetails, lastCourseSettings } = useDebug();
+  const { lastFunctionCalled, lastApiResult } = useDebug();
   const [searchParams] = useSearchParams();
   const debugMode = searchParams.get('debug') === '1';
   const [lastServerError, setLastServerError] = useState<{ endpoint: string; message: string } | null>(null);
@@ -63,98 +62,94 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
 
   useEffect(() => {
     const newLines: string[] = [];
-    if (loading) {
-      newLines.push('Fetching LTI context...');
-    } else if (error) {
-      newLines.push(`Error: ${error}`);
-    } else if (context) {
-      const isStandalone =
-        context.userId === 'standalone' || !context.courseId;
-      if (isStandalone) {
-        newLines.push('No LTI launch detected. Standalone mode.');
-        newLines.push('Loading full menu.');
-      } else {
-        newLines.push('LTI Launch Detected');
-        newLines.push(`Course ID: ${context.courseId}`);
-        const moduleId = resolveLtiContextValue(context.moduleId);
-        const assignmentId = resolveLtiContextValue(context.assignmentId);
-        if (moduleId) newLines.push(`Module ID: ${moduleId}`);
-        if (assignmentId) newLines.push(`Assignment ID: ${assignmentId}`);
-        newLines.push(`Roles: ${context.roles || '(none)'}`);
-        const teacherPatterns = ['instructor','administrator','teacher','ta','staff'];
-        const isTeacher = context.roles && teacherPatterns.some((p) =>
-          context.roles!.toLowerCase().includes(p)
-        );
-        newLines.push(`Teacher mode: ${isTeacher ? 'ON' : 'OFF'}`);
-        newLines.push(`Tool: ${context.toolType}`);
-        if (context.customToolTypeFromJwt) {
-          newLines.push(`Tool type (Step 4): custom.tool_type="${context.customToolTypeFromJwt}" → ${context.toolType}`);
-        }
-        if (context.redirectPath) {
-          newLines.push(`Redirect path (Step 2): ${context.redirectPath}`);
-        }
-        if (context.agsLineitemsUrl || context.agsLineitemUrl) {
-          if (context.agsLineitemUrl) newLines.push(`AGS (Step 6): lineitem=${context.agsLineitemUrl}`);
-          if (context.agsLineitemsUrl) newLines.push(`AGS (Step 6): lineitems=${context.agsLineitemsUrl}`);
-        } else {
-          newLines.push(`AGS (Step 6): (absent — enable AGS on Developer Key for grade passback)`);
-        }
-      }
+
+    // Assignment Group & Create Assignment section
+    newLines.push('--- Assignment Group & Create Assignment ---');
+    const agLines = ltiLog.filter(
+      (line) =>
+        line.toLowerCase().includes('assignment group') ||
+        line.toLowerCase().includes('create-assignment') ||
+        line.toLowerCase().includes('createassignment') ||
+        line.toLowerCase().includes('create-group') ||
+        line.toLowerCase().includes('update-due-at')
+    );
+    if (agLines.length > 0) {
+      newLines.push(...agLines);
     } else {
-      newLines.push('No context available.');
+      newLines.push('(No assignment group activity yet)');
     }
-    if (sproutVideoAccessed) {
-      newLines.push(`SproutVideo API: accessed, ${sproutVideoPlaylistsRetrieved ?? '?'} playlists`);
-    } else if (context?.toolType === 'flashcards') {
-      newLines.push('SproutVideo API: not yet accessed');
+
+    // Video submission flow (Finish & Submit / timer expiry → Canvas)
+    newLines.push('');
+    newLines.push('--- Video Submission Flow (Finish & Submit → Canvas) ---');
+    const submitLines = ltiLog.filter(
+      (line) =>
+        line.includes('prompt-submit') ||
+        line.includes('prompt-upload') ||
+        line.includes('prompt-deeplink') ||
+        line.includes('submit-deep-link') ||
+        line.includes('upload-video') ||
+        line.includes('writeSubmissionBody') ||
+        line.includes('createSubmissionWithBody') ||
+        line.includes('initiateUserFileUpload') ||
+        line.includes('attachFileToSubmission') ||
+        line.includes('uploadFileToCanvas') ||
+        (line.includes('prompt') && (line.includes('POST') || line.includes('submit') || line.includes('upload')))
+    );
+    if (submitLines.length > 0) {
+      newLines.push(...submitLines);
+    } else {
+      newLines.push('(No submission activity yet)');
     }
-    if (lastFunctionCalled) {
+
+    // Viewer / Grading flow (assignment select → getSubmissions → grade)
+    newLines.push('');
+    newLines.push('--- Viewer / Grading (select assignment → submissions) ---');
+    const viewerLines = ltiLog.filter(
+      (line) =>
+        line.includes('[viewer]') ||
+        line.toLowerCase().includes('submissions') ||
+        line.toLowerCase().includes('configured-assignments')
+    );
+    if (viewerLines.length > 0) {
+      newLines.push(...viewerLines);
+    } else {
+      newLines.push('(No viewer/grading activity yet)');
+    }
+
+    const agOrSubmitRelated =
+      lastFunctionCalled?.includes('assignment-groups') ||
+      lastFunctionCalled?.includes('create-assignment') ||
+      lastFunctionCalled?.includes('submit') ||
+      lastFunctionCalled?.includes('upload-video') ||
+      lastFunctionCalled?.includes('submit-deep-link') ||
+      lastFunctionCalled?.includes('submissions') ||
+      lastFunctionCalled?.includes('configured-assignments') ||
+      (lastFunctionCalled?.includes('config') && lastApiResult?.endpoint?.includes('config'));
+    if (agOrSubmitRelated && lastFunctionCalled) {
+      newLines.push('');
       newLines.push(`Last function: ${lastFunctionCalled}`);
     }
-    if (lastApiResult) {
+    if (agOrSubmitRelated && lastApiResult) {
       newLines.push(`Last API: ${lastApiResult.endpoint} → ${lastApiResult.status} ${lastApiResult.ok ? 'OK' : 'FAILED'}`);
     }
-    if (lastApiError) {
-      newLines.push(`API Error: ${lastApiError.endpoint} ${lastApiError.status} - ${lastApiError.message}`);
-    }
-    if (lastServerError) {
-      newLines.push(`Last error (500): ${lastServerError.endpoint}`);
+    if (
+      lastServerError &&
+      (lastServerError.endpoint?.includes('config') ||
+        lastServerError.endpoint?.includes('assignment-groups') ||
+        lastServerError.endpoint?.includes('create-assignment') ||
+        lastServerError.endpoint?.includes('submit') ||
+        lastServerError.endpoint?.includes('upload-video') ||
+        lastServerError.endpoint?.includes('submit-deep-link') ||
+        lastServerError.endpoint?.includes('submissions') ||
+        lastServerError.endpoint?.includes('configured-assignments'))
+    ) {
+      newLines.push('');
+      newLines.push(`Error: ${lastServerError.endpoint}`);
       newLines.push(`  → ${lastServerError.message}`);
     }
-    if (lastSubmissionDetails) {
-      newLines.push('Submission details:', lastSubmissionDetails);
-    }
-    if (lastCourseSettings) {
-      newLines.push('Course settings (from Flashcard Settings assignment):');
-      newLines.push(`  selectedCurriculums: ${JSON.stringify(lastCourseSettings.selectedCurriculums)}`);
-      newLines.push(`  selectedUnits: ${JSON.stringify(lastCourseSettings.selectedUnits)}`);
-      const d = lastCourseSettings._debug;
-      if (d) {
-        newLines.push(`  [debug] Assignment: "${d.assignmentTitle}" (id: ${d.flashcardSettingsAssignmentId ?? 'none'})`);
-        newLines.push(`  [debug] courseIdUsed: ${d.courseIdUsed} | canvasDomainUsed: ${d.canvasDomainUsed || '(env)'} | findResult: ${d.findResult}`);
-        newLines.push(`  [debug] tokenStatus: ${d.tokenStatus ?? '(not set)'}`);
-        if (d.canvasApiResponse) {
-          newLines.push(`  [debug] Canvas API response: ${d.canvasApiResponse}`);
-        }
-        newLines.push(`  [debug] requestFindByTitle: ${d.requestFindByTitle}`);
-        if (d.requestGetAssignment) {
-          newLines.push(`  [debug] requestGetAssignment: ${d.requestGetAssignment}`);
-        }
-      }
-    }
-    // LTI log: submission flow only (prompt, deep-link, api-error, lti-key)
-    if (ltiLog.length > 0) {
-      const submissionTags = ['prompt', 'deep-link', 'api-error', 'lti-key'];
-      const submissionLines = ltiLog.filter((line) =>
-        submissionTags.some((tag) => line.includes(`[${tag}]`))
-      );
-      if (submissionLines.length > 0) {
-        newLines.push('--- Submission tracing ---');
-        newLines.push(...submissionLines);
-      }
-    }
     setLines(newLines);
-  }, [context, loading, error, sproutVideoAccessed, sproutVideoPlaylistsRetrieved, lastFunctionCalled, lastApiResult, lastApiError, lastSubmissionDetails, lastCourseSettings, lastServerError, ltiLog]);
+  }, [lastFunctionCalled, lastApiResult, lastServerError, ltiLog]);
 
   const text = ['BRIDGE DEBUG LOG:', ...lines].join('\n');
 

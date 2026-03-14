@@ -40,38 +40,56 @@ export default function TimerPage({ context }: TimerPageProps) {
 
   const doSubmit = useCallback(
     async (promptSnapshot: string, blob: Blob | null) => {
+      console.log('[TimerPage:doSubmit] ENTER', {
+        hasBlob: !!blob,
+        blobSize: blob?.size,
+        promptLength: promptSnapshot?.length,
+        messageType: context?.messageType,
+      });
       setSubmitError(null);
       setPhase(blob ? 'upload' : 'done');
       const isDeepLink = context?.messageType === 'LtiDeepLinkingRequest';
       let lastEndpoint = 'POST /api/prompt/save-prompt';
       try {
+        console.log('[TimerPage:doSubmit] Step 1: savePrompt');
         setLastFunction('POST /api/prompt/save-prompt');
         await promptApi.savePrompt(promptSnapshot);
         setLastApiResult('POST /api/prompt/save-prompt', 200, true);
+        console.log('[TimerPage:doSubmit] savePrompt OK');
+
         if (isDeepLink && blob) {
           lastEndpoint = 'POST /api/prompt/submit-deep-link';
+          console.log('[TimerPage:doSubmit] Step 2a: submitDeepLink (isDeepLink=true)', { blobSize: blob.size });
           setLastFunction('POST /api/prompt/submit-deep-link');
           const html = await promptApi.submitDeepLink(blob, `asl_submission_${Date.now()}.webm`);
           setLastApiResult('POST /api/prompt/submit-deep-link', 200, true);
+          console.log('[TimerPage:doSubmit] submitDeepLink OK, HTML length=', html?.length, 'document.write...');
           document.open();
           document.write(html);
           document.close();
+          console.log('[TimerPage:doSubmit] document.write done → Canvas panel should load');
           return;
         }
         if (!isDeepLink) {
           lastEndpoint = 'POST /api/prompt/submit';
+          console.log('[TimerPage:doSubmit] Step 2b: submitPrompt (body to Canvas)');
           setLastFunction('POST /api/prompt/submit');
           await promptApi.submitPrompt(promptSnapshot);
           setLastApiResult('POST /api/prompt/submit', 200, true);
+          console.log('[TimerPage:doSubmit] submitPrompt OK');
         }
         if (blob && !isDeepLink) {
           lastEndpoint = 'POST /api/prompt/upload-video';
+          console.log('[TimerPage:doSubmit] Step 3: uploadVideo', { blobSize: blob.size });
           setLastFunction('POST /api/prompt/upload-video');
-          await promptApi.uploadVideo(blob, `asl_submission_${Date.now()}.webm`);
+          const result = await promptApi.uploadVideo(blob, `asl_submission_${Date.now()}.webm`);
           setLastApiResult('POST /api/prompt/upload-video', 200, true);
+          console.log('[TimerPage:doSubmit] uploadVideo OK', result);
         }
         setPhase('done');
+        console.log('[TimerPage:doSubmit] DONE');
       } catch (e) {
+        console.error('[TimerPage:doSubmit] FAILED', { lastEndpoint, error: e });
         setSubmitError(e instanceof Error ? e.message : 'Submit failed');
         setLastApiError(lastEndpoint, 0, String(e));
       }
@@ -201,6 +219,7 @@ export default function TimerPage({ context }: TimerPageProps) {
   useEffect(() => {
     if (phase !== 'record' || recordSecondsLeft > 0) return;
     if (autoFinishFiredRef.current || !recording) return;
+    console.log('[TimerPage] Timer expired (recordSecondsLeft=0), calling finishAndSubmit');
     autoFinishFiredRef.current = true;
     finishAndSubmit();
   }, [phase, recordSecondsLeft, recording, finishAndSubmit]);
@@ -221,10 +240,16 @@ export default function TimerPage({ context }: TimerPageProps) {
     };
     recorder.onstop = () => {
       const blob = new Blob(chunksRef.current, { type: 'video/webm' });
+      console.log('[TimerPage:recorder.onstop] MediaRecorder stopped', {
+        blobSize: blob.size,
+        chunksCount: chunksRef.current.length,
+        submitOnStop: submitOnStopRef.current,
+      });
       setRecordedBlob(blob);
       if (submitOnStopRef.current) {
         submitOnStopRef.current = false;
         const promptSnapshot = pendingPromptRef.current || (prompts[promptIndex] ?? prompts[0] ?? '');
+        console.log('[TimerPage:recorder.onstop] Calling doSubmit...');
         doSubmit(promptSnapshot, blob);
       }
     };

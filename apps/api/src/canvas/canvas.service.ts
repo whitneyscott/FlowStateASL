@@ -108,6 +108,7 @@ export class CanvasService {
     domainOverride?: string,
     tokenOverride?: string | null,
   ): Promise<{ uploadUrl: string; uploadParams: Record<string, string> }> {
+    appendLtiLog('canvas', 'initiateUserFileUpload', { filename, size, contentType });
     const base = this.getBaseUrl(domainOverride);
     const url = `${base}/api/v1/users/self/files`;
     const form = new FormData();
@@ -121,6 +122,7 @@ export class CanvasService {
     });
     if (!res.ok) {
       const text = await res.text();
+      appendLtiLog('canvas', 'initiateUserFileUpload FAIL', { status: res.status, text: text.slice(0, 200) });
       throw new Error(`Canvas initiate user file upload failed: ${res.status} ${text}`);
     }
     const data = (await res.json()) as {
@@ -128,8 +130,10 @@ export class CanvasService {
       upload_params?: Record<string, string>;
     };
     if (!data.upload_url || !data.upload_params) {
+      appendLtiLog('canvas', 'initiateUserFileUpload FAIL: no upload_url/params');
       throw new Error('Canvas did not return upload_url and upload_params');
     }
+    appendLtiLog('canvas', 'initiateUserFileUpload OK');
     return {
       uploadUrl: data.upload_url,
       uploadParams: data.upload_params,
@@ -181,6 +185,7 @@ export class CanvasService {
     buffer: Buffer,
     options?: { resumeFromOffset?: number; tokenOverride?: string | null },
   ): Promise<{ fileId: string }> {
+    appendLtiLog('canvas', 'uploadFileToCanvas', { bufferSize: buffer.length });
     const start = options?.resumeFromOffset ?? 0;
     const total = buffer.length;
     let lastSuccessOffset = start;
@@ -212,6 +217,7 @@ export class CanvasService {
         const confirmData = (await confirmRes.json()) as { id?: string };
         const fileId = String(confirmData.id ?? '');
         if (!fileId) throw new Error('No file id in confirm response');
+        appendLtiLog('canvas', 'uploadFileToCanvas OK (redirect path)', { fileId });
         return { fileId };
       }
 
@@ -225,6 +231,7 @@ export class CanvasService {
       const data = (await res.json()) as { id?: string };
       const fileId = String(data.id ?? '');
       if (!fileId) throw new Error('No file id in response');
+      appendLtiLog('canvas', 'uploadFileToCanvas OK', { fileId });
       return { fileId };
     } catch (e) {
       if (e instanceof CanvasUploadChunkError) throw e;
@@ -248,6 +255,7 @@ export class CanvasService {
     domainOverride?: string,
     tokenOverride?: string | null,
   ): Promise<void> {
+    appendLtiLog('canvas', 'attachFileToSubmission', { courseId, assignmentId, userId, fileId });
     const base = this.getBaseUrl(domainOverride);
     const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}`;
     const body = { submission: { file_ids: [fileId] } };
@@ -258,8 +266,10 @@ export class CanvasService {
     });
     if (!res.ok) {
       const text = await res.text();
+      appendLtiLog('canvas', 'attachFileToSubmission FAIL', { status: res.status, text: text.slice(0, 200) });
       throw new Error(`Canvas attach file to submission failed: ${res.status} ${text}`);
     }
+    appendLtiLog('canvas', 'attachFileToSubmission OK');
   }
 
   async submitAssignmentWithFile(
@@ -425,6 +435,12 @@ export class CanvasService {
     if (options.omitFromFinalGrade === true) {
       assignment.omit_from_final_grade = true;
     }
+    appendLtiLog('canvas', 'createAssignment: POST to Canvas', {
+      courseId,
+      name,
+      assignment_group_id: assignment.assignment_group_id ?? '(none - Canvas default)',
+      url,
+    });
     const res = await fetch(url, {
       method: 'POST',
       headers: this.getAuthHeaders(tokenOverride),
@@ -432,10 +448,13 @@ export class CanvasService {
     });
     if (!res.ok) {
       const text = await res.text();
+      appendLtiLog('canvas', 'createAssignment: Canvas API failed', { status: res.status, text: text.slice(0, 300) });
       throw new Error(`Canvas create assignment failed: ${res.status} ${text}`);
     }
     const data = (await res.json()) as { id?: number };
-    return String(data.id ?? '');
+    const id = String(data.id ?? '');
+    appendLtiLog('canvas', 'createAssignment: Canvas responded', { status: res.status, assignmentId: id });
+    return id;
   }
 
   async getAssignment(
@@ -453,6 +472,189 @@ export class CanvasService {
     }
     const data = (await res.json()) as { name?: string; description?: string; points_possible?: number; rubric?: Array<unknown> };
     return { name: data.name, description: data.description, points_possible: data.points_possible, rubric: data.rubric };
+  }
+
+  /** List assignment groups for teacher config. */
+  async listAssignmentGroups(
+    courseId: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<Array<{ id: number; name: string }>> {
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/assignment_groups?per_page=100`;
+    const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
+    if (!res.ok) {
+      if (res.status === 401) throw new CanvasTokenExpiredError(401);
+      const text = await res.text();
+      throw new Error(`Canvas list assignment groups failed: ${res.status} ${text}`);
+    }
+    const data = (await res.json()) as Array<{ id: number; name?: string }>;
+    return Array.isArray(data) ? data.map((g) => ({ id: g.id, name: g.name ?? '' })) : [];
+  }
+
+  /** Create a new assignment group. Returns the created group.
+   * Canvas API expects top-level "name" (not nested under assignment_group). */
+  async createAssignmentGroup(
+    courseId: string,
+    name: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<{ id: number; name: string }> {
+    const nameToSend = (name ?? '').trim() || 'New Group';
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/assignment_groups`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: this.getAuthHeaders(tokenOverride),
+      body: JSON.stringify({ name: nameToSend }),
+    });
+    if (!res.ok) {
+      if (res.status === 401) throw new CanvasTokenExpiredError(401);
+      const text = await res.text();
+      throw new Error(`Canvas create assignment group failed: ${res.status} ${text}`);
+    }
+    const created = (await res.json()) as { id?: number; name?: string };
+    const id = created.id ?? 0;
+    if (!id) throw new Error('Canvas did not return assignment group id');
+    return { id, name: created.name ?? nameToSend };
+  }
+
+  /** Get a single rubric by ID. Returns criteria array in viewer format. */
+  async getRubric(
+    courseId: string,
+    rubricId: string | number,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<Array<{ id: string; description?: string; points?: number; ratings?: Array<{ id: string; description?: string; points?: number }> }> | null> {
+    const base = this.getBaseUrl(domainOverride);
+    const rid = typeof rubricId === 'string' ? rubricId : String(rubricId);
+    const url = `${base}/api/v1/courses/${courseId}/rubrics/${rid}`;
+    const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
+    if (!res.ok) {
+      if (res.status === 401) throw new CanvasTokenExpiredError(401);
+      return null;
+    }
+    const rubric = (await res.json()) as { data?: Array<{ id?: string; description?: string; long_description?: string; points?: number; ratings?: Array<{ id?: string; description?: string; long_description?: string; points?: number }> }> };
+    const raw = rubric?.data;
+    if (!Array.isArray(raw) || raw.length === 0) return null;
+    return raw.map((c) => ({
+      id: String(c.id ?? ''),
+      description: c.description ?? c.long_description ?? '',
+      points: c.points ?? 0,
+      ratings: Array.isArray(c.ratings)
+        ? c.ratings.map((r) => ({
+            id: String(r.id ?? ''),
+            description: r.description ?? r.long_description ?? '',
+            points: r.points ?? 0,
+          }))
+        : [],
+    }));
+  }
+
+  /** List course rubrics for teacher config. */
+  async listRubrics(
+    courseId: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<Array<{ id: number; title: string; pointsPossible: number }>> {
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/rubrics?per_page=100`;
+    const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
+    if (!res.ok) {
+      if (res.status === 401) throw new CanvasTokenExpiredError(401);
+      const text = await res.text();
+      throw new Error(`Canvas list rubrics failed: ${res.status} ${text}`);
+    }
+    const data = (await res.json()) as Array<{ id: number; title?: string; points_possible?: number }>;
+    return Array.isArray(data)
+      ? data.map((r) => ({
+          id: r.id,
+          title: r.title ?? '',
+          pointsPossible: r.points_possible ?? 0,
+        }))
+      : [];
+  }
+
+  /** Update assignment (name, description, points, dates, group, etc.). */
+  async updateAssignment(
+    courseId: string,
+    assignmentId: string,
+    updates: {
+      assignmentGroupId?: number | string;
+      name?: string;
+      description?: string;
+      pointsPossible?: number;
+      dueAt?: string;
+      unlockAt?: string;
+      lockAt?: string;
+      allowedAttempts?: number;
+    },
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<void> {
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}`;
+    const body: Record<string, unknown> = {};
+    if (updates.assignmentGroupId != null) {
+      body.assignment_group_id = typeof updates.assignmentGroupId === 'string'
+        ? parseInt(updates.assignmentGroupId, 10)
+        : updates.assignmentGroupId;
+    }
+    if (updates.name !== undefined) body.name = updates.name;
+    if (updates.description !== undefined) body.description = updates.description;
+    if (updates.pointsPossible !== undefined) body.points_possible = updates.pointsPossible;
+    if (updates.dueAt !== undefined) body.due_at = updates.dueAt || null;
+    if (updates.unlockAt !== undefined) body.unlock_at = updates.unlockAt || null;
+    if (updates.lockAt !== undefined) body.lock_at = updates.lockAt || null;
+    if (updates.allowedAttempts !== undefined) body.allowed_attempts = updates.allowedAttempts;
+    if (Object.keys(body).length === 0) return;
+    appendLtiLog('canvas', 'updateAssignment: PUT to Canvas', {
+      courseId,
+      assignmentId,
+      assignment_group_id: body.assignment_group_id,
+    });
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: this.getAuthHeaders(tokenOverride),
+      body: JSON.stringify({ assignment: body }),
+    });
+    if (!res.ok) {
+      if (res.status === 401) throw new CanvasTokenExpiredError(401);
+      const text = await res.text();
+      throw new Error(`Canvas update assignment failed: ${res.status} ${text}`);
+    }
+  }
+
+  /** Associate a rubric with an assignment for grading. */
+  async associateRubricWithAssignment(
+    courseId: string,
+    assignmentId: string,
+    rubricId: string | number,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<void> {
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/rubric_associations`;
+    const rid = typeof rubricId === 'string' ? parseInt(rubricId, 10) : rubricId;
+    const aid = typeof assignmentId === 'string' ? parseInt(assignmentId, 10) : assignmentId;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: this.getAuthHeaders(tokenOverride),
+      body: JSON.stringify({
+        rubric_association: {
+          rubric_id: rid,
+          association_id: aid,
+          association_type: 'Assignment',
+          use_for_grading: true,
+          purpose: 'grading',
+        },
+      }),
+    });
+    if (!res.ok) {
+      if (res.status === 401) throw new CanvasTokenExpiredError(401);
+      const text = await res.text();
+      throw new Error(`Canvas associate rubric failed: ${res.status} ${text}`);
+    }
   }
 
   /** List course modules for module selector. */
@@ -858,6 +1060,43 @@ export class CanvasService {
       const text = await res.text();
       throw new Error(`Canvas put submission body failed: ${res.status} ${text}`);
     }
+  }
+
+  /** Get a single user's submission with full details (for viewer - teacher or student). */
+  async getSubmissionFull(
+    courseId: string,
+    assignmentId: string,
+    userId: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<{
+    body?: string;
+    score?: number;
+    grade?: string;
+    attempt?: number;
+    submitted_at?: string;
+    submission_comments?: Array<{ id: number; comment: string }>;
+    attachment?: { url?: string };
+    attachments?: Array<{ url?: string; download_url?: string }>;
+    versioned_attachments?: Array<Array<{ url?: string }>>;
+    rubric_assessment?: Record<string, unknown>;
+  } | null> {
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}?include[]=submission_history&include[]=submission_comments&include[]=rubric_assessment`;
+    const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
+    if (!res.ok) return null;
+    return (await res.json()) as {
+      body?: string;
+      score?: number;
+      grade?: string;
+      attempt?: number;
+      submitted_at?: string;
+      submission_comments?: Array<{ id: number; comment: string }>;
+      attachment?: { url?: string };
+      attachments?: Array<{ url?: string; download_url?: string }>;
+      versioned_attachments?: Array<Array<{ url?: string }>>;
+      rubric_assessment?: Record<string, unknown>;
+    };
   }
 
   /** List submissions for an assignment (teacher). Include submission_comments for grading UI. */

@@ -7,11 +7,11 @@ export interface PromptConfigJson {
   moduleId?: string;
   pointsPossible?: number;
   rubricId?: string;
+  instructions?: string;
   dueAt?: string;
   unlockAt?: string;
   lockAt?: string;
   allowedAttempts?: number;
-  shadowAssignmentId?: string;
   version?: string;
 }
 
@@ -21,13 +21,14 @@ export class PutPromptConfigDto {
   accessCode?: string;
   assignmentName?: string;
   assignmentGroupId?: string;
+  newGroupName?: string;
   moduleId?: string;
   pointsPossible?: number;
   rubricId?: string;
+  instructions?: string;
   dueAt?: string;
   unlockAt?: string;
   lockAt?: string;
   allowedAttempts?: number;
-  shadowAssignmentId?: string;
   version?: string;
 }

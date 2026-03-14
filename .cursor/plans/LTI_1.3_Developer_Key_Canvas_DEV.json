@@ -1,24 +1,26 @@
 {
-  "title": "ASL Express – Prompt Manager (Dev)",
-  "description": "ASL Express Prompt Manager – local development. Same launch URL as Flashcards (Dev); sends tool_type=prompter.",
+  "title": "ASL Express (Dev)",
+  "description": "ASL Express - Fully local development. Canvas and app both run locally; no tunnel.",
   "oidc_initiation_url": "http://localhost:3000/api/lti/oidc/login",
   "target_link_uri": "http://localhost:3000/api/lti/launch",
-  "redirect_uris": ["http://localhost:3000/api/lti/launch"],
+  "redirect_uris": [
+    "http://localhost:3000/api/lti/launch"
+  ],
   "scopes": [],
   "extensions": [
     {
       "domain": "localhost",
-      "tool_id": "asl-express-prompter-dev",
+      "tool_id": "asl-express-dev",
       "platform": "canvas.instructure.com",
       "privacy_level": "public",
       "settings": {
-        "text": "ASL Express – Prompt Manager (Dev)",
+        "text": "ASL Express (Dev)",
         "placements": [
           {
             "placement": "course_navigation",
             "message_type": "LtiResourceLinkRequest",
             "target_link_uri": "http://localhost:3000/api/lti/launch",
-            "text": "ASL Express – Prompt Manager (Dev)",
+            "text": "ASL Express (Dev)",
             "selection_height": 800,
             "selection_width": 1000,
             "custom_fields": {
@@ -26,15 +28,14 @@
               "assignment_id": "$Canvas.assignment.id",
               "user_id": "$Canvas.user.id",
               "module_id": "$Canvas.module.id",
-              "roles": "$Canvas.membership.roles",
-              "tool_type": "prompter"
+              "roles": "$Canvas.membership.roles"
             }
           },
           {
             "placement": "link_selection",
             "message_type": "LtiDeepLinkingRequest",
             "target_link_uri": "http://localhost:3000/api/lti/launch",
-            "text": "ASL Express – Prompt Manager (Dev)",
+            "text": "ASL Express (Dev) - Flashcards or Prompter",
             "selection_height": 600,
             "selection_width": 800,
             "custom_fields": {
@@ -42,37 +43,19 @@
               "assignment_id": "$Canvas.assignment.id",
               "user_id": "$Canvas.user.id",
               "module_id": "$Canvas.module.id",
-              "roles": "$Canvas.membership.roles",
-              "tool_type": "prompter"
-            }
-          },
-          {
-            "placement": "homework_submission",
-            "message_type": "LtiDeepLinkingRequest",
-            "target_link_uri": "http://localhost:3000/api/lti/launch",
-            "text": "ASL Express – Record video",
-            "selection_width": 1024,
-            "selection_height": 768,
-            "custom_fields": {
-              "course_id": "$Canvas.course.id",
-              "assignment_id": "$Canvas.assignment.id",
-              "user_id": "$Canvas.user.id",
-              "module_id": "$Canvas.module.id",
-              "roles": "$Canvas.membership.roles",
-              "tool_type": "prompter"
+              "roles": "$Canvas.membership.roles"
             }
           }
         ]
       }
     }
   ],
-  "public_jwk_url": "http://localhost:3000/api/lti/jwks",
+  "public_jwk_url": "http://172.22.0.1:3000/api/lti/jwks",
   "custom_fields": {
     "course_id": "$Canvas.course.id",
     "assignment_id": "$Canvas.assignment.id",
     "user_id": "$Canvas.user.id",
     "module_id": "$Canvas.module.id",
-    "roles": "$Canvas.membership.roles",
-    "tool_type": "prompter"
+    "roles": "$Canvas.membership.roles"
   }
 }
