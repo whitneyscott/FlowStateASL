@@ -9,7 +9,7 @@
     "serve": "nx run-many -t serve --parallel=2",
     "kill-ports": "kill-port 3000 4200 9229",
     "start:dev": "run-s kill-ports start:dev:run",
-    "start:dev:run": "concurrently -n tunnel,dev -c blue,green \"wait-on -t 60000 http-get://localhost:3000/api/lti/jwks && cloudflared tunnel --url http://localhost:3000\" \"nx run-many -t serve --parallel=2\"",
+    "start:dev:run": "nx run-many -t serve --parallel=2",
     "serve:api": "nx serve api",
     "serve:web": "nx serve web",
     "lint": "nx run-many -t lint",

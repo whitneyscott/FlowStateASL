@@ -35,6 +35,7 @@ import {
 } from './dto/comment.dto';
 import { ResetAttemptDto } from './dto/reset-attempt.dto';
 import { LtiDeepLinkFileStore } from '../lti/lti-deep-link-file.store';
+import { appendLtiLog } from '../common/last-error.store';
 
 @Controller('prompt')
 @UseGuards(LtiLaunchGuard)
@@ -161,8 +162,64 @@ export class PromptController {
     if (!token) return res.status(404).send();
     const file = this.deepLinkFileStore.get(token);
     if (!file) return res.status(404).send('Not found or expired');
+    const buffer = file.buffer;
+    const total = buffer.length;
     res.setHeader('Content-Type', file.contentType);
-    return res.send(file.buffer);
+    res.setHeader('Accept-Ranges', 'bytes');
+    const rangeHeader = (req.headers.range ?? '').toString();
+    const rangeMatch = rangeHeader.match(/^bytes=(\d*)-(\d*)$/);
+    if (rangeMatch) {
+      const start = rangeMatch[1] ? parseInt(rangeMatch[1], 10) : 0;
+      const end = rangeMatch[2] ? parseInt(rangeMatch[2], 10) : total - 1;
+      const s = Math.min(start, total - 1);
+      const e = Math.min(end, total - 1);
+      const chunk = buffer.subarray(s, e + 1);
+      res.setHeader('Content-Range', `bytes ${s}-${e}/${total}`);
+      res.setHeader('Content-Length', String(chunk.length));
+      res.status(206);
+      return res.send(chunk);
+    }
+    res.setHeader('Content-Length', String(total));
+    return res.send(buffer);
+  }
+
+  /**
+   * Proxy Canvas video URLs so the frontend can load them with auth (Canvas file URLs
+   * require OAuth; the video element cannot send our token cross-origin).
+   * Supports Range requests for video seeking.
+   */
+  @Get('video-proxy')
+  async videoProxy(@Req() req: Request, @Res() res: Response) {
+    const q = req.query as { url?: string };
+    const targetUrl = (q?.url ?? '').toString().trim();
+    if (!targetUrl) return res.status(400).send('Missing url parameter');
+    try {
+      const ctx = this.getCtx(req);
+      const result = await this.prompt.streamVideoProxy(ctx, targetUrl);
+      if (!result) return res.status(404).send('Not found or access denied');
+      const { buffer, contentType } = result;
+      const total = buffer.length;
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Accept-Ranges', 'bytes');
+      const rangeHeader = (req.headers.range ?? '').toString();
+      const rangeMatch = rangeHeader.match(/^bytes=(\d*)-(\d*)$/);
+      if (rangeMatch) {
+        const start = rangeMatch[1] ? parseInt(rangeMatch[1], 10) : 0;
+        const end = rangeMatch[2] ? parseInt(rangeMatch[2], 10) : total - 1;
+        const s = Math.min(start, total - 1);
+        const e = Math.min(end, total - 1);
+        const chunk = buffer.subarray(s, e + 1);
+        res.setHeader('Content-Range', `bytes ${s}-${e}/${total}`);
+        res.setHeader('Content-Length', String(chunk.length));
+        res.status(206);
+        return res.send(chunk);
+      }
+      res.setHeader('Content-Length', String(total));
+      return res.send(buffer);
+    } catch (err) {
+      if (err instanceof ForbiddenException) throw err;
+      return res.status(502).send('Proxy failed');
+    }
   }
 
   /**
@@ -194,6 +251,7 @@ export class PromptController {
   @Get('submission-count')
   @UseGuards(TeacherRoleGuard)
   async getSubmissionCount(@Req() req: Request) {
+    appendLtiLog('viewer', 'GET submission-count');
     const ctx = this.getCtxWithAssignment(req);
     const count = await this.prompt.getSubmissionCount(ctx);
     return { count };
@@ -203,17 +261,10 @@ export class PromptController {
   @UseGuards(TeacherRoleGuard)
   async getSubmissions(@Req() req: Request) {
     const q = req.query as { assignmentId?: string };
-    const { appendLtiLog } = await import('../common/last-error.store');
-    appendLtiLog('viewer', 'GET /submissions request', {
-      queryAssignmentId: q?.assignmentId,
-      sessionCourseId: (req.session as { ltiContext?: { courseId?: string } })?.ltiContext?.courseId,
-    });
+    appendLtiLog('viewer', 'GET submissions', { assignmentId: q?.assignmentId });
     const ctx = this.getCtxWithAssignment(req);
     const result = await this.prompt.getSubmissions(ctx);
-    appendLtiLog('viewer', 'GET /submissions response', {
-      assignmentId: ctx.assignmentId,
-      count: result?.length ?? 0,
-    });
+    appendLtiLog('viewer', 'GET submissions response', { count: result?.length ?? 0 });
     return result;
   }
 
@@ -320,6 +371,7 @@ export class PromptController {
   @Get('configured-assignments')
   @UseGuards(TeacherRoleGuard)
   async getConfiguredAssignments(@Req() req: Request, @Res() res: Response) {
+    appendLtiLog('viewer', 'GET configured-assignments');
     const ctx = this.getCtx(req);
     try {
       const list = await this.prompt.getConfiguredAssignments(ctx);

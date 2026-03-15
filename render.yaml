@@ -14,10 +14,10 @@ services:
 
     # App at repo root - build sequentially to reduce memory on free tier
     buildCommand: npm ci --include=dev && npm run build:api && npm run build:web
-    startCommand: node dist/apps/api/src/main.js
+    startCommand: node dist/apps/api/main.js
 
     # Run migrations before each deploy
-    preDeployCommand: npx typeorm migration:run -d dist/apps/api/src/data/data-source.js
+    preDeployCommand: npx typeorm migration:run -d dist/apps/api/data/data-source.js
 
     healthCheckPath: /  # SPA root returns 200
 

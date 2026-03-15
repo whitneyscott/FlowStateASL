@@ -17,6 +17,7 @@ export default defineConfig({
   },
   server: {
     port: 4200,
+    host: '0.0.0.0', // Listen on all interfaces so localhost (IPv4) connects
     proxy: {
       '/api': {
         target: 'http://localhost:3000',

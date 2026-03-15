@@ -17,7 +17,7 @@ export function getLastError(): { endpoint: string; message: string } | null {
 export function appendLtiLog(tag: string, message: string, extra?: Record<string, unknown>): void {
   const line = `[${new Date().toISOString()}] [${tag}] ${message}${extra ? ' ' + JSON.stringify(extra) : ''}`;
   ltiLog.push(line);
-  if (ltiLog.length > 50) ltiLog.shift();
+  if (ltiLog.length > 100) ltiLog.shift();
 }
 
 export function getLtiLog(): string[] {

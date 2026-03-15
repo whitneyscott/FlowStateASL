@@ -1113,10 +1113,17 @@ export class CanvasService {
       score?: number;
       grade?: string;
       workflow_state?: string;
+      submission_type?: string;
       submission_comments?: Array<{ id: number; comment: string; author?: { display_name?: string } }>;
-      attachment?: { url?: string };
-      attachments?: Array<{ url?: string; id?: number }>;
-      versioned_attachments?: Array<Array<{ url?: string }>>;
+      attachment?: { url?: string; download_url?: string };
+      attachments?: Array<{ url?: string; download_url?: string; id?: number }>;
+      versioned_attachments?: Array<Array<{ url?: string; download_url?: string }>>;
+      submission_history?: Array<{
+        attachment?: { url?: string; download_url?: string };
+        attachments?: Array<{ url?: string; download_url?: string }>;
+        versioned_attachments?: Array<Array<{ url?: string; download_url?: string }>>;
+        submission_type?: string;
+      }>;
     }>
   > {
     const base = this.getBaseUrl(domainOverride);
@@ -1127,7 +1134,9 @@ export class CanvasService {
       throw new Error(`Canvas list submissions failed: ${res.status} ${text}`);
     }
     const data = (await res.json()) as unknown;
-    return Array.isArray(data) ? data : [];
+    const arr = Array.isArray(data) ? data : [];
+    appendLtiLog('canvas', 'listSubmissions', { courseId, assignmentId, count: arr.length });
+    return arr;
   }
 
   /** Add a comment to a submission. Teacher grading flow. */
@@ -1373,6 +1382,287 @@ export class CanvasService {
       tokenOverride,
       domainOverride,
     );
+  }
+
+  // ---- Classic Quizzes (prompt storage) ----
+
+  static readonly PROMPT_STORAGE_QUIZ_TITLE = 'ASL Express Prompt Storage';
+
+  /** List quizzes in a course. */
+  async listQuizzes(
+    courseId: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<Array<{ id: number; title?: string }>> {
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/quizzes?per_page=100`;
+    const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
+    if (!res.ok) {
+      if (res.status === 401) throw new CanvasTokenExpiredError(401);
+      const text = await res.text();
+      throw new Error(`Canvas list quizzes failed: ${res.status} ${text}`);
+    }
+    const data = (await res.json()) as Array<{ id: number; title?: string }>;
+    return Array.isArray(data) ? data : [];
+  }
+
+  /** Find a quiz by exact title. */
+  async findQuizByTitle(
+    courseId: string,
+    title: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<{ id: number; title: string } | null> {
+    const list = await this.listQuizzes(courseId, domainOverride, tokenOverride);
+    const found = list.find((q) => (q.title ?? '').trim() === title.trim());
+    return found ? { id: found.id, title: found.title ?? title } : null;
+  }
+
+  /** Create a Classic Quiz. */
+  async createQuiz(
+    courseId: string,
+    options: {
+      title: string;
+      description?: string;
+      quizType?: 'practice_quiz' | 'assignment' | 'graded_survey' | 'survey';
+      published?: boolean;
+    },
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<{ id: number; title: string }> {
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/quizzes`;
+    const quizBody: Record<string, unknown> = {
+      title: options.title,
+      quiz_type: options.quizType ?? 'assignment',
+      published: options.published ?? false,
+    };
+    if (options.description != null) quizBody.description = options.description;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: this.getAuthHeaders(tokenOverride),
+      body: JSON.stringify({ quiz: quizBody }),
+    });
+    if (!res.ok) {
+      if (res.status === 401) throw new CanvasTokenExpiredError(401);
+      const text = await res.text();
+      throw new Error(`Canvas create quiz failed: ${res.status} ${text}`);
+    }
+    const data = (await res.json()) as { id?: number; title?: string };
+    const id = data.id ?? 0;
+    if (!id) throw new Error('Canvas did not return quiz id');
+    return { id, title: (data.title as string) ?? options.title };
+  }
+
+  /** List questions in a quiz. */
+  async listQuizQuestions(
+    courseId: string,
+    quizId: number,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<Array<{ id: number; question_name?: string; question_text?: string }>> {
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/quizzes/${quizId}/questions?per_page=100`;
+    const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
+    if (!res.ok) {
+      if (res.status === 401) throw new CanvasTokenExpiredError(401);
+      const text = await res.text();
+      throw new Error(`Canvas list quiz questions failed: ${res.status} ${text}`);
+    }
+    const data = (await res.json()) as Array<{ id?: number; question_name?: string; question_text?: string }>;
+    return (Array.isArray(data) ? data : [])
+      .filter((q): q is { id: number; question_name?: string; question_text?: string } => typeof q?.id === 'number')
+      .map((q) => ({ id: q.id, question_name: q.question_name, question_text: q.question_text }));
+  }
+
+  /** Create a quiz question. */
+  async createQuizQuestion(
+    courseId: string,
+    quizId: number,
+    options: {
+      questionText: string;
+      questionName?: string;
+      questionType?: string;
+      pointsPossible?: number;
+    },
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<{ id: number }> {
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/quizzes/${quizId}/questions`;
+    const body = {
+      question: {
+        question_text: options.questionText,
+        question_name: options.questionName ?? options.questionText.slice(0, 80),
+        question_type: options.questionType ?? 'essay_question',
+        points_possible: options.pointsPossible ?? 0,
+      },
+    };
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: this.getAuthHeaders(tokenOverride),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      if (res.status === 401) throw new CanvasTokenExpiredError(401);
+      const text = await res.text();
+      throw new Error(`Canvas create quiz question failed: ${res.status} ${text}`);
+    }
+    const data = (await res.json()) as { id?: number };
+    const id = data.id ?? 0;
+    if (!id) throw new Error('Canvas did not return question id');
+    return { id };
+  }
+
+  /** Create a quiz submission (start quiz - do not complete). */
+  async createQuizSubmission(
+    courseId: string,
+    quizId: number,
+    userId: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+    actAsUser?: boolean,
+  ): Promise<{ id: number; validation_token?: string; attempt?: number }> {
+    const base = this.getBaseUrl(domainOverride);
+    const baseUrl = `${base}/api/v1/courses/${courseId}/quizzes/${quizId}/submissions`;
+    const url = actAsUser ? `${baseUrl}?as_user_id=${encodeURIComponent(userId)}` : baseUrl;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: this.getAuthHeaders(tokenOverride),
+      body: JSON.stringify({}),
+    });
+    if (!res.ok) {
+      if (res.status === 401) throw new CanvasTokenExpiredError(401);
+      if (res.status === 409) {
+        const data = (await res.json()) as { quiz_submissions?: Array<{ id?: number; validation_token?: string; attempt?: number }> };
+        const sub = data.quiz_submissions?.[0];
+        if (sub?.id) return { id: sub.id, validation_token: sub.validation_token, attempt: sub.attempt ?? 1 };
+      }
+      const text = await res.text();
+      throw new Error(`Canvas create quiz submission failed: ${res.status} ${text}`);
+    }
+    const data = (await res.json()) as { quiz_submissions?: Array<{ id?: number; validation_token?: string; attempt?: number }> };
+    const sub = data.quiz_submissions?.[0];
+    const id = sub?.id ?? 0;
+    if (!id) throw new Error('Canvas did not return quiz submission id');
+    return { id, validation_token: sub?.validation_token, attempt: sub?.attempt ?? 1 };
+  }
+
+  /** Answer quiz questions (provide answers for one or more questions). */
+  async answerQuizQuestions(
+    quizSubmissionId: number,
+    options: { attempt: number; validationToken: string; quizQuestions: Array<{ id: string; answer: unknown }> },
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<void> {
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/quiz_submissions/${quizSubmissionId}/questions`;
+    const body = {
+      attempt: options.attempt,
+      validation_token: options.validationToken,
+      quiz_questions: options.quizQuestions.map((q) => ({ id: String(q.id), answer: q.answer })),
+    };
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: this.getAuthHeaders(tokenOverride),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      if (res.status === 401) throw new CanvasTokenExpiredError(401);
+      const text = await res.text();
+      throw new Error(`Canvas answer quiz questions failed: ${res.status} ${text}`);
+    }
+  }
+
+  /** List quiz submissions (teacher view). */
+  async listQuizSubmissions(
+    courseId: string,
+    quizId: number,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<Array<{ id: number; user_id: number; attempt?: number; workflow_state?: string }>> {
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/quizzes/${quizId}/submissions?include[]=user&per_page=100`;
+    const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
+    if (!res.ok) {
+      if (res.status === 401) throw new CanvasTokenExpiredError(401);
+      const text = await res.text();
+      throw new Error(`Canvas list quiz submissions failed: ${res.status} ${text}`);
+    }
+    const data = (await res.json()) as { quiz_submissions?: Array<{ id?: number; user_id?: number; attempt?: number; workflow_state?: string }> };
+    const raw = data.quiz_submissions ?? [];
+    return raw
+      .filter((s): s is { id: number; user_id: number; attempt?: number; workflow_state?: string } => typeof s?.id === 'number' && typeof s?.user_id === 'number')
+      .map((s) => ({ id: s.id, user_id: s.user_id, attempt: s.attempt, workflow_state: s.workflow_state }));
+  }
+
+  /** Get a single quiz submission by ID (for validation_token). */
+  async getQuizSubmission(
+    courseId: string,
+    quizId: number,
+    submissionId: number,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<{ id: number; validation_token?: string; attempt?: number } | null> {
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/quizzes/${quizId}/submissions/${submissionId}`;
+    const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { quiz_submissions?: Array<{ id?: number; validation_token?: string; attempt?: number }> };
+    const sub = data.quiz_submissions?.[0];
+    if (!sub?.id) return null;
+    return { id: sub.id, validation_token: sub.validation_token, attempt: sub.attempt ?? 1 };
+  }
+
+  /** Get a single user's quiz submission by listing and filtering; create if none exists. */
+  async getOrCreateQuizSubmission(
+    courseId: string,
+    quizId: number,
+    userId: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+    actAsUser?: boolean,
+  ): Promise<{ id: number; validation_token?: string; attempt?: number }> {
+    const list = await this.listQuizSubmissions(courseId, quizId, domainOverride, tokenOverride);
+    const match = list.find((s) => String(s.user_id) === String(userId));
+    if (match?.id) {
+      const existing = await this.getQuizSubmission(courseId, quizId, match.id, domainOverride, tokenOverride);
+      if (existing?.validation_token) return existing;
+      return { id: match.id, attempt: match.attempt ?? 1 };
+    }
+    return this.createQuizSubmission(courseId, quizId, userId, domainOverride, tokenOverride, actAsUser);
+  }
+
+  /** Get quiz submission questions with answers. */
+  async getQuizSubmissionQuestions(
+    quizSubmissionId: number,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<Array<{ id: number; quiz_question_id?: number; question_name?: string; question_text?: string; answer?: unknown }>> {
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/quiz_submissions/${quizSubmissionId}/questions?include[]=quiz_question`;
+    const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
+    if (!res.ok) {
+      if (res.status === 401) throw new CanvasTokenExpiredError(401);
+      const text = await res.text();
+      throw new Error(`Canvas get quiz submission questions failed: ${res.status} ${text}`);
+    }
+    const data = (await res.json()) as {
+      quiz_submission_questions?: Array<{
+        id?: number;
+        quiz_question_id?: number;
+        question_name?: string;
+        question_text?: string;
+        answer?: unknown;
+      }>;
+    };
+    return (data.quiz_submission_questions ?? []).map((q) => ({
+      id: q.id ?? 0,
+      quiz_question_id: q.quiz_question_id,
+      question_name: q.question_name,
+      question_text: q.question_text,
+      answer: q.answer,
+    }));
   }
 }
 

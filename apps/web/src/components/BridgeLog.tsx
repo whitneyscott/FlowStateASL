@@ -108,8 +108,15 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
     const viewerLines = ltiLog.filter(
       (line) =>
         line.includes('[viewer]') ||
+        line.includes('[canvas]') ||
         line.toLowerCase().includes('submissions') ||
-        line.toLowerCase().includes('configured-assignments')
+        line.toLowerCase().includes('configured-assignments') ||
+        line.includes('submissionHasFile') ||
+        line.includes('getVideoUrlFromCanvasSubmission') ||
+        line.includes('listSubmissions') ||
+        line.includes('ENTRY:') ||
+        line.includes('[debug]') ||
+        line.includes('PING')
     );
     if (viewerLines.length > 0) {
       newLines.push(...viewerLines);

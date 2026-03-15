@@ -14,6 +14,7 @@ import { renderLtiLaunchErrorHtml } from './lti-error.util';
 import { getRedirectPathForToolType } from './lti-redirect.util';
 import { persistLtiContextAndRedirect } from './lti-launch-finish.util';
 import { sanitizeLtiContext } from '../common/utils/lti-context-value.util';
+import { getPublicOrigin } from '../common/utils/public-origin.util';
 
 @Controller('lti')
 export class LtiController {
@@ -54,14 +55,14 @@ export class LtiController {
       req.session.save((err) => {
         if (err) console.error('[LTI] launch session save failed', err);
         else console.log('[LTI] launch session saved, sessionId=', req.sessionID?.slice(0, 16));
-        const base = process.env.FRONTEND_URL ?? '';
-        const url = `${base}/flashcards?lti_token=${token}`;
+        const base = getPublicOrigin(req) || (this.config.get<string>('FRONTEND_URL') ?? '');
+        const url = base ? `${base}/flashcards?lti_token=${token}` : `/flashcards?lti_token=${token}`;
         console.log('[LTI] redirecting to', url.replace(token, '***'));
         res.redirect(url);
       });
     } else {
-      const base = process.env.FRONTEND_URL ?? '';
-      const url = `${base}/flashcards?lti_token=${token}`;
+      const base = getPublicOrigin(req) || (this.config.get<string>('FRONTEND_URL') ?? '');
+      const url = base ? `${base}/flashcards?lti_token=${token}` : `/flashcards?lti_token=${token}`;
       console.log('[LTI] no session, redirecting with token');
       res.redirect(url);
     }
@@ -85,12 +86,12 @@ export class LtiController {
       req.session.ltiContext = ctx;
       req.session.save((err) => {
         if (err) console.error('[LTI] session save failed', err);
-        const base = process.env.FRONTEND_URL ?? '';
-        res.redirect(`${base}/prompter?lti_token=${token}`);
+        const base = getPublicOrigin(req) || (this.config.get<string>('FRONTEND_URL') ?? '');
+        res.redirect(base ? `${base}/prompter?lti_token=${token}` : `/prompter?lti_token=${token}`);
       });
     } else {
-      const base = process.env.FRONTEND_URL ?? '';
-      res.redirect(`${base}/prompter?lti_token=${token}`);
+      const base = getPublicOrigin(req) || (this.config.get<string>('FRONTEND_URL') ?? '');
+      res.redirect(base ? `${base}/prompter?lti_token=${token}` : `/prompter?lti_token=${token}`);
     }
   }
 
@@ -185,16 +186,17 @@ export class LtiController {
   @Get('oidc/login')
   async oidcLoginGet(@Req() req: Request, @Res() res: Response) {
     const params = { ...req.query } as Record<string, string | undefined>;
-    return this.handleOidcLogin(params, res);
+    return this.handleOidcLogin(req, params, res);
   }
 
   @Post('oidc/login')
   async oidcLoginPost(@Req() req: Request, @Res() res: Response) {
     const params = { ...req.body, ...req.query } as Record<string, string | undefined>;
-    return this.handleOidcLogin(params, res);
+    return this.handleOidcLogin(req, params, res);
   }
 
   private handleOidcLogin(
+    req: Request,
     params: Record<string, string | undefined>,
     res: Response,
   ) {
@@ -214,7 +216,8 @@ export class LtiController {
       console.warn('[LTI OIDC] WARNING: Canvas did NOT send client_id. Using .env fallback:', clientId);
       appendLtiLog('oidc', 'WARNING: Canvas did NOT send client_id, using .env fallback', { clientId });
     }
-    const redirectUri = (this.config.get<string>('LTI_REDIRECT_URI') ?? '').trim();
+    const dynamicOrigin = getPublicOrigin(req);
+    const redirectUri = (dynamicOrigin ? `${dynamicOrigin}/api/lti/launch` : (this.config.get<string>('LTI_REDIRECT_URI') ?? '')).trim();
     const debug = (params.debug ?? params.debugMode ?? '').toString().toLowerCase() === '1' || (params.debug ?? params.debugMode ?? '').toString().toLowerCase() === 'true';
     console.log('[LTI OIDC] redirect_uri:', JSON.stringify(redirectUri), '| length:', redirectUri.length);
     if (!iss || !loginHint || !targetLinkUri || !clientId || !redirectUri) {
@@ -271,11 +274,12 @@ export class LtiController {
     appendLtiLog('launch', 'POST /launch received', { bodyKeys: body ? Object.keys(body) : [] });
     const canvasError = (body?.error ?? '').toString().trim();
     const canvasErrorDesc = (body?.error_description ?? body?.errorDescription ?? '').toString().trim();
+    const frontendBase = getPublicOrigin(req) || (this.config.get<string>('FRONTEND_URL') ?? 'http://localhost:4200');
     if (canvasError) {
       const msg = `LTI auth failed: ${canvasError}${canvasErrorDesc ? ` - ${canvasErrorDesc}` : ''}`;
       setLastError('/api/lti/launch', new Error(msg));
       appendLtiLog('launch', msg, { canvasError, canvasErrorDesc });
-      return res.status(400).type('html').send(renderLtiLaunchErrorHtml(msg, { frontendUrl: this.config.get<string>('FRONTEND_URL') ?? 'http://localhost:4200' }));
+      return res.status(400).type('html').send(renderLtiLaunchErrorHtml(msg, { frontendUrl: frontendBase }));
     }
     const idToken = (body?.id_token ?? body?.idToken ?? '').toString().trim();
     const state = (body?.state ?? '').toString().trim();
@@ -284,20 +288,20 @@ export class LtiController {
       const msg = `Missing id_token or state. Body keys: ${bodyKeys.join(', ')}`;
       setLastError('/api/lti/launch', new Error(msg));
       appendLtiLog('launch', msg, { bodyKeys });
-      return res.status(400).type('html').send(renderLtiLaunchErrorHtml(msg, { frontendUrl: this.config.get<string>('FRONTEND_URL') ?? 'http://localhost:4200' }));
+      return res.status(400).type('html').send(renderLtiLaunchErrorHtml(msg, { frontendUrl: frontendBase }));
     }
     const stored = consumeOidcState(state);
     if (!stored) {
       const msg = 'Invalid or expired state';
       setLastError('/api/lti/launch', new Error(msg));
       appendLtiLog('launch', msg);
-      return res.status(400).type('html').send(renderLtiLaunchErrorHtml(msg, { frontendUrl: this.config.get<string>('FRONTEND_URL') ?? 'http://localhost:4200' }));
+      return res.status(400).type('html').send(renderLtiLaunchErrorHtml(msg, { frontendUrl: frontendBase }));
     }
     const result = await this.lti13.validateAndExtract(idToken);
     if ('error' in result) {
       setLastError('/api/lti/launch', new Error(result.error));
       appendLtiLog('launch', 'Invalid id_token', { reason: result.error });
-      return res.status(400).type('html').send(renderLtiLaunchErrorHtml(`Invalid id_token: ${result.error}`, { frontendUrl: this.config.get<string>('FRONTEND_URL') ?? 'http://localhost:4200' }));
+      return res.status(400).type('html').send(renderLtiLaunchErrorHtml(`Invalid id_token: ${result.error}`, { frontendUrl: frontendBase }));
     }
     const ctx = result.context;
     appendLtiLog('launch', 'LTI context extracted', {
@@ -307,7 +311,7 @@ export class LtiController {
       canvasDomain: ctx.canvasDomain ?? '(none)',
       hasSubmissionToken: !!ctx.submissionToken,
     });
-    const base = this.config.get<string>('FRONTEND_URL') ?? '';
+    const base = frontendBase;
     /* When viewing an ltiResourceLink submission, redirect to review page */
     const buildRedirectUrl = ctx.submissionToken
       ? (_token: string) => `${base}/prompt/review?token=${encodeURIComponent(ctx.submissionToken!)}`
@@ -338,7 +342,10 @@ export class LtiController {
         ? {
             oauthInitUrlBuilder: (token: string) => {
               const apiBase = this.config.get<string>('APP_URL') ?? `http://localhost:${this.config.get('PORT') ?? 3000}`;
-              return `${apiBase}/api/oauth/canvas?returnTo=${encodeURIComponent(buildRedirectUrl(token))}`;
+              const base = (canvasBaseUrl ?? '').replace(/\/$/, '');
+              const params = new URLSearchParams({ returnTo: buildRedirectUrl(token) });
+              if (base) params.set('canvasBaseUrl', base);
+              return `${apiBase}/api/oauth/canvas?${params.toString()}`;
             },
           }
         : undefined;

@@ -163,6 +163,8 @@ export interface PromptSubmission {
   videoUrl?: string;
   attempt?: number;
   rubricAssessment?: Record<string, unknown>;
+  /** Prompt from quiz storage (preferred when present). */
+  promptHtml?: string;
 }
 
 export async function getSubmissionCount(assignmentId?: string | null): Promise<number> {

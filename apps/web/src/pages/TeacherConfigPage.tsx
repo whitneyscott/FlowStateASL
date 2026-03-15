@@ -75,12 +75,17 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const needsAssignmentSelector = hasLti && !ctxAssignmentId;
 
   const loadAssignments = useCallback(async () => {
-    if (!teacher || !hasLti) return;
+    if (!teacher || !hasLti) {
+      console.log('[TeacherConfig] loadAssignments SKIPPED', { teacher: !!teacher, hasLti: !!hasLti, courseId: context?.courseId, userId: context?.userId });
+      return;
+    }
+    console.log('[TeacherConfig] loadAssignments CALLING /api/prompt/configured-assignments');
     setLoadingAssignments(true);
     try {
       setLastFunction('GET /api/prompt/configured-assignments');
       const list = await promptApi.getConfiguredAssignments();
       setLastApiResult('GET /api/prompt/configured-assignments', 200, true);
+      console.log('[TeacherConfig] getConfiguredAssignments response:', list);
       setConfiguredAssignments(list ?? []);
     } catch {
       setConfiguredAssignments([]);

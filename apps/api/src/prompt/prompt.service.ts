@@ -9,6 +9,7 @@ import { CourseSettingsService } from '../course-settings/course-settings.servic
 import { LtiAgsService } from '../lti/lti-ags.service';
 import { LtiDeepLinkFileStore } from '../lti/lti-deep-link-file.store';
 import { LtiDeepLinkResponseService } from '../lti/lti-deep-link-response.service';
+import { QuizService } from '../quiz/quiz.service';
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
 import type { PromptConfigJson, PutPromptConfigDto } from './dto/prompt-config.dto';
 
@@ -21,30 +22,76 @@ interface PromptManagerSettingsBlob {
   updatedAt?: string;
 }
 
-/** Return true if submission has a file/video (same logic as getVideoUrlFromCanvasSubmission). */
+/** Canvas shows "submitted" when workflow_state is submitted or graded. Match that. */
 function submissionHasFile(s: {
   attachment?: { url?: string; download_url?: string };
   attachments?: Array<{ url?: string; download_url?: string }>;
   versioned_attachments?: Array<Array<{ url?: string; download_url?: string }>>;
+  submission_type?: string;
+  workflow_state?: string;
+  submission_history?: Array<{
+    attachment?: { url?: string; download_url?: string };
+    attachments?: Array<{ url?: string; download_url?: string }>;
+    versioned_attachments?: Array<Array<{ url?: string; download_url?: string }>>;
+  }>;
 }): boolean {
-  return !!getVideoUrlFromCanvasSubmission(s);
+  const urlFromCanvas = getVideoUrlFromCanvasSubmission(s);
+  if (urlFromCanvas) return true;
+  const ws = (s.workflow_state ?? '').toLowerCase();
+  if (['submitted', 'graded'].includes(ws)) return true;
+  const hist = s.submission_history;
+  if (Array.isArray(hist) && hist.length > 0) {
+    const last = hist[hist.length - 1];
+    if (getVideoUrlFromCanvasSubmission(last)) return true;
+  }
+  return false;
 }
 
-/** Extract video URL from Canvas submission (attachment, attachments, or versioned_attachments). */
+/** Extract video URL from Canvas submission (top-level url, attachment, attachments, or submission_history). */
 function getVideoUrlFromCanvasSubmission(s: {
+  url?: string;
   attachment?: { url?: string; download_url?: string };
   attachments?: Array<{ url?: string; download_url?: string }>;
   versioned_attachments?: Array<Array<{ url?: string; download_url?: string }>>;
+  submission_history?: Array<{
+    url?: string;
+    attachment?: { url?: string; download_url?: string };
+    attachments?: Array<{ url?: string; download_url?: string }>;
+    versioned_attachments?: Array<Array<{ url?: string; download_url?: string }>>;
+  }>;
 }): string | undefined {
-  const first = s.attachment ?? s.attachments?.[0];
-  if (first?.url) return first.url;
-  if (first?.download_url) return first.download_url;
-  const va = s.versioned_attachments;
-  if (Array.isArray(va) && va.length > 0) {
-    const last = va[va.length - 1];
-    const arr = Array.isArray(last) ? last : [];
-    const f = arr[0];
-    return f?.url ?? f?.download_url;
+  // Canvas puts URL in submission.url — but for basic_lti_launch it's the LTI retrieve URL
+  // (external_tools/retrieve), which returns HTML, not video. Only use direct file URLs.
+  const topUrl = (s as { url?: string }).url;
+  if (topUrl && typeof topUrl === 'string' && (topUrl.startsWith('http://') || topUrl.startsWith('https://'))) {
+    if (!topUrl.includes('external_tools/retrieve')) return topUrl;
+    // LTI retrieve URL is HTML — fall through to attachment/deepLinkStore
+  }
+  const fromOne = (obj: typeof s & { url?: string }): string | undefined => {
+    const first = obj.attachment ?? obj.attachments?.[0];
+    if (first?.url) return first.url;
+    if (first?.download_url) return first.download_url;
+    const va = obj.versioned_attachments;
+    if (Array.isArray(va) && va.length > 0) {
+      const last = va[va.length - 1];
+      const arr = Array.isArray(last) ? last : [];
+      const f = arr[0];
+      return f?.url ?? f?.download_url;
+    }
+    return undefined;
+  };
+  const url = fromOne(s);
+  if (url) return url;
+  const hist = s.submission_history;
+  if (Array.isArray(hist) && hist.length > 0) {
+    for (let i = hist.length - 1; i >= 0; i--) {
+      const entry = hist[i] as { url?: string } & typeof hist[0];
+      const eu = entry?.url;
+      if (eu && (eu.startsWith('http://') || eu.startsWith('https://')) && !eu.includes('external_tools/retrieve'))
+        return eu;
+      const u = fromOne(entry);
+      if (u) return u;
+    }
   }
   return undefined;
 }
@@ -90,6 +137,7 @@ export class PromptService {
     private readonly ltiAgs: LtiAgsService,
     private readonly deepLinkFileStore: LtiDeepLinkFileStore,
     private readonly deepLinkResponse: LtiDeepLinkResponseService,
+    private readonly quiz: QuizService,
   ) {}
 
   /**
@@ -186,6 +234,12 @@ export class PromptService {
     }
     const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
 
+    try {
+      await this.quiz.ensurePromptStorageQuiz(ctx);
+    } catch (quizErr) {
+      appendLtiLog('prompt', 'putConfig: ensurePromptStorageQuiz failed (non-fatal)', { error: String(quizErr) });
+    }
+
     appendLtiLog('prompt', 'putConfig: dto from dropdown', {
       assignmentGroupId: dto.assignmentGroupId,
       newGroupName: dto.newGroupName?.trim() || '(empty)',
@@ -236,6 +290,13 @@ export class PromptService {
       ...(dto.allowedAttempts !== undefined && { allowedAttempts: dto.allowedAttempts }),
       ...(dto.version !== undefined && { version: dto.version }),
     };
+
+    const assignmentTitle = (merged.assignmentName ?? '').trim() || `Assignment ${assignmentId}`;
+    try {
+      await this.quiz.ensureQuestionForAssignment(ctx, assignmentId, assignmentTitle);
+    } catch (qErr) {
+      appendLtiLog('prompt', 'putConfig: ensureQuestionForAssignment failed (non-fatal)', { error: String(qErr) });
+    }
 
     const settingsAssignmentId = await this.ensurePromptManagerSettingsAssignment(
       ctx.courseId,
@@ -425,7 +486,16 @@ export class PromptService {
       domainOverride,
       token,
     );
-    appendLtiLog('prompt-submit', 'submit DONE (body + comment written to Canvas)', { assignmentId });
+
+    try {
+      const assign = await this.canvas.getAssignment(ctx.courseId, assignmentId, domainOverride, token);
+      const assignmentTitle = (assign?.name ?? '').trim() || assignmentId;
+      await this.quiz.storePrompt(ctx, assignmentId, assignmentTitle, promptSnapshotHtml, userId);
+    } catch (quizErr) {
+      appendLtiLog('prompt-submit', 'submit: storePrompt in quiz failed (non-fatal)', { error: String(quizErr) });
+    }
+
+    appendLtiLog('prompt-submit', 'submit DONE (body + comment + quiz storage written to Canvas)', { assignmentId });
   }
 
   async uploadVideo(
@@ -511,11 +581,10 @@ export class PromptService {
       domainOverride,
       token,
     );
-    return list.filter((s) => {
-      if (getVideoUrlFromCanvasSubmission(s)) return true;
-      const uid = String(s.user_id);
-      return !!this.deepLinkFileStore.getSubmissionToken(ctx.courseId, assignmentId, uid);
-    }).length;
+    return list.filter(
+      (s) =>
+        submissionHasFile(s) || !!this.deepLinkFileStore.getSubmissionToken(ctx.courseId, assignmentId, String(s.user_id ?? '')),
+    ).length;
   }
 
   async getSubmissions(ctx: LtiContext): Promise<
@@ -527,20 +596,14 @@ export class PromptService {
       grade?: string;
       submissionComments?: Array<{ id: number; comment: string }>;
       videoUrl?: string;
+      promptHtml?: string;
     }>
   > {
-    appendLtiLog('viewer', 'getSubmissions called', {
-      courseId: ctx.courseId,
-      assignmentId: ctx.assignmentId,
-      hasToken: !!ctx.canvasAccessToken,
-    });
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
     if (!token) {
-      appendLtiLog('viewer', 'getSubmissions FAILED: no Canvas OAuth token');
       throw new Error('Canvas OAuth token required');
     }
     const assignmentId = await this.getPrompterAssignmentId(ctx);
-    appendLtiLog('viewer', 'getSubmissions resolved assignmentId', { assignmentId });
     const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
     const list = await this.canvas.listSubmissions(
       ctx.courseId,
@@ -548,11 +611,15 @@ export class PromptService {
       domainOverride,
       token,
     );
-    appendLtiLog('viewer', 'getSubmissions Canvas listSubmissions returned', {
-      rawCount: list.length,
-      assignmentId,
-    });
-    return list.map((s) => {
+    appendLtiLog('viewer', 'getSubmissions', { assignmentId });
+    // Same filter as getSubmissionCount: only include actual submissions (submitted/graded or have video token)
+    const submittedList = list.filter(
+      (s) =>
+        submissionHasFile(s) ||
+        !!this.deepLinkFileStore.getSubmissionToken(ctx.courseId, assignmentId, String(s.user_id ?? '')),
+    );
+    appendLtiLog('viewer', 'getSubmissions result', { assignmentId, submittedCount: submittedList.length });
+    const baseRows = submittedList.map((s) => {
       const userId = String(s.user_id);
       let videoUrl = getVideoUrlFromCanvasSubmission(s);
       if (!videoUrl) {
@@ -561,6 +628,7 @@ export class PromptService {
           videoUrl = `/api/prompt/submission/${encodeURIComponent(submissionToken)}`;
         }
       }
+      videoUrl = this.toViewerVideoUrl(videoUrl, ctx) ?? videoUrl;
       return {
         userId,
         userName: s.user?.name,
@@ -571,6 +639,72 @@ export class PromptService {
         videoUrl,
       };
     });
+    const withQuizPrompts = await Promise.all(
+      baseRows.map(async (row) => {
+        try {
+          const promptHtml = await this.quiz.getPromptForAssignment(ctx, row.userId, assignmentId);
+          return { ...row, promptHtml: promptHtml ?? undefined };
+        } catch {
+          return row;
+        }
+      }),
+    );
+    return withQuizPrompts;
+  }
+
+  /**
+   * Convert external Canvas video URL to our proxy URL so the frontend can load it
+   * with auth. Our own /api/prompt/submission/ URLs are returned as-is. Resolves
+   * relative Canvas URLs (e.g. /files/123/download) using ctx.canvasBaseUrl.
+   */
+  toViewerVideoUrl(videoUrl: string | undefined, ctx?: LtiContext): string | undefined {
+    if (!videoUrl) return undefined;
+    if (videoUrl.startsWith('/api/prompt/')) return videoUrl; // our own endpoints
+    if (videoUrl.startsWith('/')) {
+      const base = ctx?.canvasBaseUrl ?? ctx?.canvasDomain;
+      if (base) {
+        const baseUrl = base.startsWith('http') ? base : `https://${base}`;
+        videoUrl = new URL(videoUrl, baseUrl).href;
+      } else {
+        return videoUrl; // can't resolve, return as-is (may 404)
+      }
+    }
+    if (!videoUrl.startsWith('http://') && !videoUrl.startsWith('https://')) return videoUrl;
+    return `/api/prompt/video-proxy?url=${encodeURIComponent(videoUrl)}`;
+  }
+
+  /**
+   * Stream a Canvas video URL using the session's OAuth token (for cross-origin video playback).
+   * Only allows proxying to Canvas instance URLs to prevent SSRF.
+   */
+  async streamVideoProxy(
+    ctx: LtiContext,
+    targetUrl: string,
+  ): Promise<{ buffer: Buffer; contentType: string } | null> {
+    const parsed = new URL(targetUrl);
+    const canvasBase = ctx.canvasBaseUrl ?? ctx.canvasDomain;
+    const canvasHost = canvasBase ? new URL(canvasBase.startsWith('http') ? canvasBase : `https://${canvasBase}`).hostname : '';
+    const isSameCanvas = canvasHost && parsed.hostname === canvasHost;
+    const isInstructure =
+      parsed.hostname === 'instructure.com' ||
+      parsed.hostname.endsWith('.instructure.com') ||
+      parsed.hostname === 'instructureusercontent.com' ||
+      parsed.hostname.endsWith('.instructureusercontent.com');
+    if (!isSameCanvas && !isInstructure) return null;
+    const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
+    if (!token) return null;
+    const res = await fetch(targetUrl, {
+      headers: { Authorization: `Bearer ${token}` },
+      redirect: 'follow',
+    });
+    if (!res.ok) return null;
+    const contentType = (res.headers.get('content-type') || 'video/mp4').split(';')[0].trim().toLowerCase();
+    if (contentType.startsWith('text/html')) {
+      appendLtiLog('viewer', 'video-proxy: got HTML (not a video), rejecting', { targetUrl: targetUrl.slice(0, 80) + '...' });
+      return null;
+    }
+    const buffer = Buffer.from(await res.arrayBuffer());
+    return { buffer, contentType };
   }
 
   async grade(
@@ -691,6 +825,7 @@ export class PromptService {
     videoUrl?: string;
     attempt?: number;
     rubricAssessment?: Record<string, unknown>;
+    promptHtml?: string;
   } | null> {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
     if (!token) return null;
@@ -712,6 +847,13 @@ export class PromptService {
       const tok = this.deepLinkFileStore.getSubmissionToken(ctx.courseId, assignmentId, userId);
       if (tok) videoUrl = `/api/prompt/submission/${encodeURIComponent(tok)}`;
     }
+    videoUrl = this.toViewerVideoUrl(videoUrl, ctx) ?? videoUrl;
+    let promptHtml: string | undefined;
+    try {
+      promptHtml = (await this.quiz.getPromptForAssignment(ctx, userId, assignmentId)) ?? undefined;
+    } catch {
+      // ignore
+    }
     return {
       userId,
       body: sub.body,
@@ -721,6 +863,7 @@ export class PromptService {
       videoUrl,
       attempt: sub.attempt ?? 1,
       rubricAssessment: sub.rubric_assessment as Record<string, unknown> | undefined,
+      promptHtml,
     };
   }
 
@@ -752,13 +895,8 @@ export class PromptService {
   async getConfiguredAssignments(ctx: LtiContext): Promise<
     Array<{ id: string; name: string; submissionCount: number; ungradedCount: number }>
   > {
-    appendLtiLog('viewer', 'getConfiguredAssignments called', {
-      courseId: ctx.courseId,
-      hasToken: !!ctx.canvasAccessToken,
-    });
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
     if (!token) {
-      appendLtiLog('viewer', 'getConfiguredAssignments: no token, returning []');
       return [];
     }
     const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
@@ -833,7 +971,7 @@ export class PromptService {
       }
     }
     result.sort((a, b) => a.name.localeCompare(b.name));
-    appendLtiLog('viewer', 'getConfiguredAssignments returning', {
+    appendLtiLog('viewer', 'getConfiguredAssignments', {
       count: result.length,
       assignments: result.map((a) => ({ id: a.id, name: a.name, submissionCount: a.submissionCount })),
     });

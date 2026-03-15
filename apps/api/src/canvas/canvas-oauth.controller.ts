@@ -19,9 +19,15 @@ export class CanvasOAuthController {
    * Requires session with ltiContext (canvasBaseUrl) from LTI launch.
    */
   @Get()
-  async init(@Req() req: Request, @Res() res: Response, @Query('returnTo') returnTo?: string) {
+  async init(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Query('returnTo') returnTo?: string,
+    @Query('canvasBaseUrl') canvasBaseUrlParam?: string,
+  ) {
     const ctx = req.session?.ltiContext;
-    const canvasBaseUrl = ctx?.canvasBaseUrl ?? this.config.get<string>('CANVAS_API_BASE_URL');
+    const canvasBaseUrl =
+      (canvasBaseUrlParam ?? ctx?.canvasBaseUrl ?? this.config.get<string>('CANVAS_API_BASE_URL'))?.trim() || undefined;
     const clientId = (this.config.get<string>('CANVAS_OAUTH_CLIENT_ID') ?? '').trim();
     const clientSecret = (this.config.get<string>('CANVAS_OAUTH_CLIENT_SECRET') ?? '').trim();
     const redirectUri = (this.config.get<string>('CANVAS_OAUTH_REDIRECT_URI') ?? '').trim();

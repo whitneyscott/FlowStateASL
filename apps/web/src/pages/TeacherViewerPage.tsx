@@ -30,8 +30,10 @@ function parseTimestampedFeedback(comments: Array<{ id: number; comment: string 
 
 function getPromptFromComments(
   body: string | undefined,
-  comments: Array<{ comment: string }> | undefined
+  comments: Array<{ comment: string }> | undefined,
+  promptHtml?: string
 ): string {
+  if (promptHtml?.trim()) return promptHtml;
   if (body?.trim()) {
     try {
       const parsed = JSON.parse(body) as { promptSnapshotHtml?: string };
@@ -129,14 +131,15 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
 
   useEffect(() => {
     if (!current) return;
+    const raw = current?.rubricAssessment ?? {};
     const assess: Record<string, { ratingId: string; points: number }> = {};
-    for (const [critId, v] of Object.entries(rubricAssessment)) {
-      const rid = v?.rating_id;
-      const pts = v?.points;
+    for (const [critId, v] of Object.entries(raw)) {
+      const rid = (v as { rating_id?: string })?.rating_id;
+      const pts = (v as { points?: number })?.points;
       if (rid != null && pts != null) assess[String(critId)] = { ratingId: String(rid), points: Number(pts) };
     }
     setSelectedRubric(assess);
-  }, [current?.userId, rubricAssessment]);
+  }, [current?.userId, current?.rubricAssessment]);
 
   const loadTeacher = useCallback(async () => {
     if (!teacher || !assignmentId) return;
@@ -183,7 +186,11 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   }, [assignmentId, context, setLastFunction, setLastApiResult, setLastApiError]);
 
   const loadConfiguredAssignments = useCallback(async () => {
-    if (!teacher || !context?.courseId) return;
+    if (!teacher || !context?.courseId) {
+      console.log('[TeacherViewer] loadConfiguredAssignments SKIPPED', { teacher: !!teacher, courseId: context?.courseId });
+      return;
+    }
+    console.log('[TeacherViewer] loadConfiguredAssignments CALLING /api/prompt/configured-assignments');
     setLoadingAssignments(true);
     try {
       setLastFunction('GET /api/prompt/configured-assignments');
@@ -234,7 +241,9 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
       setLastApiResult('POST /api/prompt/grade', 200, true);
       setGradeSaveStatus('Saved.');
       setTimeout(() => setGradeSaveStatus(''), 2000);
-      await reloadCurrent();
+      setSubmissions((prev) =>
+        prev.map((s, i) => (i === index ? { ...s, score, grade: gradeValue } : s))
+      );
     } catch (e) {
       setGradeSaveStatus('Failed');
       setError(e instanceof Error ? e.message : 'Grade failed');
@@ -271,7 +280,14 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
           );
           setRubricSaveStatus('Saved.');
           setTimeout(() => setRubricSaveStatus(''), 2000);
-          await reloadCurrent();
+          const rubricUpdate = Object.fromEntries(
+            Object.entries(assessment).map(([k, v]) => [k, { rating_id: v.rating_id, points: v.points }])
+          );
+          setSubmissions((prev) =>
+            prev.map((s, i) =>
+              i === index ? { ...s, rubricAssessment: rubricUpdate } : s
+            )
+          );
         } catch {
           setRubricSaveStatus('Failed');
         } finally {
@@ -279,7 +295,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
         }
       })();
     },
-    [teacher, selectedRubric, current, assignmentId, pointsPossible, reloadCurrent, setLastFunction]
+    [teacher, selectedRubric, current, assignmentId, pointsPossible, index, setLastFunction]
   );
 
   const handleReset = async () => {
@@ -293,7 +309,6 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
       await promptApi.resetAttempt(current.userId, assignmentId);
       setLastApiResult('POST /api/prompt/reset-attempt', 200, true);
       setResetStatus("Reset. Student must use access code to try again.");
-      await reloadCurrent();
     } catch (e) {
       setResetStatus('Failed');
     } finally {
@@ -311,19 +326,27 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
       const res = await promptApi.addComment(current.userId, timeSec, text, currentAttempt, assignmentId);
       setLastApiResult('POST /api/prompt/comment/add', 200, true);
       setCommentText('');
+      const newEntry = { id: res?.commentId ?? 0, time: timeSec, text };
       setFeedbackEntries((prev) => {
-        const next = [...prev, { id: res?.commentId ?? 0, time: timeSec, text }];
+        const next = [...prev, newEntry];
         next.sort((a, b) => a.time - b.time);
         return next;
       });
+      const newComment = { id: res?.commentId ?? 0, comment: `[${Math.floor(timeSec / 60)}:${timeSec % 60 < 10 ? '0' : ''}${timeSec % 60}] ${text}` };
+      setSubmissions((prev) =>
+        prev.map((s, i) =>
+          i === index
+            ? { ...s, submissionComments: [...(s.submissionComments ?? []), newComment] }
+            : s
+        )
+      );
       videoRef.current.play().catch(() => {});
-      await reloadCurrent();
     } catch {
       setError('Failed to add comment');
     } finally {
       setSaving(false);
     }
-  }, [commentText, current, assignmentId, currentAttempt, reloadCurrent, setLastFunction, setLastApiResult]);
+  }, [commentText, current, assignmentId, currentAttempt, index, setLastFunction, setLastApiResult]);
 
   const handleCommentKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -355,12 +378,24 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
         setFeedbackEntries((prev) =>
           prev.map((f) => (f.id === entry.id ? { ...f, text: newText.trim() } : f)).sort((a, b) => a.time - b.time)
         );
-        await reloadCurrent();
+        const timeLabel = `[${Math.floor(entry.time / 60)}:${entry.time % 60 < 10 ? '0' : ''}${entry.time % 60}] `;
+        setSubmissions((prev) =>
+          prev.map((s, i) =>
+            i === index
+              ? {
+                  ...s,
+                  submissionComments: (s.submissionComments ?? []).map((c) =>
+                    c.id === entry.id ? { ...c, comment: timeLabel + newText.trim() } : c
+                  ),
+                }
+              : s
+          )
+        );
       } catch {
         setError('Failed to edit comment');
       }
     },
-    [current, assignmentId, reloadCurrent]
+    [current, assignmentId, index]
   );
 
   const handleDeleteComment = useCallback(
@@ -370,12 +405,18 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
       try {
         await promptApi.deleteComment(current.userId, String(entry.id), assignmentId);
         setFeedbackEntries((prev) => prev.filter((f) => f.id !== entry.id));
-        await reloadCurrent();
+        setSubmissions((prev) =>
+          prev.map((s, i) =>
+            i === index
+              ? { ...s, submissionComments: (s.submissionComments ?? []).filter((c) => c.id !== entry.id) }
+              : s
+          )
+        );
       } catch {
         setError('Failed to delete comment');
       }
     },
-    [current, assignmentId, reloadCurrent]
+    [current, assignmentId, index]
   );
 
   const handleStudentSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -546,7 +587,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     );
   }
 
-  const promptUsed = getPromptFromComments(current?.body, current?.submissionComments);
+  const promptUsed = getPromptFromComments(current?.body, current?.submissionComments, current?.promptHtml);
   const hasSubmissionNoVideo = current && !current.videoUrl;
   const noSubmissionsInGradingMode = gradingMode && submissions.length === 0;
 

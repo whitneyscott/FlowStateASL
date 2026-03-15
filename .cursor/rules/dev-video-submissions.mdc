@@ -1,0 +1,13 @@
+---
+description: Dev mode video submissions — remind about lost videos on restart
+alwaysApply: true
+---
+
+# Local Dev Video Submissions
+
+**Reminder:** In local development (`NODE_ENV !== 'production'`), video submissions use `ltiResourceLink` and are stored in memory. **Videos are lost when the API restarts.**
+
+This is intentional. Production uses the `file` content item path — Canvas fetches and stores videos permanently. Production is unaffected.
+
+- Dev: `ltiResourceLink` → in-memory → lost on restart
+- Production: `file` content item → Canvas fetches and owns video → persists
