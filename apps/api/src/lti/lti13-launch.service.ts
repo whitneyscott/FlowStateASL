@@ -179,6 +179,18 @@ export class Lti13LaunchService {
     const customToolType = (custom.tool_type ?? '').toString().trim();
     const toolType = CUSTOM_TOOL_TYPE_MAP[customToolType] ?? 'flashcards';
     const submissionToken = (custom.submission_token ?? '').toString().trim() || undefined;
+    const submissionTitle =
+      (custom.sprout_video_title ?? '').toString().trim() ||
+      (resourceLink.title ?? '').toString().trim() ||
+      undefined;
+    if (submissionToken) {
+      appendLtiLog('launch', 'LTI submission launch title extraction', {
+        hasSubmissionToken: true,
+        customSproutVideoTitle: (custom.sprout_video_title ?? '').toString().trim() || '(none)',
+        resourceLinkTitle: (resourceLink.title ?? '').toString().trim() || '(none)',
+        submissionTitleResolved: submissionTitle || '(none)',
+      });
+    }
 
     const agsEndpoint = payload[LTI_AGS_ENDPOINT] as { lineitems?: string; lineitem?: string } | undefined;
     const agsLineitemsUrl = (agsEndpoint?.lineitems ?? '').toString().trim() || undefined;
@@ -231,6 +243,7 @@ export class Lti13LaunchService {
       platformIss,
       deploymentId,
       submissionToken,
+      submissionTitle,
     };
   }
 

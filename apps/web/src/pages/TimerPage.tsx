@@ -61,9 +61,26 @@ export default function TimerPage({ context }: TimerPageProps) {
           lastEndpoint = 'POST /api/prompt/submit-deep-link';
           console.log('[TimerPage:doSubmit] Step 2a: submitDeepLink (isDeepLink=true)', { blobSize: blob.size });
           setLastFunction('POST /api/prompt/submit-deep-link');
-          const html = await promptApi.submitDeepLink(blob, `asl_submission_${Date.now()}.webm`);
+          const result = await promptApi.submitDeepLink(blob, `asl_submission_${Date.now()}.webm`);
           setLastApiResult('POST /api/prompt/submit-deep-link', 200, true);
-          console.log('[TimerPage:doSubmit] submitDeepLink OK, HTML length=', html?.length, 'document.write...');
+          let html: string;
+          if (typeof result === 'object' && result?.dev) {
+            const dev = result.dev;
+            console.log('[SproutVideo]', dev.message);
+            console.log('[TimerPage:doSubmit] Video title for submission:', {
+              contentItemTitle: dev.contentItemTitle ?? '(not returned)',
+              videoTitle: dev.videoTitle ?? '(not returned)',
+              length: (dev.contentItemTitle ?? dev.videoTitle ?? '').length,
+            });
+            if (dev.contentItemTitle) {
+              console.log('[TimerPage:doSubmit] Content item title sent to Canvas (should appear on submission):', dev.contentItemTitle);
+            }
+            await new Promise((r) => setTimeout(r, dev.delayMs ?? 2500));
+            html = result.html;
+          } else {
+            html = typeof result === 'string' ? result : '';
+          }
+          console.log('[TimerPage:doSubmit] submitDeepLink OK, document.write...');
           document.open();
           document.write(html);
           document.close();

@@ -4,6 +4,7 @@ import { useSearchParams } from 'react-router-dom';
 export default function PromptReviewPage() {
   const [searchParams] = useSearchParams();
   const token = searchParams.get('token') ?? '';
+  const title = (searchParams.get('title') ?? '').trim();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
@@ -19,7 +20,7 @@ export default function PromptReviewPage() {
 
   return (
     <div className="min-h-[400px] flex flex-col items-center p-6">
-      <h2 className="text-xl font-semibold mb-4">ASL Video Submission</h2>
+      <h2 className="text-xl font-semibold mb-4">{title || 'ASL Video Submission'}</h2>
       <div className="w-full max-w-2xl relative">
         {loading && (
           <div className="absolute inset-0 flex items-center justify-center bg-gray-100 rounded border border-gray-300">

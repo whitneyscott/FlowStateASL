@@ -10,6 +10,9 @@ import { LtiAgsService } from '../lti/lti-ags.service';
 import { LtiDeepLinkFileStore } from '../lti/lti-deep-link-file.store';
 import { LtiDeepLinkResponseService } from '../lti/lti-deep-link-response.service';
 import { QuizService } from '../quiz/quiz.service';
+import { SproutVideoService } from '../sproutvideo/sproutvideo.service';
+import { PromptFallbackStore } from './prompt-fallback.store';
+import { PromptVideoTitleStore } from './prompt-video-title.store';
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
 import type { PromptConfigJson, PutPromptConfigDto } from './dto/prompt-config.dto';
 
@@ -20,6 +23,14 @@ interface PromptManagerSettingsBlob {
   v?: number;
   configs?: Record<string, PromptConfigJson>;
   updatedAt?: string;
+  /** SproutVideo folder id for PromptSubmissions (dev fallback). Env SPROUT_PROMPT_SUBMISSIONS_FOLDER_ID checked first. NEVER delete this when writing the blob; always merge with existing blob so it persists. */
+  sproutPromptSubmissionsFolderId?: string;
+}
+
+/** SproutVideo title is stored as the content item title (submission body may contain it). */
+function getSproutVideoTitleFromBody(body: string | undefined): string | null {
+  const trimmed = (body ?? '').trim();
+  return trimmed && /^asl_/.test(trimmed) ? trimmed : null;
 }
 
 /** Canvas shows "submitted" when workflow_state is submitted or graded. Match that. */
@@ -138,6 +149,9 @@ export class PromptService {
     private readonly deepLinkFileStore: LtiDeepLinkFileStore,
     private readonly deepLinkResponse: LtiDeepLinkResponseService,
     private readonly quiz: QuizService,
+    private readonly sproutVideo: SproutVideoService,
+    private readonly promptFallbackStore: PromptFallbackStore,
+    private readonly promptVideoTitleStore: PromptVideoTitleStore,
   ) {}
 
   /**
@@ -150,6 +164,67 @@ export class PromptService {
       return id;
     }
     throw new Error('Assignment ID required. In course_navigation, pass assignmentId as query parameter.');
+  }
+
+  /**
+   * Resolve SproutVideo PromptSubmissions folder id: .env first, then Settings blob.
+   * One-time fix: if missing from both, look up folder by name "PromptSubmissions" (or create it),
+   * persist to Settings description with sproutPromptSubmissionsFolderId first, then return id.
+   * Never delete or overwrite sproutPromptSubmissionsFolderId when merging blob elsewhere.
+   */
+  private async getPromptSubmissionsFolderId(
+    courseId: string,
+    domainOverride: string | undefined,
+    token: string | null,
+  ): Promise<string | null> {
+    appendLtiLog('prompt-deeplink', 'SproutVideo: getPromptSubmissionsFolderId called', { hasToken: !!token });
+    const fromEnv = (this.config.get<string>('SPROUT_PROMPT_SUBMISSIONS_FOLDER_ID') ?? '').trim();
+    if (fromEnv) {
+      appendLtiLog('prompt-deeplink', 'SproutVideo: using folder id from .env (SPROUT_PROMPT_SUBMISSIONS_FOLDER_ID)', { id: fromEnv.slice(0, 8) + '...' });
+      return fromEnv;
+    }
+    if (!token) {
+      appendLtiLog('prompt-deeplink', 'SproutVideo: no Canvas token, skipping folder lookup', {});
+      return null;
+    }
+    let blob = await this.readPromptManagerSettingsBlob(courseId, domainOverride, token);
+    const fromBlob = (blob?.sproutPromptSubmissionsFolderId ?? '').trim();
+    if (fromBlob) {
+      appendLtiLog('prompt-deeplink', 'SproutVideo: using folder id from Settings blob', { id: fromBlob.slice(0, 8) + '...' });
+      return fromBlob;
+    }
+
+    // One-time fix: look up by name, or create, then persist to Settings (folder id first so it survives and can be copied to .env)
+    const settingsAssignmentId = await this.ensurePromptManagerSettingsAssignment(courseId, domainOverride, token);
+    const folderName = 'PromptSubmissions';
+    const listFoldersUrl = 'https://api.sproutvideo.com/v1/folders?per_page=100';
+    appendLtiLog('prompt-deeplink', `SproutVideo: GET ${listFoldersUrl} to find folder by name "${folderName}"`, { request: 'GET', url: listFoldersUrl, folderName });
+    let folderId: string | null = await this.sproutVideo.findFolderByName(folderName);
+    appendLtiLog('prompt-deeplink', 'SproutVideo: findFolderByName result', { folderName, foundId: folderId ?? null, found: !!folderId });
+    if (!folderId) {
+      try {
+        appendLtiLog('prompt-deeplink', 'SproutVideo: creating folder (not found by name)', { folderName });
+        folderId = await this.sproutVideo.createFolder(folderName);
+        appendLtiLog('prompt-deeplink', 'SproutVideo: created folder PromptSubmissions', { id: folderId });
+      } catch (err) {
+        appendLtiLog('prompt-deeplink', 'SproutVideo: createFolder failed', { error: String(err) });
+        return null;
+      }
+    } else {
+      appendLtiLog('prompt-deeplink', 'SproutVideo: using existing folder found by name', { id: folderId });
+    }
+    blob = await this.readPromptManagerSettingsBlob(courseId, domainOverride, token);
+    const payload: PromptManagerSettingsBlob = {
+      sproutPromptSubmissionsFolderId: folderId,
+      ...blob,
+      v: blob?.v ?? 1,
+      configs: blob?.configs ?? {},
+      updatedAt: new Date().toISOString(),
+    };
+    const description = JSON.stringify(payload);
+    await this.canvas.updateAssignmentDescription(courseId, settingsAssignmentId, description, domainOverride, token);
+    appendLtiLog('prompt-deeplink', 'SproutVideo: persisted folder id to Settings (copy to SPROUT_PROMPT_SUBMISSIONS_FOLDER_ID in .env)', { id: folderId });
+    return folderId;
   }
 
   private async ensurePromptManagerSettingsAssignment(
@@ -305,10 +380,24 @@ export class PromptService {
     );
     const blob = await this.readPromptManagerSettingsBlob(ctx.courseId, domainOverride, token);
     const configs = { ...(blob?.configs ?? {}), [assignmentId]: merged };
+    let sproutFolderId = await this.getPromptSubmissionsFolderId(ctx.courseId, domainOverride, token);
+    if (!sproutFolderId) {
+      try {
+        sproutFolderId = await this.sproutVideo.createFolder('PromptSubmissions');
+        appendLtiLog('prompt', 'putConfig: created SproutVideo folder PromptSubmissions', { id: sproutFolderId });
+      } catch (err) {
+        appendLtiLog('prompt', 'putConfig: SproutVideo createFolder failed (non-fatal)', { error: String(err) });
+      }
+    }
+    // Read → merge → write: never overwrite entire blob; preserve existing fields (e.g. sproutPromptSubmissionsFolderId)
     const payload: PromptManagerSettingsBlob = {
+      ...blob,
       v: 1,
       configs,
       updatedAt: new Date().toISOString(),
+      ...((blob?.sproutPromptSubmissionsFolderId ?? sproutFolderId) && {
+        sproutPromptSubmissionsFolderId: blob?.sproutPromptSubmissionsFolderId ?? sproutFolderId ?? undefined,
+      }),
     };
     const description = JSON.stringify(payload);
     await this.canvas.updateAssignmentDescription(
@@ -396,6 +485,14 @@ export class PromptService {
     if (hasAssignmentUpdates || rubricId) {
       try {
         if (hasAssignmentUpdates) {
+          const attemptsForCanvas =
+            process.env.NODE_ENV !== 'production' ? -1 : allowedAttempts;
+          if (process.env.NODE_ENV !== 'production' && allowedAttempts !== -1) {
+            appendLtiLog('prompt', 'putConfig: dev override — forcing allowedAttempts to -1 so you can resubmit', {
+              assignmentId,
+              requestedAttempts: allowedAttempts,
+            });
+          }
           await this.canvas.updateAssignment(
             ctx.courseId,
             assignmentId,
@@ -407,7 +504,7 @@ export class PromptService {
               ...(dueAt && { dueAt }),
               ...(unlockAt && { unlockAt }),
               ...(lockAt && { lockAt }),
-              allowedAttempts,
+              allowedAttempts: attemptsForCanvas,
             },
             domainOverride,
             token,
@@ -542,13 +639,16 @@ export class PromptService {
   /**
    * Deep Linking (e.g. homework_submission): store file for one-time GET, build LtiDeepLinkingResponse
    * JWT and return HTML form that auto-posts to Canvas deep_link_return_url.
+   * In dev, returns { html, dev } so the client can console.log and delay before redirect.
    */
   async submitDeepLink(
     ctx: LtiContext,
     buffer: Buffer,
     contentType: string,
     filename?: string,
-  ): Promise<string> {
+  ): Promise<
+    string | { html: string; dev: { message: string; delayMs: number; contentItemTitle?: string; videoTitle?: string | null } }
+  > {
     appendLtiLog('prompt-deeplink', 'submitDeepLink ENTER', {
       size: buffer.length,
       contentType,
@@ -560,12 +660,70 @@ export class PromptService {
       appendLtiLog('prompt-deeplink', 'submitDeepLink FAIL: missing context');
       throw new Error('Deep Linking context required (messageType LtiDeepLinkingRequest and deepLinkReturnUrl)');
     }
+
+    // In dev: create SproutVideo title first; use it as content item title so Canvas stores it for lookup. Do not wait for upload.
+    const videoTitle =
+      process.env.NODE_ENV !== 'production'
+        ? `asl_${ctx.courseId}_${ctx.assignmentId}_${ctx.userId}_${Date.now()}`
+        : '';
+    appendLtiLog('prompt-deeplink', 'video title created (dev only)', {
+      hasVideoTitle: !!videoTitle,
+      videoTitle: videoTitle || '(none)',
+      length: videoTitle?.length ?? 0,
+    });
+    if (process.env.NODE_ENV !== 'production' && videoTitle) {
+      this.promptVideoTitleStore.set(ctx.courseId, ctx.assignmentId ?? '', ctx.userId, videoTitle);
+      const canvasToken = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
+      const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
+      const folderId = await this.getPromptSubmissionsFolderId(ctx.courseId, domainOverride, canvasToken);
+      if (folderId) {
+        const courseId = ctx.courseId;
+        const assignmentId = ctx.assignmentId ?? '';
+        const userId = ctx.userId;
+        this.sproutVideo
+          .uploadVideo(buffer, filename ?? 'asl_submission.webm', { folderId, title: videoTitle })
+          .then(({ embedUrl }) => {
+            this.promptFallbackStore.set(courseId, assignmentId, userId, embedUrl);
+            appendLtiLog('prompt-deeplink', 'SproutVideo: upload complete (background), fallback store set', {
+              key: `${courseId}:${assignmentId}:${userId}`,
+            });
+          })
+          .catch((err) => {
+            appendLtiLog('prompt-deeplink', 'SproutVideo upload failed (background, non-fatal)', { error: String(err) });
+          });
+      }
+    }
+
     const token = this.deepLinkFileStore.set(buffer, contentType);
     this.deepLinkFileStore.registerSubmissionToken(ctx.courseId, ctx.assignmentId, ctx.userId, token);
-    appendLtiLog('prompt-deeplink', 'submitDeepLink: file stored, building response HTML');
-    const title = 'ASL Express Video Submission';
-    const html = await this.deepLinkResponse.buildResponseHtml(ctx, token, title);
-    appendLtiLog('prompt-deeplink', 'submitDeepLink DONE (HTML form ready for Canvas)', { tokenPreview: token.slice(0, 8) + '...' });
+    const contentItemTitle = process.env.NODE_ENV !== 'production' && videoTitle ? videoTitle : 'ASL Express Video Submission';
+    appendLtiLog('prompt-deeplink', 'SproutVideo title → content item: ONLY place we set what Canvas shows', {
+      contentItemTitle,
+      length: contentItemTitle.length,
+      isDevTitle: process.env.NODE_ENV !== 'production' && !!videoTitle,
+      note: 'buildResponseHtml puts this in the LTI content item; Canvas decides where it appears (body/title).',
+    });
+    appendLtiLog('prompt-deeplink', 'submitDeepLink: calling buildResponseHtml (adds title to content item sent to Canvas)', {
+      titlePassed: contentItemTitle,
+      whatGetsSent: 'JWT with content_items[0].title = contentItemTitle; form POST to deep_link_return_url',
+    });
+    const html = await this.deepLinkResponse.buildResponseHtml(ctx, token, contentItemTitle);
+    appendLtiLog('prompt-deeplink', 'submitDeepLink DONE (HTML form ready for Canvas)', {
+      tokenPreview: token.slice(0, 8) + '...',
+      contentItemTitlePassed: contentItemTitle,
+    });
+
+    if (process.env.NODE_ENV !== 'production') {
+      return {
+        html,
+        dev: {
+          message: 'Redirecting to Canvas. (SproutVideo upload runs in background for teacher fallback.)',
+          delayMs: 2500,
+          contentItemTitle,
+          videoTitle: videoTitle || null,
+        },
+      };
+    }
     return html;
   }
 
@@ -596,6 +754,8 @@ export class PromptService {
       grade?: string;
       submissionComments?: Array<{ id: number; comment: string }>;
       videoUrl?: string;
+      /** When in-memory video is missing (dev), SproutVideo embed URL for iframe fallback. */
+      fallbackVideoUrl?: string;
       promptHtml?: string;
     }>
   > {
@@ -622,11 +782,39 @@ export class PromptService {
     const baseRows = submittedList.map((s) => {
       const userId = String(s.user_id);
       let videoUrl = getVideoUrlFromCanvasSubmission(s);
+      let fallbackVideoUrl: string | undefined;
       if (!videoUrl) {
         const submissionToken = this.deepLinkFileStore.getSubmissionToken(ctx.courseId, assignmentId, userId);
         if (submissionToken) {
           videoUrl = `/api/prompt/submission/${encodeURIComponent(submissionToken)}`;
+          const fileStillPresent = this.deepLinkFileStore.get(submissionToken);
+          const fromFallbackStore = this.promptFallbackStore.get(ctx.courseId, assignmentId, userId) ?? undefined;
+          if (fromFallbackStore) {
+            if (process.env.NODE_ENV !== 'production') {
+              fallbackVideoUrl = fromFallbackStore;
+              appendLtiLog('viewer', 'getSubmissions: dev — SproutVideo fallback set for Teacher Viewer', {
+                userId,
+                assignmentId,
+                inMemoryMissing: !fileStillPresent,
+              });
+            } else if (!fileStillPresent) {
+              fallbackVideoUrl = fromFallbackStore;
+              appendLtiLog('viewer', 'getSubmissions: using SproutVideo fallback (in-memory video missing)', {
+                userId,
+                assignmentId,
+                fallbackUrlPreview: fromFallbackStore.slice(0, 50) + '...',
+              });
+            }
+          }
         }
+      }
+      if (process.env.NODE_ENV !== 'production') {
+        const fromStore = this.promptFallbackStore.get(ctx.courseId, assignmentId, userId) ?? undefined;
+        if (fromStore) fallbackVideoUrl = fromStore;
+        appendLtiLog('viewer', 'getSubmissions: fallback store lookup', {
+          key: `${ctx.courseId}:${assignmentId}:${userId}`,
+          found: !!fromStore,
+        });
       }
       videoUrl = this.toViewerVideoUrl(videoUrl, ctx) ?? videoUrl;
       return {
@@ -637,8 +825,45 @@ export class PromptService {
         grade: s.grade,
         submissionComments: s.submission_comments?.map((c) => ({ id: c.id, comment: c.comment })) ?? [],
         videoUrl,
+        fallbackVideoUrl,
       };
     });
+    if (process.env.NODE_ENV !== 'production') {
+      appendLtiLog('viewer', 'getSubmissions: submission bodies (for video title debug)', {
+        bodies: baseRows.map((r) => ({
+          userId: r.userId,
+          bodyPreview: r.body == null ? '(null)' : r.body === '' ? '(empty)' : r.body.slice(0, 120) + (r.body.length > 120 ? '...' : ''),
+          bodyLength: r.body?.length ?? 0,
+          looksLikeSproutTitle: !!getSproutVideoTitleFromBody(r.body),
+        })),
+      });
+      const folderId = await this.getPromptSubmissionsFolderId(ctx.courseId, domainOverride, token);
+      if (folderId) {
+        for (const row of baseRows) {
+          if (row.fallbackVideoUrl) continue;
+          const titleFromBody = getSproutVideoTitleFromBody(row.body);
+          const titleFromStore = this.promptVideoTitleStore.get(ctx.courseId, assignmentId, row.userId);
+          const title = titleFromBody ?? titleFromStore ?? null;
+          if (!title) continue;
+          try {
+            const found = await this.sproutVideo.findVideoByTitleInFolder(folderId, title);
+            if (found) {
+              row.fallbackVideoUrl = found.embedUrl;
+              appendLtiLog('viewer', 'getSubmissions: resolved SproutVideo fallback by title in folder (teacher viewer)', {
+                userId: row.userId,
+                videoTitle: title.slice(0, 50) + (title.length > 50 ? '...' : ''),
+                titleSource: titleFromBody ? 'body' : 'store',
+              });
+            }
+          } catch (e) {
+            appendLtiLog('viewer', 'getSubmissions: findVideoByTitleInFolder failed', {
+              userId: row.userId,
+              error: String(e),
+            });
+          }
+        }
+      }
+    }
     const withQuizPrompts = await Promise.all(
       baseRows.map(async (row) => {
         try {
@@ -938,7 +1163,9 @@ export class PromptService {
         if (c) newConfigs[id] = c;
       }
       const settingsAssignmentId = await this.ensurePromptManagerSettingsAssignment(ctx.courseId, domainOverride, token);
+      // Read → merge → write: only remove purged assignment configs; preserve rest of blob (e.g. sproutPromptSubmissionsFolderId)
       const payload: PromptManagerSettingsBlob = {
+        ...blob,
         v: 1,
         configs: newConfigs,
         updatedAt: new Date().toISOString(),
@@ -1092,9 +1319,13 @@ export class PromptService {
       domainOverride,
     );
     const settingsAssignmentId = await this.ensurePromptManagerSettingsAssignment(ctx.courseId, domainOverride, token);
+    // Ensure SproutVideo PromptSubmissions folder id is resolved and persisted (one-time lookup/create + log in Bridge)
+    await this.getPromptSubmissionsFolderId(ctx.courseId, domainOverride, token);
     const blob = await this.readPromptManagerSettingsBlob(ctx.courseId, domainOverride, token);
     const configs = { ...(blob?.configs ?? {}), [assignmentId]: { minutes: 5, prompts: [], accessCode: '', assignmentName: name } as PromptConfigJson };
+    // Read → merge → write: only add new assignment to configs; preserve rest of blob (e.g. sproutPromptSubmissionsFolderId)
     const payload: PromptManagerSettingsBlob = {
+      ...blob,
       v: 1,
       configs,
       updatedAt: new Date().toISOString(),

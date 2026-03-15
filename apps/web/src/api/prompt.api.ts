@@ -1,10 +1,18 @@
 /**
  * Prompt Manager API client. Uses fetch with credentials: 'include' (same as TeacherSettings, FlashcardsPage).
+ * Sends X-LTI-Token when stored so session can be restored after refresh.
  */
+import { ltiTokenHeaders } from './lti-token';
+
 const base = '/api/prompt';
 
+function apiInit(init?: RequestInit): RequestInit {
+  const headers = { ...ltiTokenHeaders(), ...(init?.headers as Record<string, string>) };
+  return { ...init, credentials: 'include' as RequestCredentials, headers };
+}
+
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, { ...init, credentials: 'include' });
+  const res = await fetch(url, apiInit(init));
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error((data as { message?: string }).message ?? `HTTP ${res.status}`);
   return data as T;
@@ -12,7 +20,7 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
 
 /** Same as fetchJson but redirects to Canvas OAuth when API returns 401 + redirectToOAuth (token expired). */
 async function fetchJsonWithOAuthRedirect<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, { ...init, credentials: 'include' });
+  const res = await fetch(url, apiInit(init));
   const data = await res.json().catch(() => ({}));
   if (res.status === 401 && (data as { redirectToOAuth?: boolean }).redirectToOAuth) {
     window.location.href = `/api/oauth/canvas?returnTo=${encodeURIComponent(window.location.href)}`;
@@ -75,12 +83,11 @@ export async function getPromptConfig(assignmentId?: string | null): Promise<Pro
 }
 
 export async function putPromptConfig(config: Partial<PromptConfig>, assignmentId?: string | null): Promise<void> {
-  const res = await fetch(withAssignmentId(base + '/config', assignmentId), {
+  const res = await fetch(withAssignmentId(base + '/config', assignmentId), apiInit({
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(config),
-    credentials: 'include',
-  });
+  }));
   const data = await res.json().catch(() => ({}));
   if (res.status === 401 && (data as { redirectToOAuth?: boolean }).redirectToOAuth) {
     window.location.href = `/api/oauth/canvas?returnTo=${encodeURIComponent(window.location.href)}`;
@@ -103,31 +110,25 @@ export async function verifyAccess(accessCode: string, fingerprint: string): Pro
 }
 
 export async function savePrompt(promptText: string): Promise<void> {
-  await fetch(base + '/save-prompt', {
+  await fetch(base + '/save-prompt', apiInit({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ promptText }),
-    credentials: 'include',
-  });
+  }));
 }
 
 export async function submitPrompt(promptSnapshotHtml: string): Promise<void> {
-  await fetch(base + '/submit', {
+  await fetch(base + '/submit', apiInit({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ promptSnapshotHtml }),
-    credentials: 'include',
-  });
+  }));
 }
 
 export async function uploadVideo(blob: Blob, filename: string): Promise<{ fileId: string }> {
   const form = new FormData();
   form.append('video', blob, filename);
-  const res = await fetch(base + '/upload-video', {
-    method: 'POST',
-    body: form,
-    credentials: 'include',
-  });
+  const res = await fetch(base + '/upload-video', apiInit({ method: 'POST', body: form }));
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error((data as { message?: string }).message ?? `HTTP ${res.status}`);
   return data as { fileId: string };
@@ -138,19 +139,32 @@ export async function uploadVideo(blob: Blob, filename: string): Promise<{ fileI
  * to Canvas deep_link_return_url. Caller should render the HTML (e.g. document.write)
  * so the form submits and Canvas attaches the file.
  */
-export async function submitDeepLink(blob: Blob, filename: string): Promise<string> {
+/** In dev the API may return { html, dev: { message, delayMs, contentItemTitle?, videoTitle? } } for console logging and redirect delay. */
+export type SubmitDeepLinkResult =
+  | string
+  | {
+      html: string;
+      dev: {
+        message: string;
+        delayMs: number;
+        contentItemTitle?: string | null;
+        videoTitle?: string | null;
+      };
+    };
+
+export async function submitDeepLink(blob: Blob, filename: string): Promise<SubmitDeepLinkResult> {
   const form = new FormData();
   form.append('video', blob, filename);
-  const res = await fetch(base + '/submit-deep-link', {
-    method: 'POST',
-    body: form,
-    credentials: 'include',
-  });
+  const res = await fetch(base + '/submit-deep-link', apiInit({ method: 'POST', body: form }));
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     throw new Error((data as { message?: string }).message ?? `HTTP ${res.status}`);
   }
-  return res.text();
+  const text = await res.text();
+  if (res.headers.get('content-type')?.includes('application/json')) {
+    return JSON.parse(text) as SubmitDeepLinkResult;
+  }
+  return text;
 }
 
 export interface PromptSubmission {
@@ -161,6 +175,8 @@ export interface PromptSubmission {
   grade?: string;
   submissionComments?: Array<{ id: number; comment: string }>;
   videoUrl?: string;
+  /** When in-memory video is missing (dev), SproutVideo embed URL for iframe fallback. */
+  fallbackVideoUrl?: string;
   attempt?: number;
   rubricAssessment?: Record<string, unknown>;
   /** Prompt from quiz storage (preferred when present). */
@@ -187,12 +203,11 @@ export async function submitGrade(
   assignmentId?: string | null
 ): Promise<void> {
   const url = withAssignmentId(base + '/grade', assignmentId);
-  await fetch(url, {
+  await fetch(url, apiInit({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(dto),
-    credentials: 'include',
-  });
+  }));
 }
 
 export async function addComment(
@@ -217,12 +232,11 @@ export async function editComment(
   text: string,
   assignmentId?: string | null
 ): Promise<void> {
-  await fetch(withAssignmentId(base + '/comment/edit', assignmentId), {
+  await fetch(withAssignmentId(base + '/comment/edit', assignmentId), apiInit({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ userId, commentId, time, text }),
-    credentials: 'include',
-  });
+  }));
 }
 
 export async function deleteComment(
@@ -230,21 +244,19 @@ export async function deleteComment(
   commentId: string,
   assignmentId?: string | null
 ): Promise<void> {
-  await fetch(withAssignmentId(base + '/comment/delete', assignmentId), {
+  await fetch(withAssignmentId(base + '/comment/delete', assignmentId), apiInit({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ userId, commentId }),
-    credentials: 'include',
-  });
+  }));
 }
 
 export async function resetAttempt(userId: string, assignmentId?: string | null): Promise<void> {
-  await fetch(withAssignmentId(base + '/reset-attempt', assignmentId), {
+  await fetch(withAssignmentId(base + '/reset-attempt', assignmentId), apiInit({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ userId }),
-    credentials: 'include',
-  });
+  }));
 }
 
 export async function getAssignment(assignmentId?: string | null): Promise<{

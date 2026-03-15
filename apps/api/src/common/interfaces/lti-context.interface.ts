@@ -39,4 +39,6 @@ export interface LtiContext {
   deploymentId?: string;
   /** From ltiResourceLink custom: when viewing a homework submission, Canvas passes this. */
   submissionToken?: string;
+  /** Submission display title from deep-link item (resource_link.title or custom.sprout_video_title). */
+  submissionTitle?: string;
 }

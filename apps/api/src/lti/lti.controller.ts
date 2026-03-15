@@ -7,7 +7,7 @@ import { LtiJwksService } from './lti-jwks.service';
 import { Lti13LaunchService } from './lti13-launch.service';
 import { AssessmentService } from '../assessment/assessment.service';
 import { LtiDeepLinkFileStore } from './lti-deep-link-file.store';
-import { setLtiToken, consumeLtiToken } from './lti-token.store';
+import { setLtiToken, getLtiToken } from './lti-token.store';
 import { setOidcState, consumeOidcState } from './lti-oidc-state.store';
 import { setLastError, appendLtiLog } from '../common/last-error.store';
 import { renderLtiLaunchErrorHtml } from './lti-error.util';
@@ -104,7 +104,7 @@ export class LtiController {
     }
     const token = (req.query.lti_token as string) ?? '';
     if (token) {
-      const tokenCtx = consumeLtiToken(token);
+      const tokenCtx = getLtiToken(token);
       if (tokenCtx) {
         console.log('[LTI] context from token', { courseId: tokenCtx.courseId });
         if (req.session) {
@@ -118,7 +118,7 @@ export class LtiController {
         }
         return sanitizeLtiContext(tokenCtx);
       }
-      console.warn('[LTI] lti_token present but consumeLtiToken returned null (token unknown/expired, possible multi-instance)');
+      console.warn('[LTI] lti_token present but getLtiToken returned null (token unknown/expired, possible multi-instance)');
     } else {
       console.log('[LTI] context fallback: no session.ltiContext, no lti_token');
     }
@@ -314,7 +314,17 @@ export class LtiController {
     const base = frontendBase;
     /* When viewing an ltiResourceLink submission, redirect to review page */
     const buildRedirectUrl = ctx.submissionToken
-      ? (_token: string) => `${base}/prompt/review?token=${encodeURIComponent(ctx.submissionToken!)}`
+      ? (_token: string) => {
+          const tokenPart = `token=${encodeURIComponent(ctx.submissionToken!)}`;
+          const title = (ctx.submissionTitle ?? '').trim();
+          const titlePart = title ? `&title=${encodeURIComponent(title)}` : '';
+          appendLtiLog('launch', 'Submission review redirect (token + title)', {
+            hasSubmissionToken: true,
+            hasSubmissionTitle: !!title,
+            submissionTitle: title || '(none)',
+          });
+          return `${base}/prompt/review?${tokenPart}${titlePart}`;
+        }
       : (() => {
           const path = getRedirectPathForToolType(ctx.toolType, this.ltiService.isTeacherRole(ctx.roles));
           ctx.redirectPath = path;

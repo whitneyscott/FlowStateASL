@@ -20,15 +20,24 @@ export class LtiDeepLinkResponseService {
    * Production: uses file content item so Canvas fetches and owns the video.
    * Development: uses ltiResourceLink (Canvas cannot reach private IPs locally).
    */
+  /**
+   * Title is the only display identifier we send for the content item; it must be passed explicitly.
+   * It lives only inside the JWT payload (content_items[].title), not in any separate form field, so Canvas cannot sanitize it from the form.
+   */
   async buildResponseHtml(
     ctx: LtiContext,
     submissionToken: string,
-    title: string = 'ASL Express Video Submission',
+    title: string,
   ): Promise<string> {
     const appUrl = (this.config.get<string>('APP_URL') ?? process.env.APP_URL ?? '').trim().replace(/\/$/, '');
     if (!appUrl) throw new Error('APP_URL required for content_items url');
     const launchUrl = `${appUrl}/api/lti/launch`;
-    appendLtiLog('deep-link', 'buildResponseHtml: ENTER', { launchUrl, submissionToken: submissionToken.slice(0, 8) + '...' });
+    appendLtiLog('deep-link', 'buildResponseHtml: ENTER', {
+      launchUrl,
+      submissionToken: submissionToken.slice(0, 8) + '...',
+      titleReceived: title,
+      titleLength: title?.length ?? 0,
+    });
     const clientId = (this.config.get<string>('LTI_PROMPTER_CLIENT_ID') ?? process.env.LTI_PROMPTER_CLIENT_ID ?? '').trim();
     if (!clientId) {
       throw new Error('Deep Linking requires LTI_PROMPTER_CLIENT_ID. Add to .env (Client ID from Prompter Developer Key).');
@@ -61,9 +70,16 @@ export class LtiDeepLinkResponseService {
             custom: {
               submission_token: submissionToken,
               tool_type: 'prompter',
+              sprout_video_title: title,
             },
           },
         ];
+    appendLtiLog('deep-link', 'buildResponseHtml: content_items built (THIS is what Canvas gets as submission content)', {
+      titleInContentItem: title,
+      contentType: isProduction ? 'file' : 'ltiResourceLink',
+      fullContentItems: contentItems,
+      note: 'Canvas receives this in the JWT; it may show title next to the video or in submission body depending on LMS.',
+    });
 
     const now = Math.floor(Date.now() / 1000);
     const payload: Record<string, unknown> = {
@@ -82,6 +98,13 @@ export class LtiDeepLinkResponseService {
       payload[LTI_DL_DATA] = ctx.deepLinkData;
     }
 
+    appendLtiLog('deep-link', 'JWT payload content_items (exactly what is sent to Canvas in the form POST)', {
+      contentItemsInPayload: payload[LTI_DL_CONTENT_ITEMS],
+      titleInFirstItem: Array.isArray(payload[LTI_DL_CONTENT_ITEMS]) && (payload[LTI_DL_CONTENT_ITEMS] as unknown[])[0]
+        ? (payload[LTI_DL_CONTENT_ITEMS] as Array<{ title?: string }>)[0]?.title
+        : '(n/a)',
+    });
+
     const privateKey = await jose.importPKCS8(
       privateKeyPem.replace(/\\n/g, '\n'),
       'RS256'
@@ -89,6 +112,18 @@ export class LtiDeepLinkResponseService {
     const signed = await new jose.SignJWT(payload as jose.JWTPayload)
       .setProtectedHeader({ alg: 'RS256', kid: 'default' })
       .sign(privateKey);
+
+    try {
+      const decoded = jose.decodeJwt(signed) as Record<string, unknown>;
+      const sentContentItems = decoded[LTI_DL_CONTENT_ITEMS] as Array<{ type?: string; title?: string }> | undefined;
+      appendLtiLog('deep-link', 'Decoded JWT content_items (verify what Canvas will receive)', {
+        contentItemsFromJwt: sentContentItems,
+        firstItemTitle: sentContentItems?.[0]?.title ?? '(missing)',
+      });
+    } catch {
+      appendLtiLog('deep-link', 'Decoded JWT content_items: could not decode (skip verification)');
+    }
+
     appendLtiLog('deep-link', 'response built', {
       returnUrl: returnUrl.slice(0, 60) + '...',
       contentItems: contentItems.length,
@@ -99,6 +134,10 @@ export class LtiDeepLinkResponseService {
     return this.renderFormHtml(returnUrl, signed);
   }
 
+  /**
+   * Form posts only the JWT to Canvas. The video title is inside the JWT payload (content_items[].title),
+   * not in a separate input, so there is no form field for Canvas to sanitize.
+   */
   private renderFormHtml(deepLinkReturnUrl: string, jwtParam: string): string {
     const escapedUrl = this.escapeHtml(deepLinkReturnUrl);
     const escapedJwt = this.escapeHtml(jwtParam);
