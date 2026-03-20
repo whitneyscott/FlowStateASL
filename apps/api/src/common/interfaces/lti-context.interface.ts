@@ -19,7 +19,7 @@ export interface LtiContext {
   lisResultSourcedid?: string;
   /** Canvas instance hostname (legacy) */
   canvasDomain?: string;
-  /** Full Canvas base URL from LTI iss (e.g. http://localhost:3001) - use for API calls to preserve scheme+port */
+  /** Tenant Canvas REST base URL (scheme + host). From LTI: custom API domain, launch return_url, or iss (self-hosted). */
   canvasBaseUrl?: string;
   /** Canvas OAuth access token — from session after OAuth flow; use for Canvas API, not LTI JWT */
   canvasAccessToken?: string;

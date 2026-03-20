@@ -48,7 +48,7 @@ export class CanvasService {
     });
     if (!resolved) {
       throw new Error(
-        'Canvas base URL required from the LTI launch (issuer / tool consumer URL). Relaunch from Canvas, or set CANVAS_API_BASE_URL only for local non-LTI use.',
+        'Canvas base URL missing from session. Relaunch the tool from your course (Instructure Cloud needs the school host from the launch, not canvas.instructure.com). Optional: add Developer Key custom field canvas_api_domain = $Canvas.api.domain. For local non-LTI tests, set CANVAS_API_BASE_URL.',
       );
     }
     return resolved;

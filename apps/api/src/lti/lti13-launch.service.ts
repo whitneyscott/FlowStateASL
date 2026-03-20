@@ -16,6 +16,7 @@ const LTI_ROLES = 'https://purl.imsglobal.org/spec/lti/claim/roles';
 const LTI_RESOURCE_LINK = 'https://purl.imsglobal.org/spec/lti/claim/resource_link';
 const LTI_CONTEXT = 'https://purl.imsglobal.org/spec/lti/claim/context';
 const LTI_CUSTOM = 'https://purl.imsglobal.org/spec/lti/claim/custom';
+const LTI_LAUNCH_PRESENTATION = 'https://purl.imsglobal.org/spec/lti/claim/launch_presentation';
 const LTI_DEPLOYMENT_ID = 'https://purl.imsglobal.org/spec/lti/claim/deployment_id';
 /** Deep Linking request: deep_link_return_url and data. */
 const LTI_DL_SETTINGS = 'https://purl.imsglobal.org/spec/lti-dl/claim/deep_linking_settings';
@@ -199,14 +200,66 @@ export class Lti13LaunchService {
     const iss = payload.iss as string;
     let canvasDomain: string | undefined;
     let canvasBaseUrl: string | undefined;
-    try {
-      if (iss) {
-        const u = new URL(iss);
+
+    /**
+     * Canvas Cloud: `iss` is often https://canvas.instructure.com (platform id), NOT the account REST host.
+     * REST API must use the tenant host from custom fields ($Canvas.api.domain / $Canvas.api.baseUrl) or
+     * from launch_presentation.return_url (actual course URL on the school subdomain).
+     */
+    const applyCanvasHostFromString = (raw: string, source: string): boolean => {
+      const s = raw?.trim();
+      if (!s) return false;
+      try {
+        const u = new URL(s.includes('://') ? s : `https://${s}`);
         canvasDomain = u.hostname;
         canvasBaseUrl = `${u.protocol}//${u.host}`;
+        appendLtiLog('launch', 'Canvas REST host resolved', { source, canvasBaseUrl, canvasDomain });
+        return true;
+      } catch {
+        return false;
       }
-    } catch {
-      // ignore
+    };
+
+    const customApiBase = (
+      custom.canvas_api_base_url ??
+      custom.custom_canvas_api_base_url ??
+      ''
+    )
+      .toString()
+      .trim();
+    const customApiDomain = (
+      custom.canvas_api_domain ?? custom.custom_canvas_domain ?? custom.canvas_domain ?? ''
+    )
+      .toString()
+      .trim();
+
+    const launchPresentation =
+      (payload[LTI_LAUNCH_PRESENTATION] as { return_url?: string } | undefined) ?? {};
+    const presentationReturnUrl = (launchPresentation.return_url ?? '').toString().trim();
+
+    if (!applyCanvasHostFromString(customApiBase, 'custom.canvas_api_base_url')) {
+      if (!applyCanvasHostFromString(customApiDomain, 'custom.canvas_api_domain')) {
+        if (!applyCanvasHostFromString(presentationReturnUrl, 'launch_presentation.return_url')) {
+          const dlEarly = payload[LTI_DL_SETTINGS] as { deep_link_return_url?: string } | undefined;
+          if (
+            !applyCanvasHostFromString(
+              (dlEarly?.deep_link_return_url ?? '').toString().trim(),
+              'deep_linking_settings.deep_link_return_url',
+            )
+          ) {
+            try {
+              if (iss) {
+                const u = new URL(iss);
+                canvasDomain = u.hostname;
+                canvasBaseUrl = `${u.protocol}//${u.host}`;
+                appendLtiLog('launch', 'Canvas REST host from JWT iss (fallback)', { canvasBaseUrl });
+              }
+            } catch {
+              // ignore
+            }
+          }
+        }
+      }
     }
 
     const messageType = (payload[LTI_MSG_TYPE] as string) ?? 'LtiResourceLinkRequest';
