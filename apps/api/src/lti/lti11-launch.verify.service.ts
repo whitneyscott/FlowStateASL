@@ -102,7 +102,11 @@ export class Lti11LaunchVerifyService {
     const courseId =
       (flat.custom_canvas_course_id ?? flat.canvas_course_id ?? flat.context_id ?? '').toString().trim();
     const canvasApiBase =
-      (flat.custom_canvas_api_base_url ?? flat.custom_canvas_domain ?? flat.tool_consumer_instance_url ?? '')
+      (flat.custom_canvas_api_base_url ??
+        flat.custom_canvas_api_domain ??
+        flat.custom_canvas_domain ??
+        flat.tool_consumer_instance_url ??
+        '')
         .toString()
         .trim();
     const roles =
