@@ -16,7 +16,11 @@ import { getRedirectPathForToolType } from './lti-redirect.util';
 import { persistLtiContextAndRedirect } from './lti-launch-finish.util';
 import { sanitizeLtiContext } from '../common/utils/lti-context-value.util';
 import { getPublicOrigin } from '../common/utils/public-origin.util';
-import { canvasApiBaseFromLtiContext } from '../common/utils/canvas-base-url.util';
+import {
+  canvasApiBaseFromLtiContext,
+  isGenericCanvasCloudRestBase,
+  normalizeToCanvasRestBase,
+} from '../common/utils/canvas-base-url.util';
 
 @Controller('lti')
 export class LtiController {
@@ -29,6 +33,45 @@ export class LtiController {
     private readonly config: ConfigService,
     private readonly deepLinkFileStore: LtiDeepLinkFileStore,
   ) {}
+
+  private inferCanvasBaseFromLaunchRequest(req: Request): string | undefined {
+    const candidates = [
+      req.get('origin')?.trim(),
+      req.get('referer')?.trim(),
+      req.get('x-original-referer')?.trim(),
+      req.get('x-forwarded-referer')?.trim(),
+    ].filter(Boolean) as string[];
+
+    for (const c of candidates) {
+      const base = normalizeToCanvasRestBase(c);
+      if (!base) continue;
+      if (isGenericCanvasCloudRestBase(base)) continue;
+      const apiHost = (req.get('host') ?? '').split(':')[0].toLowerCase();
+      const candidateHost = new URL(base).hostname.toLowerCase();
+      if (apiHost && candidateHost === apiHost) continue;
+      return base;
+    }
+    return undefined;
+  }
+
+  private repairCanvasHostFromLaunchRequest(
+    req: Request,
+    ctx: { canvasBaseUrl?: string; canvasDomain?: string; platformIss?: string },
+  ): void {
+    const resolved = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
+    if (resolved && !isGenericCanvasCloudRestBase(resolved)) return;
+
+    const inferred = this.inferCanvasBaseFromLaunchRequest(req);
+    if (!inferred) return;
+
+    ctx.canvasBaseUrl = inferred;
+    ctx.canvasDomain = new URL(inferred).hostname;
+    appendLtiLog('launch', 'Canvas REST host repaired from launch headers', {
+      inferred,
+      path: req.path,
+      hadResolved: resolved ?? '(none)',
+    });
+  }
 
   @Post('launch/flashcards')
   async launchFlashcards(
@@ -51,6 +94,7 @@ export class LtiController {
       return res.status(400).send('Missing LTI parameters');
     }
     ctx.toolType = 'flashcards';
+    this.repairCanvasHostFromLaunchRequest(req, ctx);
     const token = randomBytes(24).toString('hex');
     setLtiToken(token, ctx);
     if (req.session) {
@@ -83,6 +127,7 @@ export class LtiController {
       return res.status(400).send('Missing LTI parameters');
     }
     ctx.toolType = 'prompter';
+    this.repairCanvasHostFromLaunchRequest(req, ctx);
     /* Do not rename assignment - prompter is placed in the assignment; leave title unchanged. */
     const token = randomBytes(24).toString('hex');
     setLtiToken(token, ctx);
@@ -329,6 +374,7 @@ export class LtiController {
       return res.status(400).type('html').send(renderLtiLaunchErrorHtml(`Invalid id_token: ${result.error}`, { frontendUrl: frontendBase }));
     }
     const ctx = result.context;
+    this.repairCanvasHostFromLaunchRequest(req, ctx);
     appendLtiLog('launch', 'LTI context extracted', {
       courseId: ctx.courseId,
       toolType: ctx.toolType,
@@ -427,6 +473,7 @@ export class LtiController {
       canvasDomain: data.canvasApiDomain || undefined,
       canvasBaseUrl: data.canvasBaseUrl || undefined,
     };
+    this.repairCanvasHostFromLaunchRequest(req, ctx);
 
     const token = randomBytes(24).toString('hex');
     setLtiToken(token, ctx);
