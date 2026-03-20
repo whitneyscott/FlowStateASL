@@ -278,6 +278,36 @@ docker exec -it canvas-web-1 rails runner 'k.save; puts k.inspect'
 
 ---
 
+## Lesson 14: Canvas REST API Base URL vs LTI JWT `iss` (Instructure Cloud) — Flashcards / Teacher Settings
+
+**Problem (symptoms):**
+- Teacher flow showed the **“recreate Flashcard Settings announcement”** modal **before** the Canvas token modal, or clicking Recreate surfaced **“Canvas base URL required…”** / **“Canvas OAuth token required”** in the wrong order.
+- Manually adding a Developer Key custom field (**`canvas_api_domain` = `$Canvas.api.domain`**) did not seem to fix the issue.
+
+**Root causes:**
+1. **Generic `iss` on Instructure-hosted Canvas**  
+   The LTI 1.3 JWT `iss` is often **`https://canvas.instructure.com`** (platform identifier). That is **not** the per-account REST host (e.g. `https://yourschool.instructure.com`). Calling `/api/v1/...` against the generic host breaks OAuth and course APIs.
+
+2. **Wrong resolution priority**  
+   If `canvasBaseUrl` was set from that generic `iss`, code that resolved “first non-empty base URL” would **prefer it** and **never** use the real school host from custom fields or `canvasDomain`.
+
+3. **API requests vs LTI launch for `Referer`**  
+   After the tool loads in an iframe, follow-up XHR/fetch calls to the tool API often send **`Referer: <your app>`**, not the Canvas course URL — so “repair from Referer” on **every** API call is unreliable. The reliable moment is **`POST /api/lti/launch`** (and related launch endpoints), where **`Origin` / `Referer`** still point at the Canvas tenant.
+
+**Fixes implemented (FlowStateASL):**
+- **`resolveCanvasApiBaseUrl`**: Treat **`canvas.instructure.com` / beta / test** as **invalid** for REST; prefer tenant `canvasBaseUrl`, then **`canvasDomain`**, then `platformIss`, then env — skipping generic cloud hosts at each step.
+- **LTI 1.3 `payloadToContext`**: Resolve tenant from, in order: custom **`$Canvas.api.baseUrl` / `$Canvas.api.domain`** (with case-insensitive custom keys), **`launch_presentation.return_url`**, deep linking return URL when present; **do not** fall back to generic `iss` as the REST base.
+- **`POST /api/lti/launch` (and 1.1 launch handlers)**: If still missing/generic, **infer tenant from launch `Origin` / `Referer`** and set `session.ltiContext.canvasBaseUrl` / `canvasDomain`.
+- **Teacher settings API**: Return **401** for teachers with **no** Canvas token **before** returning empty course settings, so the UI shows the **token modal first**, not the announcement recreate dialog.
+- **Paste XML / custom fields**: Document and ship **`custom_canvas_api_base_url`** (`$Canvas.api.baseUrl`) and **`custom_canvas_domain`** (`$Canvas.api.domain`) in `LTI_1.1_ASL_Express_Flashcards.xml`; mirror the same names on the LTI 1.3 Developer Key **Custom Fields** where applicable.
+
+**Rules:**
+- Never treat **`https://canvas.instructure.com`** as the Canvas REST base for a specific school.
+- Prefer **tenant hints** from: custom fields → **launch** `return_url` → **launch** `Origin`/`Referer` → self-hosted or non-generic `iss` → optional **`CANVAS_API_BASE_URL`** (dev/non-LTI only).
+- After changing LTI or host logic, **re-launch the tool from Canvas** (or clear session) so `ltiContext` is rebuilt.
+
+---
+
 ## Timeline of the Day
 
 | Time | Event |
