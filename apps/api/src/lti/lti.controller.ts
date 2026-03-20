@@ -5,6 +5,7 @@ import { ConfigService } from '@nestjs/config';
 import { LtiService } from './lti.service';
 import { LtiJwksService } from './lti-jwks.service';
 import { Lti13LaunchService } from './lti13-launch.service';
+import { Lti11LaunchVerifyService } from './lti11-launch.verify.service';
 import { AssessmentService } from '../assessment/assessment.service';
 import { LtiDeepLinkFileStore } from './lti-deep-link-file.store';
 import { setLtiToken, getLtiToken } from './lti-token.store';
@@ -22,6 +23,7 @@ export class LtiController {
     private readonly ltiService: LtiService,
     private readonly ltiJwks: LtiJwksService,
     private readonly lti13: Lti13LaunchService,
+    private readonly lti11: Lti11LaunchVerifyService,
     private readonly assessmentService: AssessmentService,
     private readonly config: ConfigService,
     private readonly deepLinkFileStore: LtiDeepLinkFileStore,
@@ -52,6 +54,7 @@ export class LtiController {
     setLtiToken(token, ctx);
     if (req.session) {
       req.session.ltiContext = ctx;
+      req.session.ltiLaunchType = '1.1';
       req.session.save((err) => {
         if (err) console.error('[LTI] launch session save failed', err);
         else console.log('[LTI] launch session saved, sessionId=', req.sessionID?.slice(0, 16));
@@ -84,6 +87,7 @@ export class LtiController {
     setLtiToken(token, ctx);
     if (req.session) {
       req.session.ltiContext = ctx;
+      req.session.ltiLaunchType = '1.1';
       req.session.save((err) => {
         if (err) console.error('[LTI] session save failed', err);
         const base = getPublicOrigin(req) || (this.config.get<string>('FRONTEND_URL') ?? '');
@@ -281,15 +285,35 @@ export class LtiController {
       appendLtiLog('launch', msg, { canvasError, canvasErrorDesc });
       return res.status(400).type('html').send(renderLtiLaunchErrorHtml(msg, { frontendUrl: frontendBase }));
     }
+
+    // Branch on payload: 1.3 (id_token+state) first, then 1.1 (oauth_consumer_key+oauth_signature)
     const idToken = (body?.id_token ?? body?.idToken ?? '').toString().trim();
     const state = (body?.state ?? '').toString().trim();
-    if (!idToken || !state) {
-      const bodyKeys = body ? Object.keys(body) : [];
-      const msg = `Missing id_token or state. Body keys: ${bodyKeys.join(', ')}`;
-      setLastError('/api/lti/launch', new Error(msg));
-      appendLtiLog('launch', msg, { bodyKeys });
-      return res.status(400).type('html').send(renderLtiLaunchErrorHtml(msg, { frontendUrl: frontendBase }));
+    const oauthConsumerKey = (body?.oauth_consumer_key ?? '').toString().trim();
+    const oauthSignature = (body?.oauth_signature ?? '').toString().trim();
+
+    if (idToken && state) {
+      return this.handleLti13Launch(req, res, body, idToken, state, frontendBase);
     }
+    if (oauthConsumerKey && oauthSignature) {
+      return this.handleLti11Launch(req, res, body, frontendBase);
+    }
+
+    const bodyKeys = body ? Object.keys(body) : [];
+    const msg = `Missing LTI params: need id_token+state (1.3) or oauth_consumer_key+oauth_signature (1.1). Body keys: ${bodyKeys.join(', ')}`;
+    setLastError('/api/lti/launch', new Error(msg));
+    appendLtiLog('launch', msg, { bodyKeys });
+    return res.status(400).type('html').send(renderLtiLaunchErrorHtml(msg, { frontendUrl: frontendBase }));
+  }
+
+  private async handleLti13Launch(
+    req: Request,
+    res: Response,
+    body: Record<string, unknown>,
+    idToken: string,
+    state: string,
+    frontendBase: string,
+  ): Promise<void | Response> {
     const stored = consumeOidcState(state);
     if (!stored) {
       const msg = 'Invalid or expired state';
@@ -361,5 +385,82 @@ export class LtiController {
         : undefined;
 
     persistLtiContextAndRedirect(req, res, ctx, buildRedirectUrl, options);
+  }
+
+  /**
+   * Handle LTI 1.1 launch (OAuth 1.0a). Verifies signature, checks instructor role,
+   * sets session with ltiLaunchType='1.1', redirects directly to app (no OAuth2).
+   */
+  private async handleLti11Launch(
+    req: Request,
+    res: Response,
+    body: Record<string, unknown>,
+    frontendBase: string,
+  ): Promise<void | Response> {
+    appendLtiLog('launch', 'LTI 1.1 launch detected', { bodyKeys: Object.keys(body) });
+
+    const launchUrl = this.buildLtiLaunchUrl(req);
+    const bodyForVerify = body as Record<string, string | string[] | undefined>;
+
+    const result = this.lti11.verify(bodyForVerify, launchUrl);
+    if (!result.ok) {
+      setLastError('/api/lti/launch', new Error(result.error));
+      appendLtiLog('launch', 'LTI 1.1 verify failed', { error: result.error });
+      return res
+        .status(400)
+        .type('html')
+        .send(renderLtiLaunchErrorHtml(`LTI 1.1 verification failed: ${result.error}`, { frontendUrl: frontendBase }));
+    }
+
+    const data = result.data;
+
+    const ctx = {
+      courseId: data.courseId,
+      assignmentId: data.assignmentId ?? '',
+      userId: data.ltiSub,
+      resourceLinkId: data.resourceLinkId ?? '',
+      moduleId: data.moduleId ?? '',
+      toolType: data.toolType ?? 'flashcards',
+      roles: data.roles,
+      resourceLinkTitle: data.resourceLinkTitle,
+      canvasDomain: data.canvasApiDomain || undefined,
+      canvasBaseUrl: data.canvasBaseUrl || undefined,
+    };
+
+    const token = randomBytes(24).toString('hex');
+    setLtiToken(token, ctx);
+
+    if (req.session) {
+      req.session.ltiContext = ctx;
+      req.session.ltiLaunchType = '1.1';
+      delete (req.session as { ltiClientId?: string }).ltiClientId;
+      req.session.save((err) => {
+        if (err) {
+          setLastError('/api/lti/launch', err);
+        }
+        const path = getRedirectPathForToolType(ctx.toolType, this.ltiService.isTeacherRole(data.roles));
+        const url = `${frontendBase}${path}?lti_token=${token}&courseId=${encodeURIComponent(data.courseId)}`;
+        appendLtiLog('launch', 'LTI 1.1 redirect to app (no OAuth)', { path, url: url.replace(token, '***') });
+        res.redirect(url);
+      });
+    } else {
+      const path = getRedirectPathForToolType(ctx.toolType, this.ltiService.isTeacherRole(data.roles));
+      res.redirect(`${frontendBase}${path}?lti_token=${token}&courseId=${encodeURIComponent(data.courseId)}`);
+    }
+  }
+
+  private buildLtiLaunchUrl(req: Request): string {
+    const origin = getPublicOrigin(req);
+    if (origin) {
+      return `${origin}/api/lti/launch`;
+    }
+    const appUrl = (this.config.get<string>('APP_URL') ?? '').trim();
+    if (appUrl) {
+      return `${appUrl.replace(/\/$/, '')}/api/lti/launch`;
+    }
+    const proto = req.get('x-forwarded-proto') || req.protocol || 'https';
+    const host = req.get('x-forwarded-host') || req.get('host') || 'localhost';
+    const scheme = (proto === 'https' || proto === 'http') ? proto : 'https';
+    return `${scheme}://${host}/api/lti/launch`;
   }
 }

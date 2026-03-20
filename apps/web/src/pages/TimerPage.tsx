@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
 import * as promptApi from '../api/prompt.api';
+import { ManualTokenModal } from '../components/ManualTokenModal';
 import './PrompterPage.css';
 
 interface TimerPageProps {
@@ -37,6 +38,7 @@ export default function TimerPage({ context }: TimerPageProps) {
   const submitOnStopRef = useRef(false);
   const pendingPromptRef = useRef('');
   const autoFinishFiredRef = useRef(false);
+  const [showManualTokenModal, setShowManualTokenModal] = useState(false);
 
   const doSubmit = useCallback(
     async (promptSnapshot: string, blob: Blob | null) => {
@@ -167,7 +169,10 @@ export default function TimerPage({ context }: TimerPageProps) {
         setPhase('warmup');
         setSecondsLeft((data?.minutes ?? 5) * 60);
       }
-    } catch {
+    } catch (e) {
+      if (e instanceof promptApi.NeedsManualTokenError) {
+        setShowManualTokenModal(true);
+      }
       setConfig(null);
     } finally {
       setLoading(false);
@@ -291,6 +296,24 @@ export default function TimerPage({ context }: TimerPageProps) {
         <div className="prompter-card">
           <p className="prompter-info-message">Loading...</p>
         </div>
+      </div>
+    );
+  }
+
+  if (showManualTokenModal) {
+    return (
+      <div className="prompter-page">
+        <div className="prompter-card">
+          <p className="prompter-info-message">Canvas API token required.</p>
+        </div>
+        <ManualTokenModal
+          message="LTI 1.1 does not support OAuth. Enter your Canvas API token to load the prompt timer."
+          onSuccess={() => {
+            setShowManualTokenModal(false);
+            loadConfig();
+          }}
+          onDismiss={() => setShowManualTokenModal(false)}
+        />
       </div>
     );
   }

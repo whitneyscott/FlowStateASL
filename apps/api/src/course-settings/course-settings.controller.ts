@@ -12,6 +12,7 @@ import {
 import { Request, Response } from 'express';
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
 import { appendLtiLog } from '../common/last-error.store';
+import { getOAuth401Body } from '../common/utils/oauth-401.util';
 import { CanvasTokenExpiredError } from '../canvas/canvas.service';
 import { LtiLaunchGuard } from '../lti/guards/lti-launch.guard';
 import { LtiService } from '../lti/lti.service';
@@ -57,12 +58,8 @@ export class CourseSettingsController {
       return res.json(result);
     } catch (err) {
       if (err instanceof CanvasTokenExpiredError) {
-        appendLtiLog('course-settings', 'Canvas token expired — 401, redirectToOAuth');
-        return res.status(401).json({
-          error: 'Canvas token expired',
-          redirectToOAuth: true,
-          message: 'Re-authorize with Canvas to continue.',
-        });
+        appendLtiLog('course-settings', 'Canvas token expired — 401', getOAuth401Body(req));
+        return res.status(401).json(getOAuth401Body(req));
       }
       throw err;
     }

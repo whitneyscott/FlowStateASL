@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
+import { ManualTokenModal } from './ManualTokenModal';
 import './TeacherSettings.css';
 
 const TEACHER_PATTERNS = [
@@ -49,12 +50,15 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
   const [retryCount, setRetryCount] = useState(0);
   const [saving, setSaving] = useState(false);
   const [savedFeedback, setSavedFeedback] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [playlistTotal, setPlaylistTotal] = useState<number | null>(null);
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [announcementMissing, setAnnouncementMissing] = useState(false);
   const [showRecreateAnnouncementModal, setShowRecreateAnnouncementModal] = useState(false);
   const [recreating, setRecreating] = useState(false);
+  const [recreateAnnouncementError, setRecreateAnnouncementError] = useState<string | null>(null);
+  const [showManualTokenModal, setShowManualTokenModal] = useState(false);
 
   const teacher = context && isTeacher(context.roles);
   const hasLti = context && context.courseId && context.userId !== 'standalone';
@@ -141,6 +145,11 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
           window.location.href = `/api/oauth/canvas?returnTo=${returnTo}`;
           return;
         }
+        if (csRes.status === 401 && cs?.needsManualToken) {
+          setShowManualTokenModal(true);
+          if (!cancelled) setLoading(false);
+          return;
+        }
         if (!csRes.ok) {
           let errMsg = String(csRes.status);
           try { const j = JSON.parse(csRaw); errMsg = j?.message ?? errMsg; } catch { errMsg = csRaw?.slice(0, 80) ?? errMsg; }
@@ -213,6 +222,7 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
     if (!teacher || !hasLti) return;
     setSaving(true);
     setSavedFeedback(false);
+    setSaveError(null);
     setShowSaveModal(true);
     setLastFunction('PUT /api/course-settings');
     try {
@@ -230,8 +240,15 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
       setLastApiResult('PUT /api/course-settings', res.status, res.ok);
       if (!res.ok) {
         let errMsg = String(res.status);
-        try { const j = JSON.parse(resBody); errMsg = j?.message ?? errMsg; } catch { errMsg = resBody?.slice(0, 80) ?? errMsg; }
+        try {
+          const j = JSON.parse(resBody) as { message?: string | string[] };
+          errMsg = Array.isArray(j?.message) ? j.message.join(', ') : (j?.message ?? errMsg);
+        } catch {
+          errMsg = resBody?.slice(0, 200) ?? errMsg;
+        }
         setLastApiError('PUT /api/course-settings', res.status, errMsg);
+        setSaveError(errMsg);
+        return;
       }
       onConfigChange?.();
       setSavedFeedback(true);
@@ -239,6 +256,7 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Save failed';
       setLastApiError('PUT /api/course-settings', 0, msg);
+      setSaveError(msg);
     } finally {
       setSaving(false);
       setShowSaveModal(false);
@@ -338,6 +356,11 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
           {saving ? 'Saving...' : 'Save'}
         </button>
         {savedFeedback && <span className="teacher-settings-saved">Saved!</span>}
+        {saveError && (
+          <p className="teacher-settings-error" style={{ marginTop: 8 }}>
+            Save failed: {saveError}
+          </p>
+        )}
       </div>
       {showSaveModal && saving && (
         <div className="teacher-settings-overlay teacher-settings-save-modal">
@@ -355,21 +378,37 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
         <div className="teacher-settings-overlay teacher-settings-save-modal">
           <div className="teacher-settings-save-modal-content">
             <p>The ASL Express Flashcard Settings announcement was deleted or is missing. Would you like to recreate it?</p>
+            {recreateAnnouncementError && (
+              <p className="teacher-settings-error" style={{ marginTop: 12 }}>
+                {recreateAnnouncementError}
+              </p>
+            )}
             <div className="teacher-settings-actions" style={{ marginTop: 16, justifyContent: 'center' }}>
               <button
                 type="button"
                 className="teacher-settings-btn"
                 onClick={async () => {
+                  setRecreateAnnouncementError(null);
                   setRecreating(true);
                   try {
                     const res = await fetch('/api/course-settings/recreate-announcement', {
                       method: 'POST',
                       credentials: 'include',
                     });
+                    const data = await res.json().catch(() => ({}));
                     if (res.ok) {
                       setShowRecreateAnnouncementModal(false);
                       setAnnouncementMissing(false);
+                      setRecreateAnnouncementError(null);
+                    } else {
+                      const msg =
+                        (data as { message?: string; error?: string }).message ??
+                        (data as { error?: string }).error ??
+                        `Could not recreate announcement (HTTP ${res.status}).`;
+                      setRecreateAnnouncementError(msg);
                     }
+                  } catch (e) {
+                    setRecreateAnnouncementError(e instanceof Error ? e.message : 'Request failed');
                   } finally {
                     setRecreating(false);
                   }
@@ -391,6 +430,16 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
             </div>
           </div>
         </div>
+      )}
+      {showManualTokenModal && (
+        <ManualTokenModal
+          message="LTI 1.1 does not support OAuth. Enter your Canvas API token to configure course settings."
+          onSuccess={() => {
+            setShowManualTokenModal(false);
+            setRetryCount((r) => r + 1);
+          }}
+          onDismiss={() => setShowManualTokenModal(false)}
+        />
       )}
     </div>
   );

@@ -29,6 +29,7 @@ export function persistLtiContextAndRedirect(
 
   if (req.session) {
     req.session.ltiContext = ctx;
+    if (!req.session.ltiLaunchType) req.session.ltiLaunchType = '1.3';
     req.session.save((err) => {
       if (err) setLastError('/api/lti/launch', err);
       res.redirect(redirectTo);

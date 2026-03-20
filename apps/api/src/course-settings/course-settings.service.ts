@@ -60,6 +60,20 @@ export class CourseSettingsService {
     private readonly config: ConfigService,
   ) {}
 
+  /** Initial assignment description as JSON so GET parses cleanly before first teacher save. */
+  private emptySettingsDescription(): string {
+    return JSON.stringify({
+      v: 1,
+      selectedCurriculums: [] as string[],
+      selectedUnits: [] as string[],
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  /**
+   * Find or create the "Flashcard Settings" assignment (teacher backup).
+   * Uses an assignment group like other auto-created assignments so Canvas accepts the POST reliably.
+   */
   private async ensureFlashcardSettingsAssignment(
     courseId: string,
     canvasDomain?: string,
@@ -73,6 +87,14 @@ export class CourseSettingsService {
     );
     if (existing) return existing;
 
+    const assignmentGroupId = await this.canvas.ensureAssignmentGroup(
+      courseId,
+      FLASHCARD_SETTINGS_ASSIGNMENT_TITLE,
+      0,
+      canvasDomain,
+      tokenOverride,
+    );
+
     return this.canvas.createAssignment(
       courseId,
       FLASHCARD_SETTINGS_ASSIGNMENT_TITLE,
@@ -80,12 +102,34 @@ export class CourseSettingsService {
         submissionTypes: ['online_text_entry'],
         pointsPossible: 0,
         published: true,
-        description: 'Stores flashcard curriculum and unit settings (auto-created by ASL Express)',
+        description: this.emptySettingsDescription(),
+        assignmentGroupId,
         omitFromFinalGrade: true,
         tokenOverride,
       },
       canvasDomain,
     );
+  }
+
+  /** Ensure announcement exists with the same payload as the assignment (students read announcement only). */
+  private async upsertFlashcardSettingsAnnouncement(
+    courseId: string,
+    payload: { selectedCurriculums: string[]; selectedUnits: string[] },
+    token: string | null,
+    canvasOverride?: string,
+  ): Promise<void> {
+    const existing = await this.canvas.findFlashcardSettingsAnnouncement(courseId, token, canvasOverride);
+    if (existing) {
+      await this.canvas.updateFlashcardSettingsAnnouncement(
+        courseId,
+        existing.id,
+        payload,
+        token,
+        canvasOverride,
+      );
+    } else {
+      await this.canvas.createFlashcardSettingsAnnouncement(courseId, payload, token, canvasOverride);
+    }
   }
 
   async get(
@@ -315,14 +359,14 @@ export class CourseSettingsService {
       effectiveToken,
     );
 
-    const payload: SettingsAssignmentDescriptionData = {
+    const settingsPayload: SettingsAssignmentDescriptionData = {
       v: 1,
       selectedCurriculums: selectedCurriculums ?? [],
       selectedUnits: selectedUnits ?? [],
       updatedAt: new Date().toISOString(),
     };
 
-    const description = JSON.stringify(payload);
+    const description = JSON.stringify(settingsPayload);
     await this.canvas.updateAssignmentDescription(
       courseId,
       settingsAssignmentId,
@@ -339,20 +383,12 @@ export class CourseSettingsService {
       expiresAt: Date.now() + SETTINGS_CACHE_TTL_MS,
     });
 
-    // Dual-write: also update/create Course Announcement (primary for students)
-    try {
-      const payload = { selectedCurriculums: selectedCurriculums ?? [], selectedUnits: selectedUnits ?? [] };
-      const existing = await this.canvas.findFlashcardSettingsAnnouncement(courseId, effectiveToken, canvasOverride);
-      if (existing) {
-        await this.canvas.updateFlashcardSettingsAnnouncement(courseId, existing.id, payload, effectiveToken, canvasOverride);
-      } else {
-        await this.canvas.createFlashcardSettingsAnnouncement(courseId, payload, effectiveToken, canvasOverride);
-      }
-    } catch (annErr) {
-      appendLtiLog('course-settings', 'Announcement write failed (assignment backup OK)', {
-        error: annErr instanceof Error ? annErr.message : String(annErr),
-      });
-    }
+    // Dual-write: announcement is primary for students — must succeed or save fails
+    const announcementPayload = {
+      selectedCurriculums: settingsPayload.selectedCurriculums ?? [],
+      selectedUnits: settingsPayload.selectedUnits ?? [],
+    };
+    await this.upsertFlashcardSettingsAnnouncement(courseId, announcementPayload, effectiveToken, canvasOverride);
 
     // DB usage commented out - data flows from assignments only
     // await this.repo.upsert(
@@ -420,7 +456,10 @@ export class CourseSettingsService {
     }
   }
 
-  /** Recreate announcement from assignment backup (teacher use). */
+  /**
+   * Recreate (or create) the Flashcard Settings announcement from the assignment backup.
+   * If the assignment does not exist yet, creates assignment + announcement with the same settings payload.
+   */
   async recreateAnnouncement(
     courseId: string,
     options: { canvasDomain?: string; canvasBaseUrl?: string; canvasAccessToken?: string | null },
@@ -428,20 +467,32 @@ export class CourseSettingsService {
     const token = options?.canvasAccessToken?.trim() || null;
     const canvasOverride = options?.canvasBaseUrl ?? this.config.get<string>('CANVAS_API_BASE_URL') ?? (options?.canvasDomain ? `https://${options.canvasDomain}` : undefined);
     if (!token) throw new Error('Canvas OAuth token required');
-    const assignment = await this.canvas.findAssignmentByTitle(
+
+    let assignmentId = await this.canvas.findAssignmentByTitle(
       courseId,
       FLASHCARD_SETTINGS_ASSIGNMENT_TITLE,
       canvasOverride,
       token,
     );
-    if (!assignment) throw new Error('Flashcard Settings assignment not found');
-    const desc = await this.canvas.getAssignment(courseId, assignment, canvasOverride, token);
+    if (!assignmentId) {
+      appendLtiLog('course-settings', 'recreateAnnouncement: no assignment — creating Flashcard Settings assignment');
+      assignmentId = await this.ensureFlashcardSettingsAssignment(courseId, canvasOverride, token);
+    }
+
+    const desc = await this.canvas.getAssignment(courseId, assignmentId, canvasOverride, token);
     const parsed = parseAssignmentDescription(desc?.description ?? '');
     const payload = {
       selectedCurriculums: Array.isArray(parsed?.selectedCurriculums) ? parsed.selectedCurriculums : [],
       selectedUnits: Array.isArray(parsed?.selectedUnits) ? parsed.selectedUnits : [],
     };
-    await this.canvas.createFlashcardSettingsAnnouncement(courseId, payload, token, canvasOverride);
+
+    await this.upsertFlashcardSettingsAnnouncement(courseId, payload, token, canvasOverride);
+    appendLtiLog('course-settings', 'recreateAnnouncement: announcement upserted from assignment', {
+      courseId,
+      assignmentId,
+      curriculumCount: payload.selectedCurriculums.length,
+      unitCount: payload.selectedUnits.length,
+    });
   }
 
   async getEffectiveCanvasToken(_courseId: string, tokenOverride?: string | null): Promise<string | null> {

@@ -1,4 +1,4 @@
-import { Controller, Get, Query, Req, Res } from '@nestjs/common';
+import { Controller, Get, Post, Body, Query, Req, Res } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { ConfigService } from '@nestjs/config';
 import { randomBytes } from 'crypto';
@@ -15,8 +15,36 @@ export class CanvasOAuthController {
   constructor(private readonly config: ConfigService) {}
 
   /**
+   * Store manual Canvas API token in session (for LTI 1.1 users who cannot use OAuth2).
+   * Requires session with ltiContext from LTI 1.1 launch.
+   */
+  @Post('token')
+  storeManualToken(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Body() body: { token?: string },
+  ) {
+    const token = (body?.token ?? '').toString().trim();
+    if (!token) {
+      return res.status(400).json({ error: 'Token is required' });
+    }
+    if (!req.session?.ltiContext) {
+      return res.status(403).json({ error: 'LTI context required' });
+    }
+    req.session.canvasAccessToken = token;
+    req.session.save((err) => {
+      if (err) {
+        return res.status(500).json({ error: 'Failed to save token' });
+      }
+      appendLtiLog('oauth', 'Manual token stored in session');
+      return res.json({ success: true });
+    });
+  }
+
+  /**
    * Initiate Canvas OAuth. Redirects user to Canvas authorize URL.
    * Requires session with ltiContext (canvasBaseUrl) from LTI launch.
+   * Short-circuits for LTI 1.1: redirects back to app instead of OAuth2.
    */
   @Get()
   async init(
@@ -25,6 +53,15 @@ export class CanvasOAuthController {
     @Query('returnTo') returnTo?: string,
     @Query('canvasBaseUrl') canvasBaseUrlParam?: string,
   ) {
+    const ltiLaunchType = (req.session as { ltiLaunchType?: '1.1' | '1.3' })?.ltiLaunchType;
+    if (ltiLaunchType === '1.1') {
+      appendLtiLog('oauth', 'LTI 1.1 short-circuit: redirect to app (no OAuth2)');
+      const appUrl = (this.config.get<string>('FRONTEND_URL') ?? 'http://localhost:4200').replace(/\/$/, '');
+      const returnPath = (returnTo ?? '/flashcards').replace(/^https?:\/\/[^/]+/, '') || '/flashcards';
+      const dest = returnPath.startsWith('http') ? returnPath : `${appUrl}${returnPath}`;
+      return res.redirect(dest);
+    }
+
     const ctx = req.session?.ltiContext;
     const canvasBaseUrl =
       (canvasBaseUrlParam ?? ctx?.canvasBaseUrl ?? this.config.get<string>('CANVAS_API_BASE_URL'))?.trim() || undefined;

@@ -7,6 +7,8 @@ declare module 'express-session' {
     ltiContext?: LtiContext;
     /** Canvas OAuth access token — obtained via OAuth flow, used for Canvas API calls */
     canvasAccessToken?: string;
+    /** '1.1' | '1.3' — used to gate OAuth (1.1 uses manual token, 1.3 uses OAuth2) */
+    ltiLaunchType?: '1.1' | '1.3';
   }
 }
 

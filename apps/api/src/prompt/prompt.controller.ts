@@ -22,6 +22,7 @@ import { TeacherRoleGuard } from '../common/guards/teacher-role.guard';
 import { CanvasTokenExpiredError } from '../canvas/canvas.service';
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
 import { sanitizeLtiContext } from '../common/utils/lti-context-value.util';
+import { getOAuth401Body } from '../common/utils/oauth-401.util';
 import { PromptService } from './prompt.service';
 import { PutPromptConfigDto } from './dto/prompt-config.dto';
 import { VerifyAccessDto } from './dto/verify-access.dto';
@@ -70,10 +71,7 @@ export class PromptController {
       return res.json(config);
     } catch (err) {
       if (err instanceof CanvasTokenExpiredError) {
-        return res.status(401).json({
-          error: 'Canvas token expired',
-          redirectToOAuth: true,
-        });
+        return res.status(401).json(getOAuth401Body(req));
       }
       throw err;
     }
@@ -93,10 +91,7 @@ export class PromptController {
       return res.status(204).send();
     } catch (err) {
       if (err instanceof CanvasTokenExpiredError) {
-        return res.status(401).json({
-          error: 'Canvas token expired',
-          redirectToOAuth: true,
-        });
+        return res.status(401).json(getOAuth401Body(req));
       }
       throw err;
     }
@@ -279,10 +274,7 @@ export class PromptController {
       return res.json(result ?? null);
     } catch (err) {
       if (err instanceof CanvasTokenExpiredError) {
-        return res.status(401).json({
-          error: 'Canvas token expired',
-          redirectToOAuth: true,
-        });
+        return res.status(401).json(getOAuth401Body(req));
       }
       throw err;
     }
@@ -296,10 +288,7 @@ export class PromptController {
       return res.json(result ?? { pointsPossible: null, rubric: null });
     } catch (err) {
       if (err instanceof CanvasTokenExpiredError) {
-        return res.status(401).json({
-          error: 'Canvas token expired',
-          redirectToOAuth: true,
-        });
+        return res.status(401).json(getOAuth401Body(req));
       }
       throw err;
     }
@@ -381,10 +370,7 @@ export class PromptController {
       return res.json(list);
     } catch (err) {
       if (err instanceof CanvasTokenExpiredError) {
-        return res.status(401).json({
-          error: 'Canvas token expired',
-          redirectToOAuth: true,
-        });
+        return res.status(401).json(getOAuth401Body(req));
       }
       throw err;
     }
@@ -399,10 +385,7 @@ export class PromptController {
       return res.json(list);
     } catch (err) {
       if (err instanceof CanvasTokenExpiredError) {
-        return res.status(401).json({
-          error: 'Canvas token expired',
-          redirectToOAuth: true,
-        });
+        return res.status(401).json(getOAuth401Body(req));
       }
       throw err;
     }
@@ -417,10 +400,7 @@ export class PromptController {
       return res.json(list);
     } catch (err) {
       if (err instanceof CanvasTokenExpiredError) {
-        return res.status(401).json({
-          error: 'Canvas token expired',
-          redirectToOAuth: true,
-        });
+        return res.status(401).json(getOAuth401Body(req));
       }
       throw err;
     }
@@ -441,10 +421,7 @@ export class PromptController {
       return res.status(HttpStatus.CREATED).json(group);
     } catch (err) {
       if (err instanceof CanvasTokenExpiredError) {
-        return res.status(401).json({
-          error: 'Canvas token expired',
-          redirectToOAuth: true,
-        });
+        return res.status(401).json(getOAuth401Body(req));
       }
       throw err;
     }
@@ -459,10 +436,7 @@ export class PromptController {
       return res.json(list);
     } catch (err) {
       if (err instanceof CanvasTokenExpiredError) {
-        return res.status(401).json({
-          error: 'Canvas token expired',
-          redirectToOAuth: true,
-        });
+        return res.status(401).json(getOAuth401Body(req));
       }
       throw err;
     }
@@ -484,10 +458,7 @@ export class PromptController {
       return res.status(HttpStatus.CREATED).json(module);
     } catch (err) {
       if (err instanceof CanvasTokenExpiredError) {
-        return res.status(401).json({
-          error: 'Canvas token expired',
-          redirectToOAuth: true,
-        });
+        return res.status(401).json(getOAuth401Body(req));
       }
       throw err;
     }
@@ -518,10 +489,7 @@ export class PromptController {
       return res.status(HttpStatus.CREATED).json(result);
     } catch (err) {
       if (err instanceof CanvasTokenExpiredError) {
-        return res.status(401).json({
-          error: 'Canvas token expired',
-          redirectToOAuth: true,
-        });
+        return res.status(401).json(getOAuth401Body(req));
       }
       throw err;
     }

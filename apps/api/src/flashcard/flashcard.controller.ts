@@ -13,6 +13,7 @@ import { Request, Response } from 'express';
 import { FlashcardService } from './flashcard.service';
 import { LtiService } from '../lti/lti.service';
 import { appendLtiLog, setLastError } from '../common/last-error.store';
+import { getOAuth401Body } from '../common/utils/oauth-401.util';
 import { CanvasTokenExpiredError } from '../canvas/canvas.service';
 import { LtiLaunchGuard } from '../lti/guards/lti-launch.guard';
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
@@ -191,12 +192,8 @@ export class FlashcardController {
       return res.json(data);
     } catch (err) {
       if (err instanceof CanvasTokenExpiredError) {
-        appendLtiLog('flashcard', 'student-playlists-batch: Canvas token expired — 401, redirectToOAuth');
-        return res.status(401).json({
-          error: 'Canvas token expired',
-          redirectToOAuth: true,
-          message: 'Re-authorize with Canvas to continue.',
-        });
+        appendLtiLog('flashcard', 'student-playlists-batch: Canvas token expired — 401', getOAuth401Body(req));
+        return res.status(401).json(getOAuth401Body(req));
       }
       throw err;
     }
@@ -231,12 +228,8 @@ export class FlashcardController {
       return res.json(hub);
     } catch (err) {
       if (err instanceof CanvasTokenExpiredError) {
-        appendLtiLog('flashcard', 'student-hub: Canvas token expired — 401, redirectToOAuth');
-        return res.status(401).json({
-          error: 'Canvas token expired',
-          redirectToOAuth: true,
-          message: 'Re-authorize with Canvas to continue.',
-        });
+        appendLtiLog('flashcard', 'student-hub: Canvas token expired — 401', getOAuth401Body(req));
+        return res.status(401).json(getOAuth401Body(req));
       }
       throw err;
     }

@@ -18,15 +18,27 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
+/** Error thrown when LTI 1.1 user needs to enter manual token (no OAuth support). */
+export class NeedsManualTokenError extends Error {
+  constructor(message?: string) {
+    super(message ?? 'Canvas API token required. LTI 1.1 does not support OAuth.');
+    this.name = 'NeedsManualTokenError';
+  }
+}
+
 /** Same as fetchJson but redirects to Canvas OAuth when API returns 401 + redirectToOAuth (token expired). */
 async function fetchJsonWithOAuthRedirect<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, apiInit(init));
   const data = await res.json().catch(() => ({}));
-  if (res.status === 401 && (data as { redirectToOAuth?: boolean }).redirectToOAuth) {
+  const body = data as { redirectToOAuth?: boolean; needsManualToken?: boolean; message?: string };
+  if (res.status === 401 && body.redirectToOAuth) {
     window.location.href = `/api/oauth/canvas?returnTo=${encodeURIComponent(window.location.href)}`;
     throw new Error('Redirecting to Canvas OAuth');
   }
-  if (!res.ok) throw new Error((data as { message?: string }).message ?? `HTTP ${res.status}`);
+  if (res.status === 401 && body.needsManualToken) {
+    throw new NeedsManualTokenError(body.message);
+  }
+  if (!res.ok) throw new Error(body.message ?? `HTTP ${res.status}`);
   return data as T;
 }
 
@@ -89,11 +101,15 @@ export async function putPromptConfig(config: Partial<PromptConfig>, assignmentI
     body: JSON.stringify(config),
   }));
   const data = await res.json().catch(() => ({}));
-  if (res.status === 401 && (data as { redirectToOAuth?: boolean }).redirectToOAuth) {
+  const body = data as { redirectToOAuth?: boolean; needsManualToken?: boolean; message?: string };
+  if (res.status === 401 && body.redirectToOAuth) {
     window.location.href = `/api/oauth/canvas?returnTo=${encodeURIComponent(window.location.href)}`;
     throw new Error('Redirecting to Canvas OAuth');
   }
-  if (!res.ok) throw new Error((data as { message?: string }).message ?? `HTTP ${res.status}`);
+  if (res.status === 401 && body.needsManualToken) {
+    throw new NeedsManualTokenError(body.message);
+  }
+  if (!res.ok) throw new Error(body.message ?? `HTTP ${res.status}`);
 }
 
 export async function verifyAccess(accessCode: string, fingerprint: string): Promise<{

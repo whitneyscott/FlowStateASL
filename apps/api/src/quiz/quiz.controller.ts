@@ -13,6 +13,7 @@ import { LtiLaunchGuard } from '../lti/guards/lti-launch.guard';
 import { TeacherRoleGuard } from '../common/guards/teacher-role.guard';
 import { CanvasTokenExpiredError } from '../canvas/canvas.service';
 import { sanitizeLtiContext } from '../common/utils/lti-context-value.util';
+import { getOAuth401Body } from '../common/utils/oauth-401.util';
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
 import { QuizService } from './quiz.service';
 
@@ -39,7 +40,7 @@ export class QuizController {
       return res.json({ quizId });
     } catch (err) {
       if (err instanceof CanvasTokenExpiredError) {
-        return res.status(401).json({ error: 'Canvas token expired', redirectToOAuth: true });
+        return res.status(401).json(getOAuth401Body(req));
       }
       throw err;
     }
@@ -65,7 +66,7 @@ export class QuizController {
       return res.json({ prompt: prompt ?? null });
     } catch (err) {
       if (err instanceof CanvasTokenExpiredError) {
-        return res.status(401).json({ error: 'Canvas token expired', redirectToOAuth: true });
+        return res.status(401).json(getOAuth401Body(req));
       }
       throw err;
     }

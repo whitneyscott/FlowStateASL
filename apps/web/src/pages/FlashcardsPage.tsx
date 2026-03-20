@@ -3,6 +3,7 @@ import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
 import { resolveLtiContextValue } from '../utils/lti-context';
 import { TeacherSettings } from '../components/TeacherSettings';
+import { ManualTokenModal } from '../components/ManualTokenModal';
 import './FlashcardsPage.css';
 
 type PlaylistItem = { title: string; id?: string };
@@ -94,6 +95,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   const [viewAsStudent, setViewAsStudent] = useState(false);
   const [singleVersionPerAnswer, setSingleVersionPerAnswer] = useState(false);
   const [tutorialAutoAdvance, setTutorialAutoAdvance] = useState(true);
+  const [showManualTokenModal, setShowManualTokenModal] = useState(false);
 
   const loadBatchData = useCallback(async () => {
     if (!context?.courseId) {
@@ -111,6 +113,11 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
       if (res.status === 401 && data?.redirectToOAuth) {
         const returnTo = encodeURIComponent(window.location.href);
         window.location.href = `/api/oauth/canvas?returnTo=${returnTo}`;
+        return;
+      }
+      if (res.status === 401 && data?.needsManualToken) {
+        setShowManualTokenModal(true);
+        setPlaylistsLoading(false);
         return;
       }
       const csState = data?.selectedCurriculums != null
@@ -1415,6 +1422,16 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
           </div>
         )}
       </div>
+      {showManualTokenModal && (
+        <ManualTokenModal
+          message="LTI 1.1 does not support OAuth. Enter your Canvas API token to load course materials."
+          onSuccess={() => {
+            setShowManualTokenModal(false);
+            loadBatchData();
+          }}
+          onDismiss={() => setShowManualTokenModal(false)}
+        />
+      )}
     </div>
   );
 }

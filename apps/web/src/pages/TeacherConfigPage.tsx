@@ -4,6 +4,7 @@ import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
 import { resolveLtiContextValue } from '../utils/lti-context';
 import * as promptApi from '../api/prompt.api';
+import { ManualTokenModal } from '../components/ManualTokenModal';
 import './PrompterPage.css';
 
 const TEACHER_PATTERNS = [
@@ -69,6 +70,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const [allowedAttempts, setAllowedAttempts] = useState(-1);
   const [instructions, setInstructions] = useState('');
   const [showSettings, setShowSettings] = useState(true);
+  const [showManualTokenModal, setShowManualTokenModal] = useState(false);
 
   const teacher = context && isTeacher(context.roles);
   const hasLti = context?.courseId && context.userId !== 'standalone';
@@ -87,7 +89,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       setLastApiResult('GET /api/prompt/configured-assignments', 200, true);
       console.log('[TeacherConfig] getConfiguredAssignments response:', list);
       setConfiguredAssignments(list ?? []);
-    } catch {
+    } catch (e) {
+      if (e instanceof promptApi.NeedsManualTokenError) setShowManualTokenModal(true);
       setConfiguredAssignments([]);
     } finally {
       setLoadingAssignments(false);
@@ -101,7 +104,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       const list = await promptApi.getModules();
       setLastApiResult('GET /api/prompt/modules', 200, true);
       setModules(list ?? []);
-    } catch {
+    } catch (e) {
+      if (e instanceof promptApi.NeedsManualTokenError) setShowManualTokenModal(true);
       setModules([]);
     }
   }, [teacher, hasLti, setLastFunction, setLastApiResult]);
@@ -113,7 +117,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       const list = await promptApi.getAssignmentGroups();
       setLastApiResult('GET /api/prompt/assignment-groups', 200, true);
       setAssignmentGroups(list ?? []);
-    } catch {
+    } catch (e) {
+      if (e instanceof promptApi.NeedsManualTokenError) setShowManualTokenModal(true);
       setAssignmentGroups([]);
     }
   }, [teacher, hasLti, setLastFunction, setLastApiResult]);
@@ -125,7 +130,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       const list = await promptApi.getRubrics();
       setLastApiResult('GET /api/prompt/rubrics', 200, true);
       setRubrics(list ?? []);
-    } catch {
+    } catch (e) {
+      if (e instanceof promptApi.NeedsManualTokenError) setShowManualTokenModal(true);
       setRubrics([]);
     }
   }, [teacher, hasLti, setLastFunction, setLastApiResult]);
@@ -173,9 +179,13 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         setInstructions('');
       }
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setError(msg);
-      setLastApiError('GET /api/prompt/config', 0, msg);
+      if (e instanceof promptApi.NeedsManualTokenError) {
+        setShowManualTokenModal(true);
+      } else {
+        const msg = e instanceof Error ? e.message : String(e);
+        setError(msg);
+        setLastApiError('GET /api/prompt/config', 0, msg);
+      }
     } finally {
       setLoading(false);
     }
@@ -747,6 +757,20 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
             </div>
           </div>
         </div>
+      )}
+      {showManualTokenModal && (
+        <ManualTokenModal
+          message="LTI 1.1 does not support OAuth. Enter your Canvas API token to configure assignments."
+          onSuccess={() => {
+            setShowManualTokenModal(false);
+            loadAssignments();
+            loadModules();
+            loadAssignmentGroups();
+            loadRubrics();
+            if (assignmentId) load(assignmentId);
+          }}
+          onDismiss={() => setShowManualTokenModal(false)}
+        />
       )}
     </div>
   );
