@@ -17,8 +17,9 @@ services:
     # Nx tsc emits under dist/apps/api/src/ (matches apps/api tsconfig rootDir)
     startCommand: node dist/apps/api/src/main.js
 
-    # Run migrations before each deploy
-    preDeployCommand: npx typeorm migration:run -d dist/apps/api/src/data/data-source.js
+    # Migrations: resolves data-source path (Nx emits under dist/apps/api/src/…)
+    # If deploy still fails, set Render Dashboard → Pre-Deploy Command to: npm run db:migrate
+    preDeployCommand: npm run db:migrate
 
     healthCheckPath: /  # SPA root returns 200
 
