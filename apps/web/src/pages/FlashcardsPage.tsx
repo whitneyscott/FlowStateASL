@@ -217,6 +217,12 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     };
   }, [allPlaylistsWithHierarchy, courseSettings?.selectedCurriculums, courseSettings?.selectedUnits, hubSelectedCurricula, hubSelectedUnits, hubSelectedSections, hubFilterMode]);
 
+  /** Decks shown in the menu / used for "Next" — must match selectPlaylist indices (students use hub filters, not `playlists`). */
+  const studyDeckList = useMemo(() => {
+    const useHub = !teacherMode || (teacherMode && viewAsStudent);
+    return useHub ? filteredPlaylists : playlists;
+  }, [teacherMode, viewAsStudent, filteredPlaylists, playlists]);
+
   const toggleHubCurriculum = useCallback((c: string) => {
     setHubSelectedCurricula((prev) =>
       prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]
@@ -264,6 +270,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   }, []);
 
   const selectPlaylist = async (id: string, title: string, idx: number) => {
+    setAllDecksCompleteNotice(null);
     submittedForSessionRef.current = false;
     setSaveError(null);
     setSaveLog([]);
@@ -585,6 +592,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   }, [view, currentPlaylist, silentSubmitProgress]);
 
   const returnToMenu = () => {
+    setAllDecksCompleteNotice(null);
     setView('menu');
     setCurrentPlaylist(null);
     setItems([]);
@@ -645,10 +653,16 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   };
 
   const loadNextUnit = () => {
-    if (playlistIndex >= 0 && playlistIndex < playlists.length - 1) {
-      const next = playlists[playlistIndex + 1];
-      const id = (next as { id?: string }).id ?? String(playlistIndex + 1);
+    const list = studyDeckList;
+    if (playlistIndex < 0 || list.length === 0) return;
+    if (playlistIndex < list.length - 1) {
+      const next = list[playlistIndex + 1];
+      const id = next.id ?? String(playlistIndex + 1);
       selectPlaylist(id, next.title, playlistIndex + 1);
+    } else {
+      setAllDecksCompleteNotice(
+        "You've completed all decks in your current study set. Use Back to Menu to adjust filters or choose another deck.",
+      );
     }
   };
 
@@ -656,6 +670,8 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   const percentage =
     score.total > 0 ? Math.round((score.correct / score.total) * 100) : 0;
   const hasMissed = score.details.some((d) => d.result === 'Incorrect');
+  const isLastDeckInStudySet =
+    playlistIndex >= 0 && studyDeckList.length > 0 && playlistIndex >= studyDeckList.length - 1;
 
   const embedWithAutoplay = (embed: string) => {
     const srcMatch = embed.match(/src=['"]([^'"]+)['"]/);
@@ -985,6 +1001,18 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
 
         {view === 'study' && (
           <div className="flashcards-study">
+            {allDecksCompleteNotice && (
+              <div className="flashcards-decks-complete-notice" role="status">
+                <p>{allDecksCompleteNotice}</p>
+                <button
+                  type="button"
+                  className="flashcards-btn flashcards-btn-secondary flashcards-decks-complete-dismiss"
+                  onClick={() => setAllDecksCompleteNotice(null)}
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
             {currentPlaylist && (
               <h2 className="flashcards-topic-header">{currentPlaylist.title}</h2>
             )}
@@ -1111,16 +1139,23 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                   <div className="flashcards-overlay-controls">
                     {screeningOverlay.type === 'mastery' ? (
                       <>
-                        <button
-                          type="button"
-                          className="flashcards-btn flashcards-btn-correct"
-                          onClick={() => {
-                            setScreeningOverlay(null);
-                            loadNextUnit();
-                          }}
-                        >
-                          Next Deck
-                        </button>
+                        {isLastDeckInStudySet ? (
+                          <p className="flashcards-overlay-msg flashcards-overlay-msg-spaced">
+                            You&apos;ve completed all decks in your current study set. Use{' '}
+                            <strong>Change Deck</strong> for more, or continue this deck below.
+                          </p>
+                        ) : (
+                          <button
+                            type="button"
+                            className="flashcards-btn flashcards-btn-correct"
+                            onClick={() => {
+                              setScreeningOverlay(null);
+                              loadNextUnit();
+                            }}
+                          >
+                            Next Deck
+                          </button>
+                        )}
                         <button
                           type="button"
                           className="flashcards-btn flashcards-btn-secondary"
@@ -1374,6 +1409,17 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
               {score.correct}/{score.total} ({percentage}%)
             </p>
             <p className="flashcards-benchmark-note">Suggested minimum score: 85%</p>
+            {isLastDeckInStudySet && (
+              <p className="flashcards-decks-complete-inline" role="status">
+                You&apos;ve finished the last deck in your current study set. Use Back to Menu to adjust
+                filters or choose other decks.
+              </p>
+            )}
+            {allDecksCompleteNotice && (
+              <p className="flashcards-decks-complete-inline" role="status">
+                {allDecksCompleteNotice}
+              </p>
+            )}
             {saveLog.length > 0 && (
               <div className="flashcards-save-log" role="log" aria-live="polite">
                 <div className="flashcards-save-log-title">Progress save status</div>
@@ -1406,8 +1452,14 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
               )}
               <button
                 type="button"
-                className="flashcards-btn flashcards-btn-utility"
+                className={`flashcards-btn flashcards-btn-utility${isLastDeckInStudySet ? ' flashcards-btn-disabled' : ''}`}
                 onClick={loadNextUnit}
+                disabled={isLastDeckInStudySet}
+                title={
+                  isLastDeckInStudySet
+                    ? 'All decks in your current study set are complete'
+                    : 'Go to the next deck in your list'
+                }
               >
                 Next
               </button>
