@@ -777,6 +777,39 @@
   display: block;
 }
 
+.prompter-viewer-video-wrap .prompter-viewer-dev-badge {
+  margin: 0 0 6px 0;
+  font-size: 0.85rem;
+  color: #666;
+}
+
+.prompter-viewer-video-wrap .prompter-viewer-fallback-iframe {
+  width: 100%;
+  min-height: 400px;
+  min-width: 0;
+  display: block;
+  border: none;
+}
+
+/* SproutVideo embed (same pattern as FlashcardsPage) */
+.prompter-viewer-video-wrap .prompter-viewer-sprout-wrap {
+  width: 100%;
+  min-width: 0;
+}
+
+.prompter-viewer-video-wrap .prompter-viewer-sprout-inner {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  max-height: 500px;
+}
+
+.prompter-viewer-video-wrap .prompter-viewer-sprout-inner iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  display: block;
+}
+
 .prompter-viewer-video-wrap .prompter-viewer-no-video {
   color: #999;
   padding: 40px 20px;

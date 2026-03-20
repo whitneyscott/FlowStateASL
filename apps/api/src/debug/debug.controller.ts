@@ -1,4 +1,4 @@
-import { Controller, Get, Query, Req, UseGuards, ForbiddenException } from '@nestjs/common';
+import { Controller, Get, Post, Query, Body, Req, UseGuards, ForbiddenException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { appendLtiLog } from '../common/last-error.store';
 import { Request } from 'express';
@@ -93,5 +93,13 @@ export class DebugController {
       console.error('[DebugController] getLtiLog failed:', err);
       return { lines: [] };
     }
+  }
+
+  /** Append a line to the LTI log (e.g. from frontend for Bridge Debug Log). Tag defaults to 'viewer'. */
+  @Post('lti-log')
+  appendLtiLogLine(@Body('message') message: string, @Body('tag') tag?: string) {
+    const msg = typeof message === 'string' ? message : '';
+    if (msg) appendLtiLog(tag ?? 'viewer', msg);
+    return { ok: true };
   }
 }

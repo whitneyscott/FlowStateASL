@@ -15,9 +15,11 @@ import { PromptFallbackStore } from './prompt-fallback.store';
 import { PromptVideoTitleStore } from './prompt-video-title.store';
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
 import type { PromptConfigJson, PutPromptConfigDto } from './dto/prompt-config.dto';
+import { randomUUID } from 'crypto';
 
 const PROMPT_MANAGER_SETTINGS_ASSIGNMENT_TITLE = 'Prompt Manager Settings';
 const PROMPT_MANAGER_SETTINGS_ANNOUNCEMENT_TITLE = 'ASL Express Prompt Manager Settings';
+const PROMPT_LEDGER_ASSIGNMENT_TITLE = 'ASL Express Prompt Ledger';
 
 interface PromptManagerSettingsBlob {
   v?: number;
@@ -25,12 +27,46 @@ interface PromptManagerSettingsBlob {
   updatedAt?: string;
   /** SproutVideo folder id for PromptSubmissions (dev fallback). Env SPROUT_PROMPT_SUBMISSIONS_FOLDER_ID checked first. NEVER delete this when writing the blob; always merge with existing blob so it persists. */
   sproutPromptSubmissionsFolderId?: string;
+  /** Canvas assignment id for assignment-based prompt ledger. */
+  promptLedgerAssignmentId?: string;
 }
 
-/** SproutVideo title is stored as the content item title (submission body may contain it). */
-function getSproutVideoTitleFromBody(body: string | undefined): string | null {
-  const trimmed = (body ?? '').trim();
-  return trimmed && /^asl_/.test(trimmed) ? trimmed : null;
+interface PromptLedgerPayload {
+  eventId: string;
+  assignmentId: string;
+  promptHtml: string;
+  studentCanvasUserId: string;
+  submittedAt: string;
+}
+
+interface PromptLedgerRecord extends PromptLedgerPayload {
+  parsedSubmittedAtMs: number;
+}
+
+function parsePromptLedgerPayload(rawBody: string | undefined): PromptLedgerRecord | null {
+  const raw = (rawBody ?? '').trim();
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<PromptLedgerPayload>;
+    const eventId = (parsed.eventId ?? '').toString().trim();
+    const assignmentId = (parsed.assignmentId ?? '').toString().trim();
+    const promptHtml = (parsed.promptHtml ?? '').toString();
+    const studentCanvasUserId = (parsed.studentCanvasUserId ?? '').toString().trim();
+    const submittedAt = (parsed.submittedAt ?? '').toString().trim();
+    if (!eventId || !assignmentId || !promptHtml || !studentCanvasUserId || !submittedAt) return null;
+    const submittedAtMs = Date.parse(submittedAt);
+    if (!Number.isFinite(submittedAtMs)) return null;
+    return {
+      eventId,
+      assignmentId,
+      promptHtml,
+      studentCanvasUserId,
+      submittedAt,
+      parsedSubmittedAtMs: submittedAtMs,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /** Canvas shows "submitted" when workflow_state is submitted or graded. Match that. */
@@ -225,6 +261,66 @@ export class PromptService {
     await this.canvas.updateAssignmentDescription(courseId, settingsAssignmentId, description, domainOverride, token);
     appendLtiLog('prompt-deeplink', 'SproutVideo: persisted folder id to Settings (copy to SPROUT_PROMPT_SUBMISSIONS_FOLDER_ID in .env)', { id: folderId });
     return folderId;
+  }
+
+  private async ensureLedgerAssignment(
+    courseId: string,
+    domainOverride: string | undefined,
+    token: string,
+  ): Promise<string> {
+    const settingsAssignmentId = await this.ensurePromptManagerSettingsAssignment(courseId, domainOverride, token);
+    const blob = await this.readPromptManagerSettingsBlob(courseId, domainOverride, token);
+    const fromBlob = (blob?.promptLedgerAssignmentId ?? '').trim();
+    if (fromBlob) {
+      appendLtiLog('ledger', 'ensureLedgerAssignment: using assignment id from Prompt Manager Settings blob', { assignmentId: fromBlob });
+      return fromBlob;
+    }
+
+    let ledgerAssignmentId = await this.canvas.findAssignmentByTitle(
+      courseId,
+      PROMPT_LEDGER_ASSIGNMENT_TITLE,
+      domainOverride,
+      token,
+    );
+    if (!ledgerAssignmentId) {
+      ledgerAssignmentId = await this.canvas.createAssignment(
+        courseId,
+        PROMPT_LEDGER_ASSIGNMENT_TITLE,
+        {
+          submissionTypes: ['online_text_entry'],
+          pointsPossible: 0,
+          published: true,
+          description: 'ASL Express append-only prompt ledger (auto-created).',
+          omitFromFinalGrade: true,
+          hideInGradebook: true,
+          gradingType: 'not_graded',
+          tokenOverride: token,
+        },
+        domainOverride,
+      );
+      appendLtiLog('ledger', 'ensureLedgerAssignment: created ledger assignment', { assignmentId: ledgerAssignmentId });
+    } else {
+      appendLtiLog('ledger', 'ensureLedgerAssignment: found existing ledger assignment by title', { assignmentId: ledgerAssignmentId });
+    }
+
+    const payload: PromptManagerSettingsBlob = {
+      ...blob,
+      v: blob?.v ?? 1,
+      configs: blob?.configs ?? {},
+      promptLedgerAssignmentId: ledgerAssignmentId,
+      updatedAt: new Date().toISOString(),
+    };
+    await this.canvas.updateAssignmentDescription(
+      courseId,
+      settingsAssignmentId,
+      JSON.stringify(payload),
+      domainOverride,
+      token,
+    );
+    appendLtiLog('ledger', 'ensureLedgerAssignment: persisted assignment id to Prompt Manager Settings blob', {
+      assignmentId: ledgerAssignmentId,
+    });
+    return ledgerAssignmentId;
   }
 
   private async ensurePromptManagerSettingsAssignment(
@@ -573,7 +669,68 @@ export class PromptService {
     const ctxWithToken: LtiContext = { ...ctx, canvasAccessToken: token };
     await this.canvas.writeSubmissionBody(ctxWithToken, assignmentId, bodyString, token);
     const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
-    const userId = ctx.canvasUserId ?? ctx.userId;
+    const userId = (ctx.canvasUserId ?? '').trim() || ctx.userId;
+
+    // Phase 1: Assignment-based prompt ledger write (append-only row per prompt event).
+    // TODO SECURITY PHASE 2: Add signed server token validation before writing ledger row.
+    // Issue HMAC/JWT during assignment load with claims: courseId, assignmentId,
+    // studentCanvasUserId, resourceLinkId, exp, nonce.
+    // Verify signature, TTL, and nonce uniqueness before accepting ledger write.
+    // Reject invalid/expired/replayed tokens. See Assignment-Based Prompt Ledger Plan doc.
+    try {
+      const ledgerAssignmentId = await this.ensureLedgerAssignment(ctx.courseId, domainOverride, token);
+      const payload: PromptLedgerPayload = {
+        eventId: randomUUID(),
+        assignmentId,
+        promptHtml: promptSnapshotHtml,
+        studentCanvasUserId: userId,
+        submittedAt: new Date().toISOString(),
+      };
+      const payloadJson = JSON.stringify(payload);
+      let wroteAsUser = false;
+      try {
+        await this.canvas.createSubmissionWithBody(
+          ctx.courseId,
+          ledgerAssignmentId,
+          userId,
+          payloadJson,
+          domainOverride,
+          token,
+          true,
+        );
+        wroteAsUser = true;
+      } catch (err) {
+        appendLtiLog('ledger', 'submit: ledger write with as_user_id failed; retrying self-submit', {
+          assignmentId,
+          ledgerAssignmentId,
+          userId,
+          error: String(err),
+        });
+        await this.canvas.createSubmissionWithBody(
+          ctx.courseId,
+          ledgerAssignmentId,
+          userId,
+          payloadJson,
+          domainOverride,
+          token,
+          false,
+        );
+      }
+      appendLtiLog('ledger', 'submit: ledger row written', {
+        assignmentId,
+        ledgerAssignmentId,
+        studentCanvasUserId: userId,
+        eventId: payload.eventId,
+        writeMode: wroteAsUser ? 'as_user_id' : 'self-submit',
+      });
+    } catch (ledgerErr) {
+      appendLtiLog('ledger', 'submit: ledger write failed (non-fatal)', {
+        assignmentId,
+        studentCanvasUserId: userId,
+        error: String(ledgerErr),
+      });
+    }
+
     await this.canvas.addSubmissionComment(
       ctx.courseId,
       assignmentId,
@@ -661,25 +818,32 @@ export class PromptService {
       throw new Error('Deep Linking context required (messageType LtiDeepLinkingRequest and deepLinkReturnUrl)');
     }
 
+    // Use Canvas numeric user id when present so teacher viewer (Canvas submissions user_id)
+    // can resolve in-memory mappings reliably.
+    const submitUserId = (ctx.canvasUserId ?? '').trim() || ctx.userId;
+
     // In dev: create SproutVideo title first; use it as content item title so Canvas stores it for lookup. Do not wait for upload.
     const videoTitle =
       process.env.NODE_ENV !== 'production'
-        ? `asl_${ctx.courseId}_${ctx.assignmentId}_${ctx.userId}_${Date.now()}`
+        ? `asl_${ctx.courseId}_${ctx.assignmentId}_${submitUserId}_${Date.now()}`
         : '';
     appendLtiLog('prompt-deeplink', 'video title created (dev only)', {
       hasVideoTitle: !!videoTitle,
       videoTitle: videoTitle || '(none)',
       length: videoTitle?.length ?? 0,
+      submitUserId,
+      ltiUserId: ctx.userId,
+      canvasUserId: ctx.canvasUserId ?? '(none)',
     });
     if (process.env.NODE_ENV !== 'production' && videoTitle) {
-      this.promptVideoTitleStore.set(ctx.courseId, ctx.assignmentId ?? '', ctx.userId, videoTitle);
+      this.promptVideoTitleStore.set(ctx.courseId, ctx.assignmentId ?? '', submitUserId, videoTitle);
       const canvasToken = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
       const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
       const folderId = await this.getPromptSubmissionsFolderId(ctx.courseId, domainOverride, canvasToken);
       if (folderId) {
         const courseId = ctx.courseId;
         const assignmentId = ctx.assignmentId ?? '';
-        const userId = ctx.userId;
+        const userId = submitUserId;
         this.sproutVideo
           .uploadVideo(buffer, filename ?? 'asl_submission.webm', { folderId, title: videoTitle })
           .then(({ embedUrl }) => {
@@ -695,7 +859,7 @@ export class PromptService {
     }
 
     const token = this.deepLinkFileStore.set(buffer, contentType);
-    this.deepLinkFileStore.registerSubmissionToken(ctx.courseId, ctx.assignmentId, ctx.userId, token);
+    this.deepLinkFileStore.registerSubmissionToken(ctx.courseId, ctx.assignmentId, submitUserId, token);
     const contentItemTitle = process.env.NODE_ENV !== 'production' && videoTitle ? videoTitle : 'ASL Express Video Submission';
     appendLtiLog('prompt-deeplink', 'SproutVideo title → content item: ONLY place we set what Canvas shows', {
       contentItemTitle,
@@ -779,8 +943,14 @@ export class PromptService {
         !!this.deepLinkFileStore.getSubmissionToken(ctx.courseId, assignmentId, String(s.user_id ?? '')),
     );
     appendLtiLog('viewer', 'getSubmissions result', { assignmentId, submittedCount: submittedList.length });
+    const videoSubmittedAtByUser = new Map<string, number>();
     const baseRows = submittedList.map((s) => {
       const userId = String(s.user_id);
+      const submittedAtRaw = (s as { submitted_at?: string }).submitted_at;
+      const submittedAtMs = submittedAtRaw ? Date.parse(submittedAtRaw) : NaN;
+      if (Number.isFinite(submittedAtMs)) {
+        videoSubmittedAtByUser.set(userId, submittedAtMs);
+      }
       let videoUrl = getVideoUrlFromCanvasSubmission(s);
       let fallbackVideoUrl: string | undefined;
       if (!videoUrl) {
@@ -828,48 +998,166 @@ export class PromptService {
         fallbackVideoUrl,
       };
     });
+    const ledgerPromptByUser = new Map<string, string>();
+    try {
+      const ledgerAssignmentId = await this.ensureLedgerAssignment(ctx.courseId, domainOverride, token);
+      const ledgerSubmissions = await this.canvas.listSubmissions(
+        ctx.courseId,
+        ledgerAssignmentId,
+        domainOverride,
+        token,
+      );
+      appendLtiLog('ledger', 'getSubmissions: fetched ledger submissions', {
+        ledgerAssignmentId,
+        count: ledgerSubmissions.length,
+      });
+
+      const eventsByUser = new Map<string, PromptLedgerRecord[]>();
+      for (const s of ledgerSubmissions) {
+        const top = parsePromptLedgerPayload(s.body);
+        if (top) {
+          const arr = eventsByUser.get(top.studentCanvasUserId) ?? [];
+          arr.push(top);
+          eventsByUser.set(top.studentCanvasUserId, arr);
+        }
+        const history = Array.isArray((s as { submission_history?: unknown[] }).submission_history)
+          ? ((s as { submission_history?: Array<{ body?: string }> }).submission_history ?? [])
+          : [];
+        for (const h of history) {
+          const fromHistory = parsePromptLedgerPayload((h as { body?: string }).body);
+          if (!fromHistory) continue;
+          const arr = eventsByUser.get(fromHistory.studentCanvasUserId) ?? [];
+          arr.push(fromHistory);
+          eventsByUser.set(fromHistory.studentCanvasUserId, arr);
+        }
+      }
+
+      for (const row of baseRows) {
+        const allForUser = (eventsByUser.get(row.userId) ?? []).filter((ev) => ev.assignmentId === assignmentId);
+        if (allForUser.length === 0) {
+          appendLtiLog('ledger', 'getSubmissions ledger correlation: no-ledger-match', {
+            userId: row.userId,
+            assignmentId,
+          });
+          continue;
+        }
+        allForUser.sort((a, b) => b.parsedSubmittedAtMs - a.parsedSubmittedAtMs);
+        const videoSubmittedAtMs = videoSubmittedAtByUser.get(row.userId);
+        const nearestAtOrBefore =
+          videoSubmittedAtMs == null
+            ? null
+            : allForUser.find((ev) => ev.parsedSubmittedAtMs <= videoSubmittedAtMs) ?? null;
+        const selected = nearestAtOrBefore ?? allForUser[0];
+        const decision = nearestAtOrBefore ? 'matched' : 'fallback-latest';
+        ledgerPromptByUser.set(row.userId, selected.promptHtml);
+        appendLtiLog('ledger', `getSubmissions ledger correlation: ${decision}`, {
+          userId: row.userId,
+          assignmentId,
+          eventId: selected.eventId,
+          ledgerSubmittedAt: selected.submittedAt,
+          candidateCount: allForUser.length,
+        });
+      }
+    } catch (e) {
+      appendLtiLog('ledger', 'getSubmissions: ledger retrieval failed (non-fatal)', {
+        assignmentId,
+        error: String(e),
+      });
+    }
     if (process.env.NODE_ENV !== 'production') {
+      appendLtiLog('viewer', 'getSubmissions: load/resolve video (dev) — entry', { rowCount: baseRows.length });
       appendLtiLog('viewer', 'getSubmissions: submission bodies (for video title debug)', {
         bodies: baseRows.map((r) => ({
           userId: r.userId,
           bodyPreview: r.body == null ? '(null)' : r.body === '' ? '(empty)' : r.body.slice(0, 120) + (r.body.length > 120 ? '...' : ''),
           bodyLength: r.body?.length ?? 0,
-          looksLikeSproutTitle: !!getSproutVideoTitleFromBody(r.body),
+          note: 'Deep Linking title lookup uses promptVideoTitleStore only (body ignored)',
         })),
       });
       const folderId = await this.getPromptSubmissionsFolderId(ctx.courseId, domainOverride, token);
+      appendLtiLog('viewer', 'getSubmissions: SproutVideo folderId from Prompt Manager Settings (or .env)', {
+        folderId: folderId ?? 'none',
+        willLookupByTitle: !!folderId,
+      });
       if (folderId) {
+        let folderVideos: Array<{ id: string; title: string; embedUrl: string }> = [];
+        try {
+          appendLtiLog('viewer', 'getSubmissions: listVideosByFolderId called (fetch folder contents first)', { folderId });
+          folderVideos = await this.sproutVideo.listVideosByFolderId(folderId);
+          appendLtiLog('viewer', 'getSubmissions: listVideosByFolderId result', { folderId, videoCount: folderVideos.length });
+        } catch (e) {
+          appendLtiLog('viewer', 'getSubmissions: listVideosByFolderId failed', {
+            folderId,
+            error: String(e),
+          });
+        }
         for (const row of baseRows) {
-          if (row.fallbackVideoUrl) continue;
-          const titleFromBody = getSproutVideoTitleFromBody(row.body);
+          if (row.fallbackVideoUrl) {
+            appendLtiLog('viewer', 'getSubmissions: skip SproutVideo (already have fallback)', { userId: row.userId });
+            continue;
+          }
           const titleFromStore = this.promptVideoTitleStore.get(ctx.courseId, assignmentId, row.userId);
-          const title = titleFromBody ?? titleFromStore ?? null;
-          if (!title) continue;
-          try {
-            const found = await this.sproutVideo.findVideoByTitleInFolder(folderId, title);
-            if (found) {
-              row.fallbackVideoUrl = found.embedUrl;
-              appendLtiLog('viewer', 'getSubmissions: resolved SproutVideo fallback by title in folder (teacher viewer)', {
-                userId: row.userId,
-                videoTitle: title.slice(0, 50) + (title.length > 50 ? '...' : ''),
-                titleSource: titleFromBody ? 'body' : 'store',
-              });
-            }
-          } catch (e) {
-            appendLtiLog('viewer', 'getSubmissions: findVideoByTitleInFolder failed', {
+          const title = titleFromStore ?? null;
+          if (!title) {
+            appendLtiLog('viewer', 'getSubmissions: skip SproutVideo by-title (no title in promptVideoTitleStore)', { userId: row.userId });
+            continue;
+          }
+          appendLtiLog('viewer', 'getSubmissions: findVideoByTitleInFolder (folder id → list contents → match by title)', {
+            folderId,
+            userId: row.userId,
+            title: title.slice(0, 50) + (title.length > 50 ? '...' : ''),
+            titleSource: 'store',
+          });
+          const targetLower = title.trim().toLowerCase();
+          const found = folderVideos.find((v) => (v.title ?? '').trim().toLowerCase() === targetLower);
+          if (found) {
+            row.fallbackVideoUrl = found.embedUrl;
+            appendLtiLog('viewer', 'getSubmissions: findVideoByTitleInFolder result — found', {
               userId: row.userId,
-              error: String(e),
+              embedUrlPreview: found.embedUrl.slice(0, 60) + (found.embedUrl.length > 60 ? '...' : ''),
+            });
+          } else {
+            appendLtiLog('viewer', 'getSubmissions: findVideoByTitleInFolder result — not found in folder', {
+              userId: row.userId,
+              title: title.slice(0, 40),
+              folderVideoCount: folderVideos.length,
             });
           }
         }
       }
+      appendLtiLog('viewer', 'getSubmissions: final video state per row', {
+        rows: baseRows.map((r) => ({
+          userId: r.userId,
+          hasVideoUrl: !!r.videoUrl,
+          hasFallbackVideoUrl: !!r.fallbackVideoUrl,
+        })),
+      });
     }
     const withQuizPrompts = await Promise.all(
       baseRows.map(async (row) => {
+        const ledgerPrompt = ledgerPromptByUser.get(row.userId);
+        if (ledgerPrompt) {
+          appendLtiLog('viewer', 'getSubmissions: prompt source selected', {
+            userId: row.userId,
+            assignmentId,
+            source: 'ledger',
+          });
+          return { ...row, promptHtml: ledgerPrompt };
+        }
         try {
           const promptHtml = await this.quiz.getPromptForAssignment(ctx, row.userId, assignmentId);
+          appendLtiLog('viewer', 'getSubmissions: prompt source selected', {
+            userId: row.userId,
+            assignmentId,
+            source: promptHtml ? 'quiz-legacy' : 'none',
+          });
           return { ...row, promptHtml: promptHtml ?? undefined };
         } catch {
+          appendLtiLog('viewer', 'getSubmissions: prompt source selected', {
+            userId: row.userId,
+            assignmentId,
+            source: 'none',
+          });
           return row;
         }
       }),

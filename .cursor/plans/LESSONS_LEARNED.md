@@ -254,6 +254,30 @@ docker exec -it canvas-web-1 rails runner 'k.save; puts k.inspect'
 
 ---
 
+## Lesson 13: Use `/api/debug/lti-log` to Prove Viewer/SproutVideo Flow
+
+**Problem:** Browser Console output alone made it unclear whether the backend actually attempted SproutVideo folder lookup/listing when opening Teacher Viewer.
+
+**Root Cause:** SproutVideo calls happen server-side in `getSubmissions`, not in the browser. Client console logs cannot prove backend execution order.
+
+**Fix / Verification trick:**
+- Hit debug ping on the same app origin to confirm log endpoint is live:
+  - `http://localhost:4200/api/debug/ping`
+- Open Teacher Viewer for the target assignment.
+- Fetch raw log lines:
+  - `http://localhost:4200/api/debug/lti-log`
+- Confirm this sequence exists:
+  1. `[viewer] GET submissions`
+  2. `[viewer] getSubmissions`
+  3. `[viewer] getSubmissions: SproutVideo folderId ...`
+  4. `[viewer] getSubmissions: listVideosByFolderId called ...`
+  5. `[viewer] getSubmissions: listVideosByFolderId result ...`
+  6. title match result (`found` or `not found`)
+
+**Rule:** When debugging teacher viewer video loading, treat `/api/debug/lti-log` as the source of truth for backend flow. Do not rely on browser console alone for SproutVideo request proof.
+
+---
+
 ## Timeline of the Day
 
 | Time | Event |

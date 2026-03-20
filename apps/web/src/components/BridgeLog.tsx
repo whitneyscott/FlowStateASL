@@ -94,6 +94,9 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
         line.includes('initiateUserFileUpload') ||
         line.includes('attachFileToSubmission') ||
         line.includes('uploadFileToCanvas') ||
+        line.toLowerCase().includes('sproutvideo') ||
+        line.includes('PromptFallbackStore') ||
+        line.includes('fallback') ||
         (line.includes('prompt') && (line.includes('POST') || line.includes('submit') || line.includes('upload')))
     );
     if (submitLines.length > 0) {
@@ -107,16 +110,18 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
     newLines.push('--- Viewer / Grading (select assignment → submissions) ---');
     const viewerLines = ltiLog.filter(
       (line) =>
-        line.includes('[viewer]') ||
-        line.includes('[canvas]') ||
-        line.toLowerCase().includes('submissions') ||
-        line.toLowerCase().includes('configured-assignments') ||
-        line.includes('submissionHasFile') ||
-        line.includes('getVideoUrlFromCanvasSubmission') ||
-        line.includes('listSubmissions') ||
-        line.includes('ENTRY:') ||
-        line.includes('[debug]') ||
-        line.includes('PING')
+        !line.includes('listSubmissions') &&
+        (line.includes('[viewer]') ||
+          line.includes('[canvas]') ||
+          line.toLowerCase().includes('submissions') ||
+          line.toLowerCase().includes('configured-assignments') ||
+          line.includes('submissionHasFile') ||
+          line.includes('getVideoUrlFromCanvasSubmission') ||
+          line.includes('ENTRY:') ||
+          line.includes('[debug]') ||
+          line.includes('PING') ||
+          line.includes('SproutVideo fallback') ||
+          line.includes('fallback for user'))
     );
     if (viewerLines.length > 0) {
       newLines.push(...viewerLines);

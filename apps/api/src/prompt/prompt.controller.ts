@@ -239,13 +239,16 @@ export class PromptController {
     if (!file?.buffer) {
       throw new BadRequestException('No video file provided');
     }
-    const html = await this.prompt.submitDeepLink(
+    const result = await this.prompt.submitDeepLink(
       ctx,
       Buffer.from(file.buffer),
       file.mimetype || 'video/webm',
       file.originalname,
     );
-    return res.type('html').send(html);
+    if (typeof result === 'object') {
+      return res.json(result);
+    }
+    return res.type('html').send(result);
   }
 
   @Get('submission-count')

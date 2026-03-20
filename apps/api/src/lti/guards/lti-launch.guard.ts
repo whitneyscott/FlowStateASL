@@ -10,6 +10,8 @@ import { Request } from 'express';
 export class LtiLaunchGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
     const req = context.switchToHttp().getRequest<Request>();
+    // Allow GET /api/prompt/submission/:token by token alone (unguessable); video loads even if session expired
+    if (req.method === 'GET' && /^\/api\/prompt\/submission\/[^/]+$/.test(req.path)) return true;
     const hasSession = !!req.session;
     const hasLtiContext = !!req.session?.ltiContext;
     if (hasLtiContext) return true;

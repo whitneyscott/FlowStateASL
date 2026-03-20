@@ -224,4 +224,149 @@ export class SproutVideoService {
     }
     return result;
   }
+
+  /**
+   * Find a folder by name. Lists folders (paginated) and returns the id of the first match, or null.
+   * Uses case-insensitive match. Follows next_page until the folder is found or all pages are exhausted.
+   */
+  async findFolderByName(name: string): Promise<string | null> {
+    const apiKey = this.config.get('SPROUT_KEY');
+    if (!apiKey) return null;
+    const trimmed = (name ?? '').trim();
+    if (!trimmed) return null;
+    const targetLower = trimmed.toLowerCase();
+    let url: string | null = `https://api.sproutvideo.com/v1/folders?per_page=100&page=1`;
+    const headers = { 'SproutVideo-Api-Key': apiKey };
+    while (url) {
+      const res = await fetch(url, { headers });
+      if (!res.ok) return null;
+      const data = (await res.json()) as {
+        folders?: Array<{ id?: string; name?: string }>;
+        next_page?: string | null;
+        total?: number;
+      };
+      const folders = data.folders ?? [];
+      const found = folders.find((f) => (f.name ?? '').trim().toLowerCase() === targetLower);
+      if (found?.id) return String(found.id);
+      url = (data.next_page ?? '').trim() || null;
+    }
+    return null;
+  }
+
+  /**
+   * List videos in a folder (paginated). Returns id, title, embedUrl for each.
+   */
+  async listVideosByFolderId(folderId: string): Promise<Array<{ id: string; title: string; embedUrl: string }>> {
+    const apiKey = this.config.get('SPROUT_KEY');
+    if (!apiKey) return [];
+    const out: Array<{ id: string; title: string; embedUrl: string }> = [];
+    let url: string | null = `https://api.sproutvideo.com/v1/videos?folder_id=${encodeURIComponent(folderId)}&per_page=100&page=1`;
+    const headers = { 'SproutVideo-Api-Key': apiKey };
+    while (url) {
+      const res = await fetch(url, { headers });
+      if (!res.ok) break;
+      const data = (await res.json()) as {
+        videos?: Array<{ id?: string; title?: string; security_token?: string; embed_code?: string }>;
+        next_page?: string | null;
+      };
+      const videos = data.videos ?? [];
+      for (const v of videos) {
+        const id = v.id ?? '';
+        if (!id) continue;
+        const securityToken = v.security_token ?? '';
+        const embedUrl =
+          securityToken
+            ? `https://videos.sproutvideo.com/embed/${id}/${securityToken}`
+            : (v.embed_code?.match(/src='([^']+)'/) ?? [])[1] ?? `https://videos.sproutvideo.com/embed/${id}`;
+        out.push({ id, title: (v.title ?? '').trim(), embedUrl });
+      }
+      url = (data.next_page ?? '').trim() || null;
+    }
+    return out;
+  }
+
+  /**
+   * Find a video by exact title in a folder. Uses folder id to list folder contents (no global
+   * title search); then matches title in that list. Case-insensitive match.
+   */
+  async findVideoByTitleInFolder(
+    folderId: string,
+    title: string,
+  ): Promise<{ id: string; embedUrl: string } | null> {
+    const trimmed = (title ?? '').trim();
+    if (!trimmed) return null;
+    const targetLower = trimmed.toLowerCase();
+    const videos = await this.listVideosByFolderId(folderId);
+    const found = videos.find((v) => (v.title ?? '').trim().toLowerCase() === targetLower);
+    return found ? { id: found.id, embedUrl: found.embedUrl } : null;
+  }
+
+  /**
+   * Create a folder in SproutVideo (e.g. "PromptSubmissions" for dev fallback uploads).
+   * Returns the folder id.
+   */
+  async createFolder(name: string): Promise<string> {
+    const apiKey = this.config.get('SPROUT_KEY');
+    if (!apiKey) throw new Error('SproutVideo not configured');
+    const res = await fetch('https://api.sproutvideo.com/v1/folders', {
+      method: 'POST',
+      headers: {
+        'SproutVideo-Api-Key': apiKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ name }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`SproutVideo createFolder failed: ${res.status} ${text}`);
+    }
+    const data = (await res.json()) as { id?: string };
+    const id = data?.id ?? '';
+    if (!id) throw new Error('SproutVideo createFolder returned no id');
+    return String(id);
+  }
+
+  /**
+   * Upload a video to SproutVideo (multipart/form-data). Optional folder_id for organization.
+   * Returns the video id, security_token, and embed URL for use as fallback link.
+   */
+  async uploadVideo(
+    buffer: Buffer,
+    filename: string,
+    options?: { folderId?: string; title?: string },
+  ): Promise<{ id: string; embedUrl: string }> {
+    const apiKey = this.config.get('SPROUT_KEY');
+    if (!apiKey) throw new Error('SproutVideo not configured');
+    const formData = new FormData();
+    formData.append('source_video', new Blob([buffer]), filename);
+    const title = options?.title ?? filename;
+    formData.append('title', title);
+    if (options?.folderId) {
+      formData.append('folder_id', options.folderId);
+    }
+    const res = await fetch('https://api.sproutvideo.com/v1/videos', {
+      method: 'POST',
+      headers: {
+        'SproutVideo-Api-Key': apiKey,
+      },
+      body: formData,
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`SproutVideo uploadVideo failed: ${res.status} ${text}`);
+    }
+    const data = (await res.json()) as {
+      id?: string;
+      security_token?: string;
+      embed_code?: string;
+    };
+    const id = data?.id ?? '';
+    const securityToken = data?.security_token ?? '';
+    if (!id) throw new Error('SproutVideo uploadVideo returned no id');
+    const embedUrl =
+      securityToken && id
+        ? `https://videos.sproutvideo.com/embed/${id}/${securityToken}`
+        : (data.embed_code?.match(/src='([^']+)'/) ?? [])[1] ?? '';
+    return { id, embedUrl: embedUrl || `https://videos.sproutvideo.com/embed/${id}` };
+  }
 }

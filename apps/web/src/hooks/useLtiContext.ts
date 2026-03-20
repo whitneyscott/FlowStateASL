@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
+import { getStoredLtiToken, setStoredLtiToken } from '../api/lti-token';
 
 export function useLtiContext() {
   const { setLastFunction } = useDebug();
@@ -10,7 +11,9 @@ export function useLtiContext() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const ltiToken = params.get('lti_token');
+    const ltiTokenFromUrl = params.get('lti_token');
+    const ltiToken = ltiTokenFromUrl ?? getStoredLtiToken();
+    if (ltiTokenFromUrl) setStoredLtiToken(ltiTokenFromUrl);
     const url = ltiToken
       ? `/api/lti/context?lti_token=${encodeURIComponent(ltiToken)}`
       : '/api/lti/context';
@@ -35,7 +38,7 @@ export function useLtiContext() {
         });
         setContext(data);
         setError(null);
-        if (ltiToken) {
+        if (ltiTokenFromUrl) {
           const url = new URL(window.location.href);
           url.searchParams.delete('lti_token');
           window.history.replaceState({}, '', url.toString());

@@ -61,6 +61,27 @@ async function bootstrap() {
     }
   }
 
+  // Restore LTI context from token when session is empty (e.g. after refresh)
+  expressApp.use((req, res, next) => {
+    if (!req.path.startsWith('/api')) return next();
+    const hasContext = !!(req.session as { ltiContext?: unknown })?.ltiContext;
+    if (hasContext) return next();
+    const token =
+      (req.query.lti_token as string) ||
+      (req.headers['x-lti-token'] as string) ||
+      '';
+    if (!token.trim()) return next();
+    const { getLtiToken } = require('./lti/lti-token.store');
+    const { sanitizeLtiContext } = require('./common/utils/lti-context-value.util');
+    const ctx = getLtiToken(token.trim());
+    if (!ctx || !req.session) return next();
+    (req.session as { ltiContext?: unknown }).ltiContext = sanitizeLtiContext(ctx);
+    req.session.save((err: Error | null) => {
+      if (err) console.error('[Session] restore from lti_token save failed', err.message);
+      next();
+    });
+  });
+
   if (isProduction) {
     const webRoot = join(__dirname, '..', '..', 'web');
     const indexPath = join(webRoot, 'index.html');

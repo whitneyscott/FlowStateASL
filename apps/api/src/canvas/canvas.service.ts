@@ -412,6 +412,9 @@ export class CanvasService {
       description?: string;
       assignmentGroupId?: number;
       omitFromFinalGrade?: boolean;
+      hideInGradebook?: boolean;
+      gradingType?: string;
+      onlyVisibleToOverrides?: boolean;
       tokenOverride?: string | null;
     } = {},
     domainOverride?: string,
@@ -434,6 +437,15 @@ export class CanvasService {
     }
     if (options.omitFromFinalGrade === true) {
       assignment.omit_from_final_grade = true;
+    }
+    if (options.hideInGradebook === true) {
+      assignment.hide_in_gradebook = true;
+    }
+    if (typeof options.gradingType === 'string' && options.gradingType.trim()) {
+      assignment.grading_type = options.gradingType.trim();
+    }
+    if (options.onlyVisibleToOverrides === true) {
+      assignment.only_visible_to_overrides = true;
     }
     appendLtiLog('canvas', 'createAssignment: POST to Canvas', {
       courseId,
@@ -575,7 +587,10 @@ export class CanvasService {
       : [];
   }
 
-  /** Update assignment (name, description, points, dates, group, etc.). */
+  /** Update assignment (name, description, points, dates, group, etc.).
+   * When description is not in updates, the current assignment description is fetched and
+   * included in the PUT so Canvas does not wipe it (e.g. Prompt Manager config blob).
+   */
   async updateAssignment(
     courseId: string,
     assignmentId: string,
@@ -601,7 +616,13 @@ export class CanvasService {
         : updates.assignmentGroupId;
     }
     if (updates.name !== undefined) body.name = updates.name;
-    if (updates.description !== undefined) body.description = updates.description;
+    if (updates.description !== undefined) {
+      body.description = updates.description;
+    } else {
+      // Preserve existing description so PUT does not wipe it (e.g. config JSON blob)
+      const current = await this.getAssignment(courseId, assignmentId, domainOverride, tokenOverride);
+      if (current?.description !== undefined) body.description = current.description;
+    }
     if (updates.pointsPossible !== undefined) body.points_possible = updates.pointsPossible;
     if (updates.dueAt !== undefined) body.due_at = updates.dueAt || null;
     if (updates.unlockAt !== undefined) body.unlock_at = updates.unlockAt || null;
@@ -612,6 +633,7 @@ export class CanvasService {
       courseId,
       assignmentId,
       assignment_group_id: body.assignment_group_id,
+      preservingDescription: updates.description === undefined && body.description !== undefined,
     });
     const res = await fetch(url, {
       method: 'PUT',
