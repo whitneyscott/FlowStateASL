@@ -14,12 +14,11 @@ services:
 
     # App at repo root - build sequentially to reduce memory on free tier
     buildCommand: npm ci --include=dev && npm run build:api && npm run build:web
-    # Nx tsc emits under dist/apps/api/src/ (matches apps/api tsconfig rootDir)
+    # Nx (@nx/js:tsc) compiles apps/api/src → dist/apps/api/src/ (see apps/api/tsconfig.json)
     startCommand: node dist/apps/api/src/main.js
 
-    # Migrations: resolves data-source path (Nx emits under dist/apps/api/src/…)
-    # If deploy still fails, set Render Dashboard → Pre-Deploy Command to: npm run db:migrate
-    preDeployCommand: npm run db:migrate
+    # Must match compiled output path above — do not use dist/apps/api/data/ (no such file)
+    preDeployCommand: npx typeorm migration:run -d dist/apps/api/src/data/data-source.js
 
     healthCheckPath: /  # SPA root returns 200
 

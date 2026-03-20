@@ -13,7 +13,6 @@
     "serve:api": "nx serve api",
     "serve:web": "nx serve web",
     "lint": "nx run-many -t lint",
-    "db:migrate": "node scripts/run-migrations.cjs",
     "test:regression:flashcard": "tsx --tsconfig apps/api/tsconfig.json apps/api/src/scripts/regression-flashcard-routes.ts",
     "seed:qti": "tsx --tsconfig apps/api/tsconfig.json apps/api/src/scripts/seed-qti.ts",
     "seed:sprout:fresh": "tsx --tsconfig apps/api/tsconfig.json apps/api/src/scripts/seed-sprout-fresh.ts"

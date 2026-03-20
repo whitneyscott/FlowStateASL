@@ -1,27 +1,21 @@
-# Render deploy notes
+# Render deploy — correct paths
 
-## Pre-deploy command (migrations)
+`nx build api` emits compiled JS under **`dist/apps/api/src/`** (same folder layout as `apps/api/src/`).
 
-If pre-deploy fails with **Cannot find module `.../dist/apps/api/data/data-source.js`**, your **Render service** is still using an old **Pre-Deploy Command** from the dashboard. That value **overrides** `render.yaml` for existing services.
+Use **exactly** these commands (also set in `render.yaml`):
 
-**Fix:** In [Render Dashboard](https://dashboard.render.com) → your web service → **Settings** → **Pre-Deploy Command**, set exactly:
+| Step | Command |
+|------|---------|
+| **Start** | `node dist/apps/api/src/main.js` |
+| **Pre-deploy (migrations)** | `npx typeorm migration:run -d dist/apps/api/src/data/data-source.js` |
 
-```bash
-npm run db:migrate
-```
+### Wrong paths (do not use)
 
-(or `node scripts/run-migrations.cjs`)
+- `dist/apps/api/main.js` — file is not there  
+- `dist/apps/api/data/data-source.js` — file is not there (must include **`src`**)
 
-Save and **Clear build cache & deploy** if needed.
+Those wrong paths were introduced by mistake in git history; the build layout did not change.
 
-The `db:migrate` script finds the compiled data source whether Nx outputs to `dist/apps/api/src/data/` or `dist/apps/api/data/`.
+### Dashboard overrides `render.yaml`
 
-## Start command
-
-Should be:
-
-```bash
-node dist/apps/api/src/main.js
-```
-
-If the service was created before the blueprint update, confirm **Start Command** in the dashboard matches the above (or what’s in `render.yaml`).
+If pre-deploy or start still fails with a path **without** `src`, open [Render Dashboard](https://dashboard.render.com) → your service → **Settings** and replace **Pre-Deploy Command** / **Start Command** with the table above. Saved dashboard values can override the blueprint for an existing service.
