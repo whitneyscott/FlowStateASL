@@ -55,7 +55,9 @@ for (const key of unused) {
 
 console.log('\n  Optional but used:');
 console.log(`  LTI_CLIENT_ID       ${process.env.LTI_CLIENT_ID ? 'set' : 'not set (use LTI_PROMPTER_CLIENT_ID for Prompter)'}`);
-console.log(`  CANVAS_API_BASE_URL ${process.env.CANVAS_API_BASE_URL ? 'set' : 'not set (comes from LTI iss when launched)'}`);
+console.log(
+  `  CANVAS_API_BASE_URL ${process.env.CANVAS_API_BASE_URL ? 'set' : 'not set (OK — resolved per launch from LTI iss / consumer URL)'}`,
+);
 
 console.log('\n=== npm run start:dev chain ===');
 console.log('  1. run-s kill-ports start:dev:run');

@@ -16,6 +16,7 @@ import { getRedirectPathForToolType } from './lti-redirect.util';
 import { persistLtiContextAndRedirect } from './lti-launch-finish.util';
 import { sanitizeLtiContext } from '../common/utils/lti-context-value.util';
 import { getPublicOrigin } from '../common/utils/public-origin.util';
+import { canvasApiBaseFromLtiContext } from '../common/utils/canvas-base-url.util';
 
 @Controller('lti')
 export class LtiController {
@@ -361,7 +362,7 @@ export class LtiController {
       !!this.config.get<string>('CANVAS_OAUTH_CLIENT_ID') &&
       !!this.config.get<string>('CANVAS_OAUTH_CLIENT_SECRET') &&
       !!this.config.get<string>('CANVAS_OAUTH_REDIRECT_URI');
-    const canvasBaseUrl = ctx.canvasBaseUrl ?? this.config.get<string>('CANVAS_API_BASE_URL');
+    const canvasBaseUrl = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
 
     appendLtiLog('launch', 'OAuth redirect decision', {
       needsOAuth,

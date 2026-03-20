@@ -8,6 +8,8 @@ import { CanvasService } from '../canvas/canvas.service';
 import { CourseSettingsService } from '../course-settings/course-settings.service';
 import { LtiAgsService } from '../lti/lti-ags.service';
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
+import { canvasApiBaseFromLtiContext } from '../common/utils/canvas-base-url.util';
+import { ConfigService } from '@nestjs/config';
 import type { SubmitFlashcardDto } from './dto/submit-flashcard.dto';
 
 export function calculateRehearsalThreshold(deckSize: number): number {
@@ -87,13 +89,14 @@ export class SubmissionService {
     private readonly canvas: CanvasService,
     private readonly courseSettings: CourseSettingsService,
     private readonly ltiAgs: LtiAgsService,
+    private readonly config: ConfigService,
   ) {}
 
   private async saveProgressToCanvas(
     ctx: LtiContext,
     dto: SubmitFlashcardDto,
   ): Promise<void> {
-    const canvasOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
+    const canvasOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
     const progressAssignmentId =
       await this.courseSettings.getProgressAssignmentId(
@@ -101,6 +104,7 @@ export class SubmissionService {
         ctx.canvasDomain,
         ctx.canvasBaseUrl,
         token,
+        ctx.platformIss,
       );
     const numericUserId = await this.canvas.getCurrentCanvasUserId(canvasOverride, token);
     const apiUserId = numericUserId ?? ctx.canvasUserId ?? ctx.userId;

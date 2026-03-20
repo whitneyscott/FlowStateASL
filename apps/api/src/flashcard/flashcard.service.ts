@@ -7,6 +7,7 @@ import { CourseSettingsService } from '../course-settings/course-settings.servic
 import { SproutVideoService } from '../sproutvideo/sproutvideo.service';
 import { PlaylistCacheService } from '../sproutvideo/playlist-cache.service';
 import { FlashcardConfigEntity } from './entities/flashcard-config.entity';
+import { resolveCanvasApiBaseUrl } from '../common/utils/canvas-base-url.util';
 
 @Injectable()
 export class FlashcardService {
@@ -77,10 +78,12 @@ export class FlashcardService {
     canvasDomain?: string,
     canvasBaseUrl?: string,
     canvasAccessToken?: string | null,
+    platformIss?: string,
   ): Promise<{ selectedCurriculums: string[]; selectedUnits: string[]; error?: string }> {
     const settings = await this.courseSettings.getForStudent(courseId, {
       canvasDomain,
       canvasBaseUrl,
+      platformIss,
       canvasAccessToken,
     });
     return {
@@ -96,10 +99,11 @@ export class FlashcardService {
     showHidden?: boolean,
     canvasBaseUrl?: string,
     canvasAccessToken?: string | null,
+    platformIss?: string,
   ): Promise<string[]> {
     const constraints = showHidden
       ? { selectedCurriculums: [] as string[], selectedUnits: [] as string[] }
-      : await this.getStudentConstraints(courseId, canvasDomain, canvasBaseUrl, canvasAccessToken);
+      : await this.getStudentConstraints(courseId, canvasDomain, canvasBaseUrl, canvasAccessToken, platformIss);
     return this.playlistCache.getDistinctUnitsByConstraints(constraints.selectedCurriculums, constraints.selectedUnits);
   }
 
@@ -110,10 +114,11 @@ export class FlashcardService {
     showHidden?: boolean,
     canvasBaseUrl?: string,
     canvasAccessToken?: string | null,
+    platformIss?: string,
   ): Promise<string[]> {
     const constraints = showHidden
       ? { selectedCurriculums: [] as string[], selectedUnits: [] as string[] }
-      : await this.getStudentConstraints(courseId, canvasDomain, canvasBaseUrl, canvasAccessToken);
+      : await this.getStudentConstraints(courseId, canvasDomain, canvasBaseUrl, canvasAccessToken, platformIss);
     return this.playlistCache.getDistinctSectionsByConstraints(constraints.selectedCurriculums, unit, constraints.selectedUnits);
   }
 
@@ -125,10 +130,11 @@ export class FlashcardService {
     showHidden?: boolean,
     canvasBaseUrl?: string,
     canvasAccessToken?: string | null,
+    platformIss?: string,
   ): Promise<Array<{ id: string; title: string }>> {
     const constraints = showHidden
       ? { selectedCurriculums: [] as string[], selectedUnits: [] as string[] }
-      : await this.getStudentConstraints(courseId, canvasDomain, canvasBaseUrl, canvasAccessToken);
+      : await this.getStudentConstraints(courseId, canvasDomain, canvasBaseUrl, canvasAccessToken, platformIss);
     const rows = await this.playlistCache.getPlaylistsByHierarchy(
       constraints.selectedCurriculums,
       unit,
@@ -145,6 +151,7 @@ export class FlashcardService {
     showHidden?: boolean,
     canvasBaseUrl?: string,
     canvasAccessToken?: string | null,
+    platformIss?: string,
   ): Promise<{
     playlists: Array<{ id: string; title: string; curriculum: string; unit: string; section: string }>;
     selectedCurriculums: string[];
@@ -155,6 +162,7 @@ export class FlashcardService {
     const settings = await this.courseSettings.getForStudent(courseId, {
       canvasDomain,
       canvasBaseUrl,
+      platformIss,
       canvasAccessToken,
     });
     const selectedCurriculums = settings.selectedCurriculums ?? [];
@@ -193,6 +201,7 @@ export class FlashcardService {
     showHidden?: boolean,
     canvasBaseUrl?: string,
     canvasAccessToken?: string | null,
+    platformIss?: string,
   ): Promise<{
     units?: string[];
     sections?: string[];
@@ -205,6 +214,7 @@ export class FlashcardService {
     const settings = await this.courseSettings.getForStudent(courseId, {
       canvasDomain,
       canvasBaseUrl,
+      platformIss,
       canvasAccessToken,
     });
     const selectedCurriculums = settings.selectedCurriculums ?? [];
@@ -232,6 +242,7 @@ export class FlashcardService {
       showHidden,
       canvasBaseUrl,
       canvasAccessToken,
+      platformIss,
     );
 
     if (unit) {
@@ -242,6 +253,7 @@ export class FlashcardService {
         showHidden,
         canvasBaseUrl,
         canvasAccessToken,
+        platformIss,
       );
     }
     if (unit) {
@@ -253,6 +265,7 @@ export class FlashcardService {
         showHidden,
         canvasBaseUrl,
         canvasAccessToken,
+        platformIss,
       );
     }
 
@@ -282,13 +295,25 @@ export class FlashcardService {
     deckIds?: string[],
     canvasBaseUrl?: string,
     canvasAccessToken?: string,
+    platformIss?: string,
   ): Promise<Record<string, { completed: number }>> {
     const result: Record<string, { completed: number }> = {};
     try {
-      const canvasOverride = canvasBaseUrl ?? canvasDomain;
+      const canvasOverride = resolveCanvasApiBaseUrl({
+        canvasBaseUrl,
+        canvasDomain,
+        platformIss,
+        envFallback: this.config.get<string>('CANVAS_API_BASE_URL'),
+      });
       const token = await this.courseSettings.getEffectiveCanvasToken(courseId, canvasAccessToken);
       const progressAssignmentId =
-        await this.courseSettings.getProgressAssignmentId(courseId, canvasDomain, canvasBaseUrl, token);
+        await this.courseSettings.getProgressAssignmentId(
+          courseId,
+          canvasDomain,
+          canvasBaseUrl,
+          token,
+          platformIss,
+        );
       const sub = await this.canvas.getSubmission(
         courseId,
         progressAssignmentId,

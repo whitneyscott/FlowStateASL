@@ -3,6 +3,8 @@ import { Request, Response } from 'express';
 import { ConfigService } from '@nestjs/config';
 import { randomBytes } from 'crypto';
 import { appendLtiLog } from '../common/last-error.store';
+import type { LtiContext } from '../common/interfaces/lti-context.interface';
+import { canvasApiBaseFromLtiContext } from '../common/utils/canvas-base-url.util';
 
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000; // 10 min
 const oauthStateStore = new Map<
@@ -62,9 +64,10 @@ export class CanvasOAuthController {
       return res.redirect(dest);
     }
 
-    const ctx = req.session?.ltiContext;
-    const canvasBaseUrl =
-      (canvasBaseUrlParam ?? ctx?.canvasBaseUrl ?? this.config.get<string>('CANVAS_API_BASE_URL'))?.trim() || undefined;
+    const ctx = req.session?.ltiContext as LtiContext | undefined;
+    const fromParam = (canvasBaseUrlParam ?? '').trim();
+    const fromLaunch = canvasApiBaseFromLtiContext(ctx ?? {}, this.config.get<string>('CANVAS_API_BASE_URL'));
+    const canvasBaseUrl = fromParam || fromLaunch;
     const clientId = (this.config.get<string>('CANVAS_OAUTH_CLIENT_ID') ?? '').trim();
     const clientSecret = (this.config.get<string>('CANVAS_OAUTH_CLIENT_SECRET') ?? '').trim();
     const redirectUri = (this.config.get<string>('CANVAS_OAUTH_REDIRECT_URI') ?? '').trim();
@@ -78,7 +81,7 @@ export class CanvasOAuthController {
 
     if (!canvasBaseUrl || !clientId || !clientSecret || !redirectUri) {
       const msg =
-        'Canvas OAuth not configured: set CANVAS_OAUTH_CLIENT_ID, CANVAS_OAUTH_CLIENT_SECRET, CANVAS_OAUTH_REDIRECT_URI. Canvas base URL comes from LTI launch (canvasBaseUrl) or CANVAS_API_BASE_URL.';
+        'Canvas OAuth not configured: set CANVAS_OAUTH_CLIENT_ID, CANVAS_OAUTH_CLIENT_SECRET, CANVAS_OAUTH_REDIRECT_URI. Canvas base URL must come from the LTI launch (issuer / consumer URL); CANVAS_API_BASE_URL is optional for local non-LTI use.';
       appendLtiLog('oauth', 'OAuth init failed', { msg });
       return res.status(400).send(msg);
     }

@@ -106,6 +106,7 @@ export class FlashcardController {
       deckIds?.length ? deckIds : undefined,
       ctx.canvasBaseUrl,
       canvasAccessToken,
+      ctx.platformIss,
     );
   }
 
@@ -188,6 +189,7 @@ export class FlashcardController {
         showHidden,
         ctx.canvasBaseUrl,
         canvasAccessToken,
+        ctx.platformIss,
       );
       return res.json(data);
     } catch (err) {
@@ -224,6 +226,7 @@ export class FlashcardController {
         showHidden,
         ctx.canvasBaseUrl,
         canvasAccessToken,
+        ctx.platformIss,
       );
       return res.json(hub);
     } catch (err) {
@@ -248,6 +251,7 @@ export class FlashcardController {
       undefined,
       ctx.canvasBaseUrl,
       canvasAccessToken,
+      ctx.platformIss,
     );
   }
 
@@ -270,6 +274,7 @@ export class FlashcardController {
       undefined,
       ctx.canvasBaseUrl,
       canvasAccessToken,
+      ctx.platformIss,
     );
   }
 
@@ -295,6 +300,7 @@ export class FlashcardController {
       undefined,
       ctx.canvasBaseUrl,
       canvasAccessToken,
+      ctx.platformIss,
     );
   }
 

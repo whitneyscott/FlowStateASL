@@ -5,6 +5,7 @@ import { Repository } from 'typeorm';
 import { appendLtiLog, getLastCanvasApiResponse } from '../common/last-error.store';
 import { CanvasService, CanvasTokenExpiredError } from '../canvas/canvas.service';
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
+import { resolveCanvasApiBaseUrl } from '../common/utils/canvas-base-url.util';
 import { CourseSettingsEntity } from './entities/course-settings.entity';
 
 const FLASHCARD_SETTINGS_ASSIGNMENT_TITLE = 'Flashcard Settings';
@@ -59,6 +60,20 @@ export class CourseSettingsService {
     private readonly canvas: CanvasService,
     private readonly config: ConfigService,
   ) {}
+
+  /** Canvas API host from LTI launch (iss / consumer URL / domain); env only as dev fallback. */
+  private canvasOverrideFromLaunchHints(opts: {
+    canvasBaseUrl?: string;
+    canvasDomain?: string;
+    platformIss?: string;
+  }): string | undefined {
+    return resolveCanvasApiBaseUrl({
+      canvasBaseUrl: opts.canvasBaseUrl,
+      canvasDomain: opts.canvasDomain,
+      platformIss: opts.platformIss,
+      envFallback: this.config.get<string>('CANVAS_API_BASE_URL'),
+    });
+  }
 
   /** Initial assignment description as JSON so GET parses cleanly before first teacher save. */
   private emptySettingsDescription(): string {
@@ -134,7 +149,13 @@ export class CourseSettingsService {
 
   async get(
     courseId: string,
-    options?: { isTeacher?: boolean; canvasDomain?: string; canvasBaseUrl?: string; canvasAccessToken?: string },
+    options?: {
+      isTeacher?: boolean;
+      canvasDomain?: string;
+      canvasBaseUrl?: string;
+      platformIss?: string;
+      canvasAccessToken?: string;
+    },
   ): Promise<{
     selectedCurriculums: string[];
     selectedUnits: string[];
@@ -180,10 +201,12 @@ export class CourseSettingsService {
         : typeof tokenOverride === 'string'
           ? `present, length=${tokenOverride.length}, masked=${tokenOverride.slice(0, 4)}...${tokenOverride.slice(-4)}`
           : String(tokenOverride);
-    // Domain/base URL from LTI iss (ctx.canvasBaseUrl / ctx.canvasDomain) — no hardcoded CANVAS_DOMAIN
-    const baseUrlOverride = options?.canvasBaseUrl ?? this.config.get<string>('CANVAS_API_BASE_URL');
     const domainOverride = options?.canvasDomain;
-    const canvasOverride = baseUrlOverride ?? (domainOverride ? `https://${domainOverride}` : undefined);
+    const canvasOverride = this.canvasOverrideFromLaunchHints({
+      canvasBaseUrl: options?.canvasBaseUrl,
+      canvasDomain: options?.canvasDomain,
+      platformIss: options?.platformIss,
+    });
     const domainForUrl = (val: string | undefined) => {
       if (!val) return '[not-set]';
       const m = val.match(/^https?:\/\/([^/]+)/);
@@ -211,7 +234,7 @@ export class CourseSettingsService {
       settingsAssignmentId = await this.canvas.findAssignmentByTitle(
         courseId,
         FLASHCARD_SETTINGS_ASSIGNMENT_TITLE,
-        canvasOverride ?? domainOverride,
+        canvasOverride,
         tokenOverride,
       );
       appendLtiLog('course-settings', 'findAssignmentByTitle result', {
@@ -273,7 +296,7 @@ export class CourseSettingsService {
       const assignment = await this.canvas.getAssignment(
         courseId,
         settingsAssignmentId,
-        canvasOverride ?? domainOverride,
+        canvasOverride,
         tokenOverride,
       );
       const rawDesc = assignment?.description?.trim() ?? '';
@@ -344,6 +367,7 @@ export class CourseSettingsService {
     canvasDomain?: string,
     canvasApiToken?: string,
     canvasBaseUrl?: string,
+    platformIss?: string,
   ): Promise<void> {
     // OAuth access token from session only (no env fallback)
     const effectiveToken = (canvasApiToken ?? '').trim() || null;
@@ -352,7 +376,11 @@ export class CourseSettingsService {
         'Canvas API token is required. Complete the Canvas OAuth flow (launch via LTI as teacher, or use Connect Canvas in Teacher Settings).',
       );
     }
-    const canvasOverride = canvasBaseUrl ?? this.config.get<string>('CANVAS_API_BASE_URL') ?? (canvasDomain ? `https://${canvasDomain}` : undefined);
+    const canvasOverride = this.canvasOverrideFromLaunchHints({
+      canvasBaseUrl,
+      canvasDomain,
+      platformIss,
+    });
     const settingsAssignmentId = await this.ensureFlashcardSettingsAssignment(
       courseId,
       canvasOverride,
@@ -403,13 +431,22 @@ export class CourseSettingsService {
    */
   async getForStudent(
     courseId: string,
-    options: { canvasDomain?: string; canvasBaseUrl?: string; canvasAccessToken?: string | null },
+    options: {
+      canvasDomain?: string;
+      canvasBaseUrl?: string;
+      platformIss?: string;
+      canvasAccessToken?: string | null;
+    },
   ): Promise<
     | { selectedCurriculums: string[]; selectedUnits: string[] }
     | { selectedCurriculums: []; selectedUnits: []; error: 'announcement_missing' }
   > {
     const token = options?.canvasAccessToken?.trim() || null;
-    const canvasOverride = options?.canvasBaseUrl ?? this.config.get<string>('CANVAS_API_BASE_URL') ?? (options?.canvasDomain ? `https://${options.canvasDomain}` : undefined);
+    const canvasOverride = this.canvasOverrideFromLaunchHints({
+      canvasBaseUrl: options?.canvasBaseUrl,
+      canvasDomain: options?.canvasDomain,
+      platformIss: options?.platformIss,
+    });
     if (!token) {
       appendLtiLog('course-settings', 'getForStudent: no token', { courseId });
       return { selectedCurriculums: [], selectedUnits: [], error: 'announcement_missing' };
@@ -443,10 +480,19 @@ export class CourseSettingsService {
   /** Check if Flashcard Settings announcement exists (teacher use). */
   async announcementExists(
     courseId: string,
-    options: { canvasDomain?: string; canvasBaseUrl?: string; canvasAccessToken?: string | null },
+    options: {
+      canvasDomain?: string;
+      canvasBaseUrl?: string;
+      platformIss?: string;
+      canvasAccessToken?: string | null;
+    },
   ): Promise<boolean> {
     const token = options?.canvasAccessToken?.trim() || null;
-    const canvasOverride = options?.canvasBaseUrl ?? this.config.get<string>('CANVAS_API_BASE_URL') ?? (options?.canvasDomain ? `https://${options.canvasDomain}` : undefined);
+    const canvasOverride = this.canvasOverrideFromLaunchHints({
+      canvasBaseUrl: options?.canvasBaseUrl,
+      canvasDomain: options?.canvasDomain,
+      platformIss: options?.platformIss,
+    });
     if (!token) return false;
     try {
       const ann = await this.canvas.findFlashcardSettingsAnnouncement(courseId, token, canvasOverride);
@@ -462,10 +508,19 @@ export class CourseSettingsService {
    */
   async recreateAnnouncement(
     courseId: string,
-    options: { canvasDomain?: string; canvasBaseUrl?: string; canvasAccessToken?: string | null },
+    options: {
+      canvasDomain?: string;
+      canvasBaseUrl?: string;
+      platformIss?: string;
+      canvasAccessToken?: string | null;
+    },
   ): Promise<void> {
     const token = options?.canvasAccessToken?.trim() || null;
-    const canvasOverride = options?.canvasBaseUrl ?? this.config.get<string>('CANVAS_API_BASE_URL') ?? (options?.canvasDomain ? `https://${options.canvasDomain}` : undefined);
+    const canvasOverride = this.canvasOverrideFromLaunchHints({
+      canvasBaseUrl: options?.canvasBaseUrl,
+      canvasDomain: options?.canvasDomain,
+      platformIss: options?.platformIss,
+    });
     if (!token) throw new Error('Canvas OAuth token required');
 
     let assignmentId = await this.canvas.findAssignmentByTitle(
@@ -515,9 +570,9 @@ export class CourseSettingsService {
     canvasDomain?: string,
     canvasBaseUrl?: string,
     tokenOverride?: string | null,
+    platformIss?: string,
   ): Promise<string> {
     const token = (tokenOverride ?? '').trim() || null;
-    const baseUrl = canvasBaseUrl ?? this.config.get<string>('CANVAS_API_BASE_URL') ?? (canvasDomain ? `https://${canvasDomain}` : undefined);
     const ctx: LtiContext = {
       courseId,
       assignmentId: '',
@@ -527,7 +582,8 @@ export class CourseSettingsService {
       toolType: 'flashcards',
       roles: '',
       canvasDomain,
-      canvasBaseUrl: baseUrl,
+      canvasBaseUrl,
+      platformIss,
     };
     return this.canvas.ensureAssignmentForCourse(ctx, {
       title: FLASHCARD_PROGRESS_TITLE,

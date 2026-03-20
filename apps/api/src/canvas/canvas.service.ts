@@ -2,6 +2,10 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { appendLtiLog, setLastCanvasApiResponse } from '../common/last-error.store';
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
+import {
+  canvasApiBaseFromLtiContext,
+  resolveCanvasApiBaseUrl,
+} from '../common/utils/canvas-base-url.util';
 
 export class CanvasUploadChunkError extends Error {
   constructor(
@@ -38,12 +42,16 @@ export class CanvasService {
   }
 
   private getBaseUrl(override?: string): string {
-    const val = (override?.trim() || this.config.get('CANVAS_API_BASE_URL')) as string | undefined;
-    if (!val) throw new Error('Canvas base URL required (from LTI iss or CANVAS_API_BASE_URL)');
-    if (val.startsWith('http://') || val.startsWith('https://')) {
-      return val.replace(/\/$/, '');
+    const resolved = resolveCanvasApiBaseUrl({
+      canvasBaseUrl: override,
+      envFallback: this.config.get<string>('CANVAS_API_BASE_URL'),
+    });
+    if (!resolved) {
+      throw new Error(
+        'Canvas base URL required from the LTI launch (issuer / tool consumer URL). Relaunch from Canvas, or set CANVAS_API_BASE_URL only for local non-LTI use.',
+      );
     }
-    return `https://${val}`;
+    return resolved;
   }
 
   async submitGrade(
@@ -796,10 +804,7 @@ export class CanvasService {
     },
     tokenOverride?: string | null,
   ): Promise<string> {
-    const baseUrl =
-      ctx.canvasBaseUrl ??
-      (ctx.canvasDomain ? `https://${ctx.canvasDomain}` : this.config.get<string>('CANVAS_API_BASE_URL'));
-    const domainOverride = baseUrl ?? undefined;
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
 
     const existing = await this.findAssignmentByTitle(ctx.courseId, config.title, domainOverride, tokenOverride);
     if (existing) {
@@ -840,7 +845,7 @@ export class CanvasService {
     tokenOverride?: string | null,
   ): Promise<string> {
     const title = 'Prompt Manager – Grades';
-    const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
     const existing = await this.findAssignmentByTitle(ctx.courseId, title, domainOverride, tokenOverride);
     if (existing) return existing;
     const assignmentGroupId = await this.ensureAssignmentGroup(
@@ -1051,7 +1056,7 @@ export class CanvasService {
       userId: ctx.userId,
       tokenPreview: token ? `${token.slice(0, 4)}...${token.slice(-4)}` : 'MISSING',
     });
-    const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
     await this.createSubmissionWithBody(
       ctx.courseId,
       assignmentId,

@@ -4,6 +4,7 @@ import { CanvasService } from '../canvas/canvas.service';
 import { CourseSettingsService } from '../course-settings/course-settings.service';
 import { appendLtiLog } from '../common/last-error.store';
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
+import { canvasApiBaseFromLtiContext } from '../common/utils/canvas-base-url.util';
 
 const PROMPT_STORAGE_QUIZ_DESCRIPTION = `DO NOT DELETE - ASL Express Prompt Storage
 
@@ -36,7 +37,7 @@ export class QuizService {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
     if (!token) throw new Error('Canvas OAuth token required');
     const effectiveToken = this.getTokenForQuizOps(token) ?? token;
-    const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
 
     const existing = await this.canvas.findQuizByTitle(
       ctx.courseId,
@@ -77,7 +78,7 @@ export class QuizService {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
     if (!token) throw new Error('Canvas OAuth token required');
     const effectiveToken = this.getTokenForQuizOps(token) ?? token;
-    const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
 
     const quizId = await this.ensurePromptStorageQuiz(ctx);
     const questionName = `assignment:${assignmentId}`;
@@ -114,7 +115,7 @@ export class QuizService {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
     if (!token) throw new Error('Canvas OAuth token required');
     const effectiveToken = this.getTokenForQuizOps(token) ?? token;
-    const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
 
     const { quizId, questionId } = await this.ensureQuestionForAssignment(ctx, assignmentId, assignmentTitle);
 
@@ -155,7 +156,7 @@ export class QuizService {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
     if (!token) return null;
     const effectiveToken = this.getTokenForQuizOps(token) ?? token;
-    const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
 
     const existing = await this.canvas.findQuizByTitle(
       ctx.courseId,

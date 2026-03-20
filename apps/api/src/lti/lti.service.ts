@@ -13,12 +13,20 @@ declare module 'express-session' {
 }
 
 function extractCanvasDomain(body: Record<string, string>): string | undefined {
+  const fromBase = extractCanvasBaseUrl(body);
+  if (fromBase) {
+    try {
+      return new URL(fromBase).hostname || undefined;
+    } catch {
+      /* fall through */
+    }
+  }
   const url =
     (body.tool_consumer_instance_url ?? '').trim() ||
     (body.lis_outcome_service_url ?? '').trim();
   if (!url) return undefined;
   try {
-    const parsed = new URL(url);
+    const parsed = new URL(url.startsWith('http') ? url : `https://${url}`);
     return parsed.hostname || undefined;
   } catch {
     return undefined;
@@ -26,12 +34,15 @@ function extractCanvasDomain(body: Record<string, string>): string | undefined {
 }
 
 function extractCanvasBaseUrl(body: Record<string, string>): string | undefined {
-  const url =
+  const raw =
+    (body.custom_canvas_api_base_url ?? '').trim() ||
     (body.tool_consumer_instance_url ?? '').trim() ||
     (body.lis_outcome_service_url ?? '').trim();
+  const domainOnly = (body.custom_canvas_domain ?? '').trim();
+  const url = raw || (domainOnly ? `https://${domainOnly}` : '');
   if (!url) return undefined;
   try {
-    const parsed = new URL(url);
+    const parsed = new URL(url.startsWith('http') ? url : `https://${url}`);
     return `${parsed.protocol}//${parsed.host}`;
   } catch {
     return undefined;

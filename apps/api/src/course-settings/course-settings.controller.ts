@@ -56,6 +56,7 @@ export class CourseSettingsController {
         isTeacher,
         canvasDomain: ctx.canvasDomain,
         canvasBaseUrl: ctx.canvasBaseUrl,
+        platformIss: ctx.platformIss,
         canvasAccessToken: canvasAccessToken ?? undefined,
       });
       appendLtiLog('course-settings', 'GET result from service', {
@@ -101,6 +102,7 @@ export class CourseSettingsController {
       ctx.canvasDomain,
       canvasAccessToken ?? undefined,
       ctx.canvasBaseUrl,
+      ctx.platformIss,
     );
   }
 
@@ -120,6 +122,7 @@ export class CourseSettingsController {
     const exists = await this.courseSettings.announcementExists(ctx.courseId, {
       canvasDomain: ctx.canvasDomain,
       canvasBaseUrl: ctx.canvasBaseUrl,
+      platformIss: ctx.platformIss,
       canvasAccessToken: canvasAccessToken ?? undefined,
     });
     return { exists };
@@ -141,6 +144,7 @@ export class CourseSettingsController {
     await this.courseSettings.recreateAnnouncement(ctx.courseId, {
       canvasDomain: ctx.canvasDomain,
       canvasBaseUrl: ctx.canvasBaseUrl,
+      platformIss: ctx.platformIss,
       canvasAccessToken: canvasAccessToken ?? undefined,
     });
     return { success: true };

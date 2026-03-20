@@ -14,6 +14,7 @@ import { SproutVideoService } from '../sproutvideo/sproutvideo.service';
 import { PromptFallbackStore } from './prompt-fallback.store';
 import { PromptVideoTitleStore } from './prompt-video-title.store';
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
+import { canvasApiBaseFromLtiContext } from '../common/utils/canvas-base-url.util';
 import type { PromptConfigJson, PutPromptConfigDto } from './dto/prompt-config.dto';
 import { randomUUID } from 'crypto';
 
@@ -388,7 +389,7 @@ export class PromptService {
     if (!token) {
       return null;
     }
-    const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
     const blob = await this.readPromptManagerSettingsBlob(ctx.courseId, domainOverride, token);
     const config = blob?.configs?.[assignmentId] ?? null;
     return config ?? null;
@@ -403,7 +404,7 @@ export class PromptService {
     if (!token) {
       throw new Error('Canvas OAuth token required. Complete the Canvas OAuth flow (launch via LTI as teacher).');
     }
-    const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
 
     try {
       await this.quiz.ensurePromptStorageQuiz(ctx);
@@ -668,7 +669,7 @@ export class PromptService {
     });
     const ctxWithToken: LtiContext = { ...ctx, canvasAccessToken: token };
     await this.canvas.writeSubmissionBody(ctxWithToken, assignmentId, bodyString, token);
-    const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
     const userId = (ctx.canvasUserId ?? '').trim() || ctx.userId;
 
     // Phase 1: Assignment-based prompt ledger write (append-only row per prompt event).
@@ -763,7 +764,7 @@ export class PromptService {
       appendLtiLog('prompt-upload', 'uploadVideo FAIL: no token');
       throw new Error('Canvas OAuth token required for video upload');
     }
-    const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
     const numericUserId = await this.canvas.getCurrentCanvasUserId(domainOverride, token);
     const apiUserId = numericUserId ?? ctx.canvasUserId ?? ctx.userId;
     const assignmentId = await this.getPrompterAssignmentId(ctx);
@@ -838,7 +839,7 @@ export class PromptService {
     if (process.env.NODE_ENV !== 'production' && videoTitle) {
       this.promptVideoTitleStore.set(ctx.courseId, ctx.assignmentId ?? '', submitUserId, videoTitle);
       const canvasToken = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
-      const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
+      const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
       const folderId = await this.getPromptSubmissionsFolderId(ctx.courseId, domainOverride, canvasToken);
       if (folderId) {
         const courseId = ctx.courseId;
@@ -896,7 +897,7 @@ export class PromptService {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
     if (!token) return 0;
     const assignmentId = ctx.assignmentId?.trim() || (await this.getPrompterAssignmentId(ctx));
-    const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
     const list = await this.canvas.listSubmissions(
       ctx.courseId,
       assignmentId,
@@ -928,7 +929,7 @@ export class PromptService {
       throw new Error('Canvas OAuth token required');
     }
     const assignmentId = await this.getPrompterAssignmentId(ctx);
-    const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
     const list = await this.canvas.listSubmissions(
       ctx.courseId,
       assignmentId,
@@ -1174,10 +1175,11 @@ export class PromptService {
     if (!videoUrl) return undefined;
     if (videoUrl.startsWith('/api/prompt/')) return videoUrl; // our own endpoints
     if (videoUrl.startsWith('/')) {
-      const base = ctx?.canvasBaseUrl ?? ctx?.canvasDomain;
+      const base = ctx
+        ? canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'))
+        : undefined;
       if (base) {
-        const baseUrl = base.startsWith('http') ? base : `https://${base}`;
-        videoUrl = new URL(videoUrl, baseUrl).href;
+        videoUrl = new URL(videoUrl, base).href;
       } else {
         return videoUrl; // can't resolve, return as-is (may 404)
       }
@@ -1195,8 +1197,8 @@ export class PromptService {
     targetUrl: string,
   ): Promise<{ buffer: Buffer; contentType: string } | null> {
     const parsed = new URL(targetUrl);
-    const canvasBase = ctx.canvasBaseUrl ?? ctx.canvasDomain;
-    const canvasHost = canvasBase ? new URL(canvasBase.startsWith('http') ? canvasBase : `https://${canvasBase}`).hostname : '';
+    const canvasBase = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
+    const canvasHost = canvasBase ? new URL(canvasBase).hostname : '';
     const isSameCanvas = canvasHost && parsed.hostname === canvasHost;
     const isInstructure =
       parsed.hostname === 'instructure.com' ||
@@ -1232,7 +1234,7 @@ export class PromptService {
     if (!token) {
       throw new Error('Canvas OAuth token required');
     }
-    const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
     const assignmentId = await this.getPrompterAssignmentId(ctx);
 
     if (rubricAssessment && Object.keys(rubricAssessment).length > 0) {
@@ -1269,7 +1271,7 @@ export class PromptService {
     const m = Math.floor(time / 60);
     const s = time % 60;
     const commentLine = `[${m}:${s < 10 ? '0' : ''}${s}] ${text}`;
-    const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
     return this.canvas.addSubmissionComment(
       ctx.courseId,
       assignmentId,
@@ -1294,7 +1296,7 @@ export class PromptService {
     const m = Math.floor(time / 60);
     const s = time % 60;
     const commentLine = `[${m}:${s < 10 ? '0' : ''}${s}] ${text}`;
-    const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
     await this.canvas.editSubmissionComment(
       ctx.courseId,
       assignmentId,
@@ -1311,7 +1313,7 @@ export class PromptService {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
     if (!token) throw new Error('Canvas OAuth token required');
     const assignmentId = await this.getPrompterAssignmentId(ctx);
-    const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
     await this.canvas.deleteSubmissionComment(
       ctx.courseId,
       assignmentId,
@@ -1346,7 +1348,7 @@ export class PromptService {
     if (!assignmentId) return null;
     const userId = ctx.canvasUserId ?? ctx.userId;
     if (!userId) return null;
-    const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
     const sub = await this.canvas.getSubmissionFull(
       ctx.courseId,
       assignmentId,
@@ -1388,7 +1390,7 @@ export class PromptService {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
     if (!token) return null;
     const assignmentId = await this.getPrompterAssignmentId(ctx);
-    const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
     const raw = await this.canvas.getAssignment(ctx.courseId, assignmentId, domainOverride, token);
     if (!raw) return null;
     let rubric = Array.isArray(raw.rubric) && raw.rubric.length > 0 ? raw.rubric : null;
@@ -1412,7 +1414,7 @@ export class PromptService {
     if (!token) {
       return [];
     }
-    const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
     const blob = await this.readPromptManagerSettingsBlob(ctx.courseId, domainOverride, token);
     const configs = blob?.configs ?? {};
     const assignmentIds = Object.keys(configs).filter(Boolean);
@@ -1497,7 +1499,7 @@ export class PromptService {
   async getAssignmentGroups(ctx: LtiContext): Promise<Array<{ id: number; name: string }>> {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
     if (!token) return [];
-    const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
     return this.canvas.listAssignmentGroups(ctx.courseId, domainOverride, token);
   }
 
@@ -1505,7 +1507,7 @@ export class PromptService {
   async getRubrics(ctx: LtiContext): Promise<Array<{ id: number; title: string; pointsPossible: number }>> {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
     if (!token) return [];
-    const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
     return this.canvas.listRubrics(ctx.courseId, domainOverride, token);
   }
 
@@ -1518,7 +1520,7 @@ export class PromptService {
     if (!token) {
       throw new Error('Canvas OAuth token required. Complete the Canvas OAuth flow (launch via LTI as teacher).');
     }
-    const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
     return this.canvas.createAssignmentGroup(ctx.courseId, name.trim() || 'New Group', domainOverride, token);
   }
 
@@ -1526,7 +1528,7 @@ export class PromptService {
   async getModules(ctx: LtiContext): Promise<Array<{ id: number; name: string; position: number }>> {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
     if (!token) return [];
-    const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
     return this.canvas.listModules(ctx.courseId, domainOverride, token);
   }
 
@@ -1540,7 +1542,7 @@ export class PromptService {
     if (!token) {
       throw new Error('Canvas OAuth token required. Complete the Canvas OAuth flow (launch via LTI as teacher).');
     }
-    const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
     return this.canvas.createModule(
       ctx.courseId,
       name.trim() || 'New Module',
@@ -1566,7 +1568,7 @@ export class PromptService {
     if (!token) {
       throw new Error('Canvas OAuth token required. Complete the Canvas OAuth flow (launch via LTI as teacher).');
     }
-    const domainOverride = ctx.canvasBaseUrl ?? ctx.canvasDomain;
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
 
     let assignmentGroupId: number | undefined;
     if (options?.assignmentGroupId === '__new__' && options?.newGroupName?.trim()) {

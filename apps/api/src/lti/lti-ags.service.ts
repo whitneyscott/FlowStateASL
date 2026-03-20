@@ -4,6 +4,7 @@ import * as crypto from 'crypto';
 import * as jwt from 'jsonwebtoken';
 import { appendLtiLog } from '../common/last-error.store';
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
+import { canvasApiBaseFromLtiContext } from '../common/utils/canvas-base-url.util';
 import { getLtiPrivateKeyPem } from './lti-key.util';
 
 const AGS_SCOPE_SCORE = 'https://purl.imsglobal.org/spec/lti-ags/scope/score';
@@ -29,9 +30,11 @@ export class LtiAgsService {
    * Uses LTI_PRIVATE_KEY and LTI_CLIENT_ID. Token is for AGS only (scores, lineitems).
    */
   async getAgsAccessToken(ctx: LtiContext): Promise<string> {
-    const baseUrl = (ctx.canvasBaseUrl ?? '').toString().replace(/\/$/, '');
+    const baseUrl = (canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL')) ?? '')
+      .toString()
+      .replace(/\/$/, '');
     if (!baseUrl) {
-      throw new Error('AGS: canvasBaseUrl (from LTI iss) required for token request');
+      throw new Error('AGS: Canvas base URL from LTI launch (issuer / canvasBaseUrl) required for token request');
     }
     const tokenUrl = `${baseUrl}/login/oauth2/token`;
     const isPrompter = ctx.toolType === 'prompter';
