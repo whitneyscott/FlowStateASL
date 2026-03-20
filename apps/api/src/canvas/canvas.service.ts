@@ -48,7 +48,7 @@ export class CanvasService {
     });
     if (!resolved) {
       throw new Error(
-        'Canvas base URL missing from session. Relaunch the tool from your course (Instructure Cloud needs the school host from the launch, not canvas.instructure.com). Optional: add Developer Key custom field canvas_api_domain = $Canvas.api.domain. For local non-LTI tests, set CANVAS_API_BASE_URL.',
+        'Canvas base URL missing from session. After deploy, relaunch from Canvas; the app repairs the school host from the Referer when JWT iss is generic. If your browser strips Referer, add Developer Key custom field canvas_api_domain = $Canvas.api.domain (name must match). For local non-LTI tests, set CANVAS_API_BASE_URL.',
       );
     }
     return resolved;

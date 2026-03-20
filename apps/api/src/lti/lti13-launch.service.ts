@@ -7,6 +7,10 @@ const jwkToPem = require('jwk-to-pem') as (jwk: { kty: string; n?: string; e?: s
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
 import { appendLtiLog } from '../common/last-error.store';
 import { resolveLtiContextValue } from '../common/utils/lti-context-value.util';
+import {
+  isGenericCanvasCloudRestBase,
+  normalizeToCanvasRestBase,
+} from '../common/utils/canvas-base-url.util';
 
 const IS_DEV = process.env.NODE_ENV !== 'production';
 
@@ -26,6 +30,31 @@ const LTI_AGS_ENDPOINT = 'https://purl.imsglobal.org/spec/lti-ags/claim/endpoint
 const CUSTOM_TOOL_TYPE_MAP: Record<string, 'flashcards' | 'prompter'> = {
   prompter: 'prompter',
 };
+
+/** Developer Key custom field names vary; match case-insensitively. Skip unexpanded $Canvas... literals. */
+function readCanvasTenantCustomFields(custom: Record<string, unknown>): {
+  apiBase: string;
+  apiDomain: string;
+} {
+  const normKey = (k: string) => k.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const byNorm = new Map<string, unknown>();
+  for (const [k, v] of Object.entries(custom)) {
+    byNorm.set(normKey(k), v);
+  }
+  const first = (...aliases: string[]): string => {
+    for (const a of aliases) {
+      const v = byNorm.get(normKey(a));
+      if (v == null) continue;
+      const s = String(v).trim();
+      if (s && !s.toLowerCase().startsWith('$canvas.')) return s;
+    }
+    return '';
+  };
+  return {
+    apiBase: first('canvas_api_base_url', 'custom_canvas_api_base_url', 'canvas_api_baseurl'),
+    apiDomain: first('canvas_api_domain', 'custom_canvas_domain', 'canvas_domain', 'custom_canvas_api_domain'),
+  };
+}
 
 const TEACHER_URIS = [
   'http://purl.imsglobal.org/vocab/lis/v2/membership#Instructor',
@@ -220,18 +249,22 @@ export class Lti13LaunchService {
       }
     };
 
-    const customApiBase = (
-      custom.canvas_api_base_url ??
-      custom.custom_canvas_api_base_url ??
-      ''
-    )
-      .toString()
-      .trim();
-    const customApiDomain = (
-      custom.canvas_api_domain ?? custom.custom_canvas_domain ?? custom.canvas_domain ?? ''
-    )
-      .toString()
-      .trim();
+    const scanned = readCanvasTenantCustomFields(custom as Record<string, unknown>);
+    const customApiBase = [
+      scanned.apiBase,
+      custom.canvas_api_base_url,
+      custom.custom_canvas_api_base_url,
+    ]
+      .map((x) => (x ?? '').toString().trim())
+      .find((s) => s && !s.toLowerCase().startsWith('$canvas.')) ?? '';
+    const customApiDomain = [
+      scanned.apiDomain,
+      custom.canvas_api_domain,
+      custom.custom_canvas_domain,
+      custom.canvas_domain,
+    ]
+      .map((x) => (x ?? '').toString().trim())
+      .find((s) => s && !s.toLowerCase().startsWith('$canvas.')) ?? '';
 
     const launchPresentation =
       (payload[LTI_LAUNCH_PRESENTATION] as { return_url?: string } | undefined) ?? {};
@@ -249,10 +282,16 @@ export class Lti13LaunchService {
           ) {
             try {
               if (iss) {
-                const u = new URL(iss);
-                canvasDomain = u.hostname;
-                canvasBaseUrl = `${u.protocol}//${u.host}`;
-                appendLtiLog('launch', 'Canvas REST host from JWT iss (fallback)', { canvasBaseUrl });
+                const candidate = normalizeToCanvasRestBase(iss);
+                if (candidate && !isGenericCanvasCloudRestBase(candidate)) {
+                  canvasDomain = new URL(candidate).hostname;
+                  canvasBaseUrl = candidate;
+                  appendLtiLog('launch', 'Canvas REST host from JWT iss (fallback)', { canvasBaseUrl });
+                } else {
+                  appendLtiLog('launch', 'Skip generic Canvas Cloud iss as REST host; rely on custom fields or Referer', {
+                    iss,
+                  });
+                }
               }
             } catch {
               // ignore

@@ -5,6 +5,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { Request } from 'express';
+import { repairCanvasHostFromRequest } from '../../common/utils/canvas-base-url.util';
 
 @Injectable()
 export class LtiLaunchGuard implements CanActivate {
@@ -14,7 +15,10 @@ export class LtiLaunchGuard implements CanActivate {
     if (req.method === 'GET' && /^\/api\/prompt\/submission\/[^/]+$/.test(req.path)) return true;
     const hasSession = !!req.session;
     const hasLtiContext = !!req.session?.ltiContext;
-    if (hasLtiContext) return true;
+    if (hasLtiContext) {
+      repairCanvasHostFromRequest(req);
+      return true;
+    }
     const hasCookie = !!req.headers.cookie;
     const sid = (req.session as { id?: string })?.id ?? req.sessionID ?? 'none';
     const keys = req.session ? Object.keys(req.session).filter((k) => k !== 'cookie') : [];
