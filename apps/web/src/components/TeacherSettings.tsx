@@ -147,6 +147,12 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
         }
         if (csRes.status === 401 && cs?.needsManualToken) {
           setShowManualTokenModal(true);
+          setShowRecreateAnnouncementModal(false);
+          setAnnouncementMissing(false);
+          if (!cancelled) setLoading(false);
+          return;
+        }
+        if (csRes.status === 401) {
           if (!cancelled) setLoading(false);
           return;
         }
@@ -183,7 +189,27 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
         setLastFunction('GET /api/course-settings/announcement-status');
         const annRes = await fetch('/api/course-settings/announcement-status', { credentials: 'include' });
         if (cancelled) return;
-        const annData = await annRes.json().catch(() => ({}));
+        const annRaw = await annRes.text().catch(() => '');
+        const annData = (() => {
+          try {
+            return JSON.parse(annRaw) as Record<string, unknown>;
+          } catch {
+            return {};
+          }
+        })();
+        if (annRes.status === 401) {
+          if (annData?.redirectToOAuth) {
+            const returnTo = encodeURIComponent(window.location.href);
+            window.location.href = `/api/oauth/canvas?returnTo=${returnTo}`;
+            return;
+          }
+          if (annData?.needsManualToken) {
+            setShowManualTokenModal(true);
+            setShowRecreateAnnouncementModal(false);
+            setAnnouncementMissing(false);
+          }
+          return;
+        }
         if (annRes.ok && annData?.exists === false) {
           setAnnouncementMissing(true);
           setShowRecreateAnnouncementModal(true);
@@ -374,7 +400,17 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
       {allPlaylists.length > 0 && (
         <p className="teacher-settings-footer">{allPlaylists.length} decks loaded</p>
       )}
-      {showRecreateAnnouncementModal && announcementMissing && (
+      {showManualTokenModal && (
+        <ManualTokenModal
+          message="LTI 1.1 does not support OAuth. Enter your Canvas API token to configure course settings."
+          onSuccess={() => {
+            setShowManualTokenModal(false);
+            setRetryCount((r) => r + 1);
+          }}
+          onDismiss={() => setShowManualTokenModal(false)}
+        />
+      )}
+      {showRecreateAnnouncementModal && announcementMissing && !showManualTokenModal && (
         <div className="teacher-settings-overlay teacher-settings-save-modal">
           <div className="teacher-settings-save-modal-content">
             <p>The ASL Express Flashcard Settings announcement was deleted or is missing. Would you like to recreate it?</p>
@@ -395,15 +431,33 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
                       method: 'POST',
                       credentials: 'include',
                     });
-                    const data = await res.json().catch(() => ({}));
+                    const raw = await res.text().catch(() => '');
+                    const data = (() => {
+                      try {
+                        return JSON.parse(raw) as Record<string, unknown>;
+                      } catch {
+                        return {};
+                      }
+                    })();
+                    if (res.status === 401 && data?.redirectToOAuth) {
+                      const returnTo = encodeURIComponent(window.location.href);
+                      window.location.href = `/api/oauth/canvas?returnTo=${returnTo}`;
+                      return;
+                    }
+                    if (res.status === 401 && data?.needsManualToken) {
+                      setShowRecreateAnnouncementModal(false);
+                      setShowManualTokenModal(true);
+                      setRecreateAnnouncementError(null);
+                      return;
+                    }
                     if (res.ok) {
                       setShowRecreateAnnouncementModal(false);
                       setAnnouncementMissing(false);
                       setRecreateAnnouncementError(null);
                     } else {
                       const msg =
-                        (data as { message?: string; error?: string }).message ??
-                        (data as { error?: string }).error ??
+                        (typeof data.message === 'string' ? data.message : undefined) ??
+                        (typeof data.error === 'string' ? data.error : undefined) ??
                         `Could not recreate announcement (HTTP ${res.status}).`;
                       setRecreateAnnouncementError(msg);
                     }
@@ -430,16 +484,6 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
             </div>
           </div>
         </div>
-      )}
-      {showManualTokenModal && (
-        <ManualTokenModal
-          message="LTI 1.1 does not support OAuth. Enter your Canvas API token to configure course settings."
-          onSuccess={() => {
-            setShowManualTokenModal(false);
-            setRetryCount((r) => r + 1);
-          }}
-          onDismiss={() => setShowManualTokenModal(false)}
-        />
       )}
     </div>
   );

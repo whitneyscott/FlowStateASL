@@ -3,6 +3,8 @@ import {
   Controller,
   ForbiddenException,
   Get,
+  HttpException,
+  HttpStatus,
   Post,
   Put,
   Req,
@@ -41,6 +43,13 @@ export class CourseSettingsController {
     if (!ctx?.courseId) {
       appendLtiLog('course-settings', 'GET aborted: no courseId in session');
       return res.json(null);
+    }
+    // Teachers need a Canvas API token before any course-settings / announcement logic.
+    // Without this, GET returned 200 + empty data (missing-token was swallowed in service),
+    // and the UI hit announcement-status → false → "recreate" before token entry (wrong order).
+    if (isTeacher && !(canvasAccessToken ?? '').trim()) {
+      appendLtiLog('course-settings', 'GET 401: teacher has no Canvas token yet', getOAuth401Body(req));
+      return res.status(401).json(getOAuth401Body(req));
     }
     try {
       const result = await this.courseSettings.get(ctx.courseId, {
@@ -105,6 +114,9 @@ export class CourseSettingsController {
       throw new ForbiddenException('Teacher role required');
     }
     const canvasAccessToken = (req.session as { canvasAccessToken?: string })?.canvasAccessToken;
+    if (!(canvasAccessToken ?? '').trim()) {
+      throw new HttpException(getOAuth401Body(req), HttpStatus.UNAUTHORIZED);
+    }
     const exists = await this.courseSettings.announcementExists(ctx.courseId, {
       canvasDomain: ctx.canvasDomain,
       canvasBaseUrl: ctx.canvasBaseUrl,
@@ -123,6 +135,9 @@ export class CourseSettingsController {
       throw new ForbiddenException('Teacher role required');
     }
     const canvasAccessToken = (req.session as { canvasAccessToken?: string })?.canvasAccessToken;
+    if (!(canvasAccessToken ?? '').trim()) {
+      throw new HttpException(getOAuth401Body(req), HttpStatus.UNAUTHORIZED);
+    }
     await this.courseSettings.recreateAnnouncement(ctx.courseId, {
       canvasDomain: ctx.canvasDomain,
       canvasBaseUrl: ctx.canvasBaseUrl,
