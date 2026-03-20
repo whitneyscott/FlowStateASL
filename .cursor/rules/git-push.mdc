@@ -1,12 +1,15 @@
 ---
-description: Always push commits to GitHub after making changes
+description: After finishing a user-requested task, commit and push to GitHub
 alwaysApply: true
 ---
 
 # Git Push Policy
 
-After committing changes to the repository, always push to GitHub unless the user explicitly says otherwise (e.g., "don't push" or "commit only").
+When you **complete a task that the user asked for** (implementation, fixes, refactors, etc.):
 
-When making edits to the codebase:
-1. Stage and commit changes with a clear message
-2. Push to the remote (typically `origin main`) unless told not to
+1. **Stage and commit** the changes with a clear message.
+2. **Push to GitHub** (typically `origin main`) as part of closing out that task.
+
+Do **not** leave completed work only on the local machine unless the user explicitly opts out (e.g. "don't push", "commit only", "local only").
+
+This applies to work done **per the user's request**—not to incidental exploration or answers that involve no repo changes.
