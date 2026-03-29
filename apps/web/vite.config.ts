@@ -3,6 +3,9 @@ import react from '@vitejs/plugin-react';
 import { resolve } from 'path';
 
 export default defineConfig({
+  define: {
+    __MODE_PASSWORD__: JSON.stringify(process.env.MODE_PASSWORD ?? ''),
+  },
   resolve: {
     alias: {
       '@aslexpress/shared-types': resolve(__dirname, '../../libs/shared-types/src/index.ts'),

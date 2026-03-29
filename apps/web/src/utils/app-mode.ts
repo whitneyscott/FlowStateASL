@@ -14,11 +14,14 @@ export function readStoredAppMode(): AppMode {
 
 /**
  * Password for switching into Developer or Production mode (Bulk Editor–style).
- * Set VITE_APP_MODE_PASSWORD for production builds. In Vite dev, defaults to dev2025 when unset.
+ * Uses MODE_PASSWORD (injected at build via Vite define).
+ * Legacy fallback: VITE_APP_MODE_PASSWORD. In local dev, defaults to dev2025 when unset.
  */
 export function getConfiguredModePassword(): string {
-  const fromEnv = import.meta.env.VITE_APP_MODE_PASSWORD;
-  if (typeof fromEnv === 'string' && fromEnv.trim()) return fromEnv.trim();
+  const fromMode = typeof __MODE_PASSWORD__ === 'string' ? __MODE_PASSWORD__.trim() : '';
+  if (fromMode) return fromMode;
+  const legacy = import.meta.env.VITE_APP_MODE_PASSWORD;
+  if (typeof legacy === 'string' && legacy.trim()) return legacy.trim();
   if (import.meta.env.DEV) return 'dev2025';
   return '';
 }

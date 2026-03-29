@@ -54,7 +54,7 @@ export function AppModeModal({
     const expected = getExpectedPassword();
     if (!expected) {
       setError(
-        'Developer and Production modes need VITE_APP_MODE_PASSWORD set at build time. In local dev, the default is dev2025 when the env var is unset.',
+        'Developer and Production modes need MODE_PASSWORD set at build time. In local dev, the default is dev2025 when unset.',
       );
       return;
     }
