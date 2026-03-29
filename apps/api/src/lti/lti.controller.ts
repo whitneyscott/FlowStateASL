@@ -42,16 +42,21 @@ export class LtiController {
       req.get('x-forwarded-referer')?.trim(),
     ].filter(Boolean) as string[];
 
-    for (const c of candidates) {
-      const base = normalizeToCanvasRestBase(c);
-      if (!base) continue;
-      if (isGenericCanvasCloudRestBase(base)) continue;
-      const apiHost = (req.get('host') ?? '').split(':')[0].toLowerCase();
-      const candidateHost = new URL(base).hostname.toLowerCase();
-      if (apiHost && candidateHost === apiHost) continue;
-      return base;
-    }
-    return undefined;
+    const apiHost = (req.get('host') ?? '').split(':')[0].toLowerCase();
+
+    const pick = (allowGenericCloud: boolean): string | undefined => {
+      for (const c of candidates) {
+        const base = normalizeToCanvasRestBase(c);
+        if (!base) continue;
+        if (!allowGenericCloud && isGenericCanvasCloudRestBase(base)) continue;
+        const candidateHost = new URL(base).hostname.toLowerCase();
+        if (apiHost && candidateHost === apiHost) continue;
+        return base;
+      }
+      return undefined;
+    };
+
+    return pick(false) ?? pick(true);
   }
 
   private repairCanvasHostFromLaunchRequest(
@@ -59,7 +64,7 @@ export class LtiController {
     ctx: { canvasBaseUrl?: string; canvasDomain?: string; platformIss?: string },
   ): void {
     const resolved = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
-    if (resolved && !isGenericCanvasCloudRestBase(resolved)) return;
+    if (resolved) return;
 
     const inferred = this.inferCanvasBaseFromLaunchRequest(req);
     if (!inferred) return;

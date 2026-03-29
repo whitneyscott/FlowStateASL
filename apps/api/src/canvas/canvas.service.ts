@@ -48,7 +48,7 @@ export class CanvasService {
     });
     if (!resolved) {
       throw new Error(
-        'Canvas base URL missing from session. After deploy, relaunch from Canvas; the app repairs the school host from the Referer when JWT iss is generic. If your browser strips Referer, add Developer Key custom field canvas_api_domain = $Canvas.api.domain (name must match). For local non-LTI tests, set CANVAS_API_BASE_URL.',
+        'Canvas base URL missing from session. Relaunch the tool from Canvas so the host can be captured from return_url or Referer (including canvas.instructure.com for Free-for-Teacher). If Referer is stripped, set Developer Key custom field canvas_api_domain = $Canvas.api.domain. For local tests, set CANVAS_API_BASE_URL.',
       );
     }
     return resolved;

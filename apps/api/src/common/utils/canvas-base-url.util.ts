@@ -3,8 +3,9 @@ import type { Request } from 'express';
 import { appendLtiLog } from '../last-error.store';
 
 /**
- * JWT `iss` for Instructure-hosted Canvas is often this host — it is NOT the per-school REST API base.
- * Using it for /api/v1 calls breaks OAuth and announcements; prefer $Canvas.api.domain or Referer repair.
+ * Instructure-operated Canvas hosts (JWT `iss` is often this — not a school subdomain).
+ * We still use these as REST base when Canvas explicitly gives them (return_url, FFT, etc.).
+ * We avoid using *only* unqualified `iss` for schools that run on *.instructure.com subdomains.
  */
 const GENERIC_CANVAS_CLOUD_REST_HOSTS = new Set([
   'canvas.instructure.com',
@@ -24,6 +25,42 @@ export function normalizeToCanvasRestBase(raw: string | null | undefined): strin
   }
 }
 
+/**
+ * Turn Canvas LTI strings (custom fields, launch_presentation.return_url) into API origin (scheme + host).
+ * Supports full URLs, protocol-relative, host-only, and path-only paths resolved against JWT `iss` when needed.
+ */
+export function resolveCanvasLaunchUrlToRestBase(
+  raw: string | null | undefined,
+  issForRelative?: string | null,
+): string | undefined {
+  const s = typeof raw === 'string' ? raw.trim() : '';
+  if (!s) return undefined;
+  try {
+    if (s.startsWith('http://') || s.startsWith('https://')) {
+      const u = new URL(s);
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') return undefined;
+      return `${u.protocol}//${u.host}`;
+    }
+    if (s.startsWith('//')) {
+      const u = new URL(`https:${s}`);
+      if (u.protocol !== 'https:') return undefined;
+      return `${u.protocol}//${u.host}`;
+    }
+    if (s.startsWith('/')) {
+      const issBase = normalizeToCanvasRestBase(issForRelative ?? undefined);
+      if (!issBase) return undefined;
+      const u = new URL(s, issBase.endsWith('/') ? issBase : `${issBase}/`);
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') return undefined;
+      return `${u.protocol}//${u.host}`;
+    }
+    const u = new URL(`https://${s}`);
+    if (u.protocol !== 'https:') return undefined;
+    return `${u.protocol}//${u.host}`;
+  } catch {
+    return undefined;
+  }
+}
+
 export function isGenericCanvasCloudRestBase(base: string | null | undefined): boolean {
   const n = normalizeToCanvasRestBase(base);
   if (!n) return false;
@@ -36,8 +73,9 @@ export function isGenericCanvasCloudRestBase(base: string | null | undefined): b
 
 /**
  * Resolve Canvas REST API base URL (scheme + host, no trailing slash).
- * Skips generic Instructure cloud iss hosts so school `canvasDomain` / custom fields are not overridden.
- * Order: canvasBaseUrl → canvasDomain → platformIss → env (each skipped if unusable generic cloud).
+ * Order: canvasBaseUrl → canvasDomain → platformIss → env.
+ * Explicit session/env values trust Canvas (including Free-for-Teacher `canvas.instructure.com`).
+ * `platformIss` alone skips generic cloud so a school subdomain is not replaced by the global platform id.
  */
 export function resolveCanvasApiBaseUrl(input: {
   canvasBaseUrl?: string | null;
@@ -48,7 +86,15 @@ export function resolveCanvasApiBaseUrl(input: {
 }): string | undefined {
   const trim = (s?: string | null) => (typeof s === 'string' ? s.trim() : '') || undefined;
 
-  const trySource = (raw: string | undefined | null): string | undefined => {
+  /** From LTI/session: accept any normalizable host, including Instructure cloud (FFT). */
+  const tryExplicitSource = (raw: string | undefined | null): string | undefined => {
+    const base = normalizeToCanvasRestBase(raw ?? undefined);
+    if (!base) return undefined;
+    return base;
+  };
+
+  /** JWT `iss` only: reject generic cloud so school tenants can fall through to return_url / Referer. */
+  const tryPlatformIss = (raw: string | undefined | null): string | undefined => {
     const base = normalizeToCanvasRestBase(raw ?? undefined);
     if (!base) return undefined;
     if (isGenericCanvasCloudRestBase(base)) return undefined;
@@ -62,19 +108,16 @@ export function resolveCanvasApiBaseUrl(input: {
       : `https://${domainAsUrl}`
     : undefined;
 
-  const sources: Array<string | undefined> = [
-    trim(input.canvasBaseUrl),
-    domainCandidate,
-    trim(input.platformIss),
-    trim(input.envFallback),
-  ];
-
-  for (const raw of sources) {
-    const good = trySource(raw);
+  const explicitChain: Array<string | undefined> = [trim(input.canvasBaseUrl), domainCandidate];
+  for (const raw of explicitChain) {
+    const good = tryExplicitSource(raw);
     if (good) return good;
   }
 
-  return undefined;
+  const fromIss = tryPlatformIss(trim(input.platformIss));
+  if (fromIss) return fromIss;
+
+  return tryExplicitSource(trim(input.envFallback));
 }
 
 /** Prefer LTI session fields; env is last resort. */
@@ -105,7 +148,7 @@ export function repairCanvasHostFromRequest(req: Request): void {
     platformIss: ctx.platformIss,
     envFallback: undefined,
   });
-  if (current && !isGenericCanvasCloudRestBase(current)) return;
+  if (current) return;
 
   const ref = req.get('referer')?.trim();
   if (!ref) return;
@@ -118,8 +161,6 @@ export function repairCanvasHostFromRequest(req: Request): void {
   } catch {
     return;
   }
-
-  if (isGenericCanvasCloudRestBase(origin)) return;
 
   const refHost = new URL(origin).hostname.toLowerCase();
   const apiHost = (req.get('host') ?? '').split(':')[0].toLowerCase();

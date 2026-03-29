@@ -10,6 +10,7 @@ import { resolveLtiContextValue } from '../common/utils/lti-context-value.util';
 import {
   isGenericCanvasCloudRestBase,
   normalizeToCanvasRestBase,
+  resolveCanvasLaunchUrlToRestBase,
 } from '../common/utils/canvas-base-url.util';
 
 const IS_DEV = process.env.NODE_ENV !== 'production';
@@ -238,10 +239,11 @@ export class Lti13LaunchService {
     const applyCanvasHostFromString = (raw: string, source: string): boolean => {
       const s = raw?.trim();
       if (!s) return false;
+      const base = resolveCanvasLaunchUrlToRestBase(s, typeof iss === 'string' ? iss : undefined);
+      if (!base) return false;
       try {
-        const u = new URL(s.includes('://') ? s : `https://${s}`);
-        canvasDomain = u.hostname;
-        canvasBaseUrl = `${u.protocol}//${u.host}`;
+        canvasDomain = new URL(base).hostname;
+        canvasBaseUrl = base;
         appendLtiLog('launch', 'Canvas REST host resolved', { source, canvasBaseUrl, canvasDomain });
         return true;
       } catch {
