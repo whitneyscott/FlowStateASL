@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { useLtiContext } from './hooks/useLtiContext';
 import { BridgeLog } from './components/BridgeLog';
 import { ToolSelector } from './components/ToolSelector';
+import { useAppMode } from './contexts/AppModeContext';
 import FlashcardsPage from './pages/FlashcardsPage';
 import TimerPage from './pages/TimerPage';
 import TeacherConfigPage from './pages/TeacherConfigPage';
@@ -10,6 +11,7 @@ import PromptReviewPage from './pages/PromptReviewPage';
 
 export default function AppRouter() {
   const { context, loading, error } = useLtiContext();
+  const { openModeModal, appMode } = useAppMode();
 
   if (loading) {
     return (
@@ -39,8 +41,19 @@ export default function AppRouter() {
   }
 
   if (context.toolType === 'flashcards') {
+    const isTeacherRole = /instructor|administrator|faculty|teacher|staff|contentdeveloper|teachingassistant|ta/i.test(context.roles || '');
     return (
       <div className="min-h-screen flex flex-col bg-zinc-900">
+        {isTeacherRole && (
+          <button
+            type="button"
+            className="app-mode-float-btn"
+            onClick={openModeModal}
+            title="Application mode (Demo / Developer / Production)"
+          >
+            Mode: {appMode}
+          </button>
+        )}
         <div className="w-full max-w-4xl mx-auto px-4 py-4">
           <ToolSelector context={context} currentTool="flashcards" />
           <BridgeLog context={context} loading={false} error={null} />
@@ -56,8 +69,19 @@ export default function AppRouter() {
     );
   }
 
+  const isTeacherRole = /instructor|administrator|faculty|teacher|staff|contentdeveloper|teachingassistant|ta/i.test(context.roles || '');
   return (
     <div className="min-h-screen flex flex-col">
+      {isTeacherRole && (
+        <button
+          type="button"
+          className="app-mode-float-btn"
+          onClick={openModeModal}
+          title="Application mode (Demo / Developer / Production)"
+        >
+          Mode: {appMode}
+        </button>
+      )}
       <div className="w-full max-w-4xl mx-auto px-4 py-4">
         <ToolSelector context={context} currentTool="prompter" />
         <BridgeLog context={context} loading={false} error={null} />

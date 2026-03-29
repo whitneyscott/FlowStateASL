@@ -14,9 +14,14 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
   const { lastFunctionCalled, lastApiResult } = useDebug();
   const { isDeveloperMode } = useAppMode();
   const [searchParams] = useSearchParams();
+  const teacherRole =
+    !!context &&
+    /instructor|administrator|faculty|teacher|staff|contentdeveloper|teachingassistant|ta/i.test(
+      context.roles || '',
+    );
   /** Local Vite dev only: ?debug=1 still expands tools without changing stored mode */
   const legacyDebugParam = import.meta.env.DEV && searchParams.get('debug') === '1';
-  const developerUi = isDeveloperMode || legacyDebugParam;
+  const developerUi = teacherRole && (isDeveloperMode || legacyDebugParam);
   const [lastServerError, setLastServerError] = useState<{ endpoint: string; message: string } | null>(null);
   const [ltiLog, setLtiLog] = useState<string[]>([]);
   const [lines, setLines] = useState<string[]>(['Initializing...']);

@@ -68,14 +68,6 @@ export function AppModeProvider({ children }: { children: ReactNode }) {
   return (
     <AppModeContext.Provider value={value}>
       {children}
-      <button
-        type="button"
-        className="app-mode-float-btn"
-        onClick={openModeModal}
-        title="Application mode (Demo / Developer / Production)"
-      >
-        Mode: {appMode}
-      </button>
       <AppModeModal
         open={modalOpen}
         currentMode={appMode}
