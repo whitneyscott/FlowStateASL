@@ -96,6 +96,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   const [singleVersionPerAnswer, setSingleVersionPerAnswer] = useState(false);
   const [tutorialAutoAdvance, setTutorialAutoAdvance] = useState(true);
   const [showManualTokenModal, setShowManualTokenModal] = useState(false);
+  const [allDecksCompleteNotice, setAllDecksCompleteNotice] = useState<string | null>(null);
 
   const loadBatchData = useCallback(async () => {
     if (!context?.courseId) {
