@@ -249,14 +249,14 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
           onClick={async () => {
             setClearingAuth(true);
             try {
-              const res = await fetch('/api/debug/clear-canvas-auth', {
+              const res = await fetch('/api/oauth/canvas/token/reset', {
                 method: 'POST',
                 credentials: 'include',
                 headers: { 'Content-Type': 'application/json' },
               });
               if (!res.ok) {
                 const t = await res.text();
-                window.alert(`Could not clear Canvas token: ${res.status} ${t.slice(0, 200)}`);
+                window.alert(`Could not reset Canvas token: ${res.status} ${t.slice(0, 200)}`);
                 return;
               }
               window.location.reload();
@@ -266,7 +266,7 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
               setClearingAuth(false);
             }
           }}
-          title="Removes OAuth/manual Canvas token from session; reloads. LTI context stays — use Connect Canvas or manual token again."
+          title="Resets OAuth/manual Canvas token from session; reloads. LTI context stays — use Connect Canvas or manual token again."
           style={{
             background: '#553300',
             border: '1px solid #ffaa00',
