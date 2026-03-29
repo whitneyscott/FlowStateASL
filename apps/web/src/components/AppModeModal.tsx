@@ -1,12 +1,12 @@
 import { useEffect, useId, useState } from 'react';
 import type { AppMode } from '../utils/app-mode';
-import { APP_MODE_STORAGE_KEY } from '../utils/app-mode';
 
 interface AppModeModalProps {
   open: boolean;
   currentMode: AppMode;
   onClose: () => void;
   getExpectedPassword: () => string;
+  onApplyMode: (mode: AppMode) => void;
 }
 
 export function AppModeModal({
@@ -14,6 +14,7 @@ export function AppModeModal({
   currentMode,
   onClose,
   getExpectedPassword,
+  onApplyMode,
 }: AppModeModalProps) {
   const titleId = useId();
   const pwdId = useId();
@@ -45,14 +46,8 @@ export function AppModeModal({
   const apply = () => {
     setError(null);
     if (selected === 'demo') {
-      try {
-        localStorage.setItem(APP_MODE_STORAGE_KEY, 'demo');
-      } catch {
-        setError('Could not save mode');
-        return;
-      }
+      onApplyMode('demo');
       onClose();
-      window.location.reload();
       return;
     }
 
@@ -68,14 +63,8 @@ export function AppModeModal({
       return;
     }
 
-    try {
-      localStorage.setItem(APP_MODE_STORAGE_KEY, selected);
-    } catch {
-      setError('Could not save mode');
-      return;
-    }
+    onApplyMode(selected);
     onClose();
-    window.location.reload();
   };
 
   return (

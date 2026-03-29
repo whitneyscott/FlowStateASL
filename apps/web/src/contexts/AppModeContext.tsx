@@ -22,6 +22,7 @@ interface AppModeContextValue {
   /** True when Bridge Log and other dev tools should be shown */
   isDeveloperMode: boolean;
   openModeModal: () => void;
+  setMode: (mode: AppMode) => void;
 }
 
 const AppModeContext = createContext<AppModeContextValue | null>(null);
@@ -43,6 +44,14 @@ export function AppModeProvider({ children }: { children: ReactNode }) {
 
   const openModeModal = useCallback(() => setModalOpen(true), []);
   const closeModeModal = useCallback(() => setModalOpen(false), []);
+  const setMode = useCallback((mode: AppMode) => {
+    setAppMode(mode);
+    try {
+      localStorage.setItem(APP_MODE_STORAGE_KEY, mode);
+    } catch {
+      // In some embedded/iframe contexts storage may be blocked; keep in-memory mode for this session.
+    }
+  }, []);
 
   const isDeveloperMode = useMemo(() => isDeveloperModeActive(appMode), [appMode]);
 
@@ -51,8 +60,9 @@ export function AppModeProvider({ children }: { children: ReactNode }) {
       appMode,
       isDeveloperMode,
       openModeModal,
+      setMode,
     }),
-    [appMode, isDeveloperMode, openModeModal],
+    [appMode, isDeveloperMode, openModeModal, setMode],
   );
 
   return (
@@ -64,13 +74,14 @@ export function AppModeProvider({ children }: { children: ReactNode }) {
         onClick={openModeModal}
         title="Application mode (Demo / Developer / Production)"
       >
-        Mode
+        Mode: {appMode}
       </button>
       <AppModeModal
         open={modalOpen}
         currentMode={appMode}
         onClose={closeModeModal}
         getExpectedPassword={getConfiguredModePassword}
+        onApplyMode={setMode}
       />
     </AppModeContext.Provider>
   );
@@ -83,6 +94,7 @@ export function useAppMode(): AppModeContextValue {
       appMode: 'demo',
       isDeveloperMode: false,
       openModeModal: () => {},
+      setMode: () => {},
     };
   }
   return ctx;
