@@ -102,26 +102,44 @@ export class CourseSettingsService {
     );
     if (existing) return existing;
 
-    const assignmentGroupId = await this.canvas.ensureAssignmentGroup(
-      courseId,
-      FLASHCARD_SETTINGS_ASSIGNMENT_TITLE,
-      0,
-      canvasDomain,
+    let assignmentGroupId: number | undefined;
+    try {
+      assignmentGroupId = await this.canvas.ensureAssignmentGroup(
+        courseId,
+        FLASHCARD_SETTINGS_ASSIGNMENT_TITLE,
+        0,
+        canvasDomain,
+        tokenOverride,
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('403')) {
+        appendLtiLog('course-settings', 'ensureAssignmentGroup: 403 — creating Flashcard Settings in default group', {
+          courseId,
+          hint: 'Re-authorize Canvas OAuth so the token includes assignment_groups scopes, or enable those scopes on the Developer Key.',
+        });
+        assignmentGroupId = undefined;
+      } else {
+        throw err;
+      }
+    }
+
+    const createOpts: Parameters<CanvasService['createAssignment']>[2] = {
+      submissionTypes: ['online_text_entry'],
+      pointsPossible: 0,
+      published: true,
+      description: this.emptySettingsDescription(),
+      omitFromFinalGrade: true,
       tokenOverride,
-    );
+    };
+    if (typeof assignmentGroupId === 'number') {
+      createOpts.assignmentGroupId = assignmentGroupId;
+    }
 
     return this.canvas.createAssignment(
       courseId,
       FLASHCARD_SETTINGS_ASSIGNMENT_TITLE,
-      {
-        submissionTypes: ['online_text_entry'],
-        pointsPossible: 0,
-        published: true,
-        description: this.emptySettingsDescription(),
-        assignmentGroupId,
-        omitFromFinalGrade: true,
-        tokenOverride,
-      },
+      createOpts,
       canvasDomain,
     );
   }

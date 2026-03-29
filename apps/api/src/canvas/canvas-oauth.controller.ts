@@ -5,6 +5,7 @@ import { randomBytes } from 'crypto';
 import { appendLtiLog } from '../common/last-error.store';
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
 import { canvasApiBaseFromLtiContext } from '../common/utils/canvas-base-url.util';
+import { DEFAULT_CANVAS_OAUTH_SCOPES } from './canvas-oauth-scopes';
 
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000; // 10 min
 const oauthStateStore = new Map<
@@ -104,7 +105,20 @@ export class CanvasOAuthController {
     authUrl.searchParams.set('redirect_uri', redirectUri);
     authUrl.searchParams.set('state', state);
 
-    appendLtiLog('oauth', 'Redirecting to Canvas OAuth', { authUrl: authUrl.href });
+    const scopeMode = (this.config.get<string>('CANVAS_OAUTH_SCOPE_MODE') ?? '').trim().toLowerCase();
+    if (scopeMode !== 'off' && scopeMode !== 'none' && scopeMode !== '0') {
+      const custom = (this.config.get<string>('CANVAS_OAUTH_SCOPES') ?? '').trim();
+      const scope = custom || DEFAULT_CANVAS_OAUTH_SCOPES;
+      if (scope) {
+        authUrl.searchParams.set('scope', scope);
+      }
+    }
+
+    appendLtiLog('oauth', 'Redirecting to Canvas OAuth', {
+      authUrl: authUrl.href,
+      scopeMode: scopeMode || 'default',
+      hasScopeParam: authUrl.searchParams.has('scope'),
+    });
     return res.redirect(authUrl.href);
   }
 
