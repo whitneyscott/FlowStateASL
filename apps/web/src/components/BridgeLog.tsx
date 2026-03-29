@@ -49,6 +49,7 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
     return () => { cancelled = true; clearInterval(id); };
   }, []);
   const [copied, setCopied] = useState(false);
+  const [clearingAuth, setClearingAuth] = useState(false);
 
   const handleCopy = async () => {
     try {
@@ -230,6 +231,47 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
         >
           Clear LTI log
         </button>
+        {debugMode && (
+          <button
+            type="button"
+            disabled={clearingAuth}
+            onClick={async () => {
+              setClearingAuth(true);
+              try {
+                const res = await fetch('/api/debug/clear-canvas-auth', {
+                  method: 'POST',
+                  credentials: 'include',
+                  headers: { 'Content-Type': 'application/json' },
+                });
+                if (!res.ok) {
+                  const t = await res.text();
+                  window.alert(`Could not clear Canvas token: ${res.status} ${t.slice(0, 200)}`);
+                  return;
+                }
+                window.location.reload();
+              } catch (e) {
+                window.alert(e instanceof Error ? e.message : 'Request failed');
+              } finally {
+                setClearingAuth(false);
+              }
+            }}
+            title="Removes OAuth/manual Canvas token from session; reloads. LTI context stays — use Connect Canvas or manual token again."
+            style={{
+              background: '#553300',
+              border: '1px solid #ffaa00',
+              color: '#ffcc66',
+              padding: '4px 8px',
+              borderRadius: 4,
+              cursor: clearingAuth ? 'wait' : 'pointer',
+              fontFamily: 'inherit',
+              fontSize: 11,
+              marginRight: 8,
+              opacity: clearingAuth ? 0.7 : 1,
+            }}
+          >
+            {clearingAuth ? 'Clearing…' : 'Clear Canvas token & reload'}
+          </button>
+        )}
         <button
           type="button"
           onClick={handleCopy}

@@ -1,7 +1,7 @@
 import { Controller, Get, Post, Query, Body, Req, UseGuards, ForbiddenException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { appendLtiLog } from '../common/last-error.store';
-import { Request } from 'express';
+import type { Request } from 'express';
 import { getLastError, getLtiLog, clearLtiLog } from '../common/last-error.store';
 import { LtiLaunchGuard } from '../lti/guards/lti-launch.guard';
 import { CanvasService } from '../canvas/canvas.service';
@@ -64,6 +64,28 @@ export class DebugController {
     }
     const rawSubmissions = await this.canvas.listSubmissions(cid, aid, domainOverride, token);
     return rawSubmissions;
+  }
+
+  /**
+   * Dev only: remove Canvas OAuth / manual API token from the session so the next action
+   * triggers token entry (LTI 1.1) or OAuth again (LTI 1.3). LTI launch context is kept.
+   */
+  @Post('clear-canvas-auth')
+  async clearCanvasAuth(@Req() req: Request) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new ForbiddenException('clear-canvas-auth is disabled in production');
+    }
+    const sess = req.session as { canvasAccessToken?: string; save: (cb: (err?: unknown) => void) => void } | undefined;
+    if (!sess) {
+      return { ok: true, cleared: false, message: 'No session' };
+    }
+    const had = !!(sess.canvasAccessToken ?? '').trim();
+    delete sess.canvasAccessToken;
+    await new Promise<void>((resolve, reject) => {
+      sess.save((err) => (err ? reject(err) : resolve()));
+    });
+    appendLtiLog('debug', 'Session canvasAccessToken cleared (POST /api/debug/clear-canvas-auth)');
+    return { ok: true, cleared: had };
   }
 
   /** Call this (e.g. open in browser) to verify Bridge Log is reading from this API process. */
