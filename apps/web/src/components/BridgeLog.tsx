@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
+import { useAppMode } from '../contexts/AppModeContext';
 import { useSearchParams } from 'react-router-dom';
 
 interface BridgeLogProps {
@@ -11,8 +12,11 @@ interface BridgeLogProps {
 
 export function BridgeLog({ context, loading, error }: BridgeLogProps) {
   const { lastFunctionCalled, lastApiResult } = useDebug();
+  const { isDeveloperMode } = useAppMode();
   const [searchParams] = useSearchParams();
-  const debugMode = searchParams.get('debug') === '1';
+  /** Local Vite dev only: ?debug=1 still expands tools without changing stored mode */
+  const legacyDebugParam = import.meta.env.DEV && searchParams.get('debug') === '1';
+  const developerUi = isDeveloperMode || legacyDebugParam;
   const [lastServerError, setLastServerError] = useState<{ endpoint: string; message: string } | null>(null);
   const [ltiLog, setLtiLog] = useState<string[]>([]);
   const [lines, setLines] = useState<string[]>(['Initializing...']);
@@ -21,13 +25,14 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
   // When ?debug=1, force expanded and scroll into view (like my-canvas-app developer mode)
   const [expanded, setExpanded] = useState(true);
   useEffect(() => {
-    if (debugMode) {
+    if (developerUi) {
       setExpanded(true);
       containerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
-  }, [debugMode]);
+  }, [developerUi]);
 
   useEffect(() => {
+    if (!developerUi) return;
     let cancelled = false;
     const poll = async () => {
       try {
@@ -46,8 +51,11 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
     };
     poll();
     const id = setInterval(poll, 3000);
-    return () => { cancelled = true; clearInterval(id); };
-  }, []);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [developerUi]);
   const [copied, setCopied] = useState(false);
   const [clearingAuth, setClearingAuth] = useState(false);
 
@@ -166,6 +174,10 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
 
   const text = ['BRIDGE DEBUG LOG:', ...lines].join('\n');
 
+  if (!developerUi) {
+    return null;
+  }
+
   return (
     <div
       ref={containerRef}
@@ -231,47 +243,45 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
         >
           Clear LTI log
         </button>
-        {debugMode && (
-          <button
-            type="button"
-            disabled={clearingAuth}
-            onClick={async () => {
-              setClearingAuth(true);
-              try {
-                const res = await fetch('/api/debug/clear-canvas-auth', {
-                  method: 'POST',
-                  credentials: 'include',
-                  headers: { 'Content-Type': 'application/json' },
-                });
-                if (!res.ok) {
-                  const t = await res.text();
-                  window.alert(`Could not clear Canvas token: ${res.status} ${t.slice(0, 200)}`);
-                  return;
-                }
-                window.location.reload();
-              } catch (e) {
-                window.alert(e instanceof Error ? e.message : 'Request failed');
-              } finally {
-                setClearingAuth(false);
+        <button
+          type="button"
+          disabled={clearingAuth}
+          onClick={async () => {
+            setClearingAuth(true);
+            try {
+              const res = await fetch('/api/debug/clear-canvas-auth', {
+                method: 'POST',
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+              });
+              if (!res.ok) {
+                const t = await res.text();
+                window.alert(`Could not clear Canvas token: ${res.status} ${t.slice(0, 200)}`);
+                return;
               }
-            }}
-            title="Removes OAuth/manual Canvas token from session; reloads. LTI context stays — use Connect Canvas or manual token again."
-            style={{
-              background: '#553300',
-              border: '1px solid #ffaa00',
-              color: '#ffcc66',
-              padding: '4px 8px',
-              borderRadius: 4,
-              cursor: clearingAuth ? 'wait' : 'pointer',
-              fontFamily: 'inherit',
-              fontSize: 11,
-              marginRight: 8,
-              opacity: clearingAuth ? 0.7 : 1,
-            }}
-          >
-            {clearingAuth ? 'Clearing…' : 'Clear Canvas token & reload'}
-          </button>
-        )}
+              window.location.reload();
+            } catch (e) {
+              window.alert(e instanceof Error ? e.message : 'Request failed');
+            } finally {
+              setClearingAuth(false);
+            }
+          }}
+          title="Removes OAuth/manual Canvas token from session; reloads. LTI context stays — use Connect Canvas or manual token again."
+          style={{
+            background: '#553300',
+            border: '1px solid #ffaa00',
+            color: '#ffcc66',
+            padding: '4px 8px',
+            borderRadius: 4,
+            cursor: clearingAuth ? 'wait' : 'pointer',
+            fontFamily: 'inherit',
+            fontSize: 11,
+            marginRight: 8,
+            opacity: clearingAuth ? 0.7 : 1,
+          }}
+        >
+          {clearingAuth ? 'Clearing…' : 'Clear Canvas token & reload'}
+        </button>
         <button
           type="button"
           onClick={handleCopy}
