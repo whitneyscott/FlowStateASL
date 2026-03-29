@@ -119,6 +119,12 @@
   color: #052e16;
 }
 
+.app-mode-btn-warning {
+  background: #7f1d1d;
+  color: #fecaca;
+  border: 1px solid #ef4444;
+}
+
 .app-mode-float-btn {
   position: fixed;
   top: 12px;

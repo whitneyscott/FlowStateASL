@@ -21,6 +21,7 @@ export function AppModeModal({
   const [selected, setSelected] = useState<AppMode>(currentMode);
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [resettingToken, setResettingToken] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -65,6 +66,29 @@ export function AppModeModal({
 
     onApplyMode(selected);
     onClose();
+  };
+
+  const resetCanvasToken = async () => {
+    setError(null);
+    setResettingToken(true);
+    try {
+      const res = await fetch('/api/oauth/canvas/token/reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setError(data.error || `Could not reset token (HTTP ${res.status})`);
+        return;
+      }
+      // Force a clean app refresh so next protected call prompts for manual token / OAuth again.
+      window.location.reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not reset token');
+    } finally {
+      setResettingToken(false);
+    }
   };
 
   return (
@@ -147,6 +171,15 @@ export function AppModeModal({
         )}
 
         <div className="app-mode-actions">
+          <button
+            type="button"
+            className="app-mode-btn app-mode-btn-warning"
+            onClick={resetCanvasToken}
+            disabled={resettingToken}
+            title="Clear Canvas token from this session and reload"
+          >
+            {resettingToken ? 'Resetting token...' : 'Reset Canvas token'}
+          </button>
           <button type="button" className="app-mode-btn app-mode-btn-secondary" onClick={onClose}>
             Cancel
           </button>

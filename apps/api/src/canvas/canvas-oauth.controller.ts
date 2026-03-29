@@ -45,6 +45,29 @@ export class CanvasOAuthController {
   }
 
   /**
+   * Clear Canvas API token from session (OAuth or manual token).
+   * Keeps LTI context/session so the app can immediately prompt for auth again.
+   */
+  @Post('token/reset')
+  resetToken(
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
+    if (!req.session?.ltiContext) {
+      return res.status(403).json({ error: 'LTI context required' });
+    }
+    const hadToken = !!(req.session.canvasAccessToken ?? '').trim();
+    delete req.session.canvasAccessToken;
+    req.session.save((err) => {
+      if (err) {
+        return res.status(500).json({ error: 'Failed to clear token' });
+      }
+      appendLtiLog('oauth', 'Canvas token cleared from session', { hadToken });
+      return res.json({ success: true, hadToken });
+    });
+  }
+
+  /**
    * Initiate Canvas OAuth. Redirects user to Canvas authorize URL.
    * Requires session with ltiContext (canvasBaseUrl) from LTI launch.
    * Short-circuits for LTI 1.1: redirects back to app instead of OAuth2.
