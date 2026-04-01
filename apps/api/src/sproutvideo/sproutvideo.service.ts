@@ -10,7 +10,6 @@ const BLACKLIST = [
   'test',
   'sentence',
   'FS',
-  'FS2',
   'FSA',
   'FSB',
   'MP',
