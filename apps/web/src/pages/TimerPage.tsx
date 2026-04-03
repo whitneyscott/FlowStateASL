@@ -15,6 +15,13 @@ function simpleFingerprint(): string {
   return btoa(ua + '|' + lang).slice(0, 32);
 }
 
+/** Deck-based prompt with timing info */
+interface DeckPromptItem {
+  title: string;
+  videoId?: string;
+  duration: number; // total time in seconds for this prompt
+}
+
 export default function TimerPage({ context }: TimerPageProps) {
   const { setLastFunction, setLastApiResult, setLastApiError } = useDebug();
   const [config, setConfig] = useState<promptApi.PromptConfig | null>(null);
@@ -31,6 +38,13 @@ export default function TimerPage({ context }: TimerPageProps) {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [preflightReady, setPreflightReady] = useState(false);
   const [preflightError, setPreflightError] = useState<string | null>(null);
+  
+  // Deck mode state
+  const [deckPrompts, setDeckPrompts] = useState<DeckPromptItem[]>([]);
+  const [wordTimestamps, setWordTimestamps] = useState<Array<{ word: string; timestampMs: number }>>([]);
+  const [showTransition, setShowTransition] = useState(false);
+  const [sessionStartTime, setSessionStartTime] = useState<number>(0);
+  
   const streamRef = useRef<MediaStream | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -165,6 +179,22 @@ export default function TimerPage({ context }: TimerPageProps) {
       const data = await promptApi.getPromptConfig();
       setLastApiResult('GET /api/prompt/config', 200, true);
       setConfig(data ?? null);
+      
+      // If deck mode, fetch the prompt list
+      if (data?.promptMode === 'decks' && data?.videoPromptConfig?.selectedDecks && data.videoPromptConfig.selectedDecks.length > 0) {
+        try {
+          setLastFunction('POST /api/prompt/build-deck-prompts');
+          const result = await promptApi.buildDeckPrompts(
+            data.videoPromptConfig.selectedDecks,
+            data.videoPromptConfig.totalCards ?? 10
+          );
+          setLastApiResult('POST /api/prompt/build-deck-prompts', 200, true);
+          setDeckPrompts(result.prompts || []);
+        } catch (e) {
+          console.error('Failed to build deck prompts:', e);
+        }
+      }
+      
       if (!data?.accessCode?.trim()) {
         setPhase('warmup');
         setSecondsLeft((data?.minutes ?? 5) * 60);

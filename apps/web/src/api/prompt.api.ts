@@ -42,6 +42,16 @@ async function fetchJsonWithOAuthRedirect<T>(url: string, init?: RequestInit): P
   return data as T;
 }
 
+export interface DeckConfig {
+  id: string;
+  title: string;
+}
+
+export interface VideoPromptConfig {
+  selectedDecks: DeckConfig[];
+  totalCards: number;
+}
+
 export interface PromptConfig {
   minutes?: number;
   prompts?: string[];
@@ -57,6 +67,14 @@ export interface PromptConfig {
   unlockAt?: string;
   lockAt?: string;
   allowedAttempts?: number;
+  promptMode?: 'text' | 'decks';
+  videoPromptConfig?: VideoPromptConfig;
+}
+
+export interface DeckPromptItem {
+  title: string;
+  videoId?: string;
+  duration: number;
 }
 
 export interface CanvasAssignmentGroup {
@@ -343,4 +361,18 @@ export async function createAssignment(
     body: JSON.stringify(body),
     credentials: 'include',
   });
+}
+
+export async function buildDeckPrompts(
+  selectedDecks: DeckConfig[],
+  totalCards: number
+): Promise<{ prompts: DeckPromptItem[]; warning?: string }> {
+  const res = await fetch(base + '/build-deck-prompts', apiInit({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ selectedDecks, totalCards }),
+  }));
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((data as { message?: string }).message ?? `HTTP ${res.status}`);
+  return data as { prompts: DeckPromptItem[]; warning?: string };
 }
