@@ -376,6 +376,36 @@ export class PromptController {
     }
   }
 
+  /**
+   * Build the prompt list for a deck-based prompt session.
+   * Used by both teacher preview and student session initialization.
+   * Accepts selectedDecks and totalCards in the query or body.
+   */
+  @Post('build-deck-prompts')
+  async buildDeckPrompts(
+    @Req() req: Request,
+    @Body() body: { selectedDecks?: Array<{ id?: string; title?: string }>; totalCards?: number },
+  ) {
+    const ctx = this.getCtx(req);
+    const selectedDecks = (body.selectedDecks ?? []).map(d => ({
+      id: (d.id ?? '').trim(),
+      title: (d.title ?? '').trim(),
+    })).filter(d => d.id);
+    const totalCards = body.totalCards ?? 10;
+
+    if (selectedDecks.length === 0) {
+      return { prompts: [], warning: 'No valid decks selected' };
+    }
+
+    try {
+      const result = await this.prompt.buildDeckPromptList(selectedDecks, totalCards);
+      return result;
+    } catch (err) {
+      appendLtiLog('prompt-decks', 'buildDeckPrompts failed', { error: String(err) });
+      throw err;
+    }
+  }
+
   @Get('assignment-groups')
   @UseGuards(TeacherRoleGuard)
   async getAssignmentGroups(@Req() req: Request, @Res() res: Response) {

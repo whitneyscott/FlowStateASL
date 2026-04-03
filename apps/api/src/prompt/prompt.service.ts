@@ -645,6 +645,109 @@ export class PromptService {
     }
   }
 
+  /**
+   * Build the prompt list for a deck-based prompt session.
+   * Implements the round-robin selection algorithm with deduplication.
+   */
+  async buildDeckPromptList(
+    selectedDecks: Array<{ id: string; title: string }>,
+    totalCards: number,
+  ): Promise<{
+    prompts: Array<{ title: string; videoId?: string; duration: number }>;
+    warning?: string;
+  }> {
+    if (!selectedDecks || selectedDecks.length === 0) {
+      return { prompts: [], warning: 'No decks selected' };
+    }
+
+    // Step 1: Fetch all cards from each deck
+    const deckCards = new Map<string, Array<{ id: string; title: string }>>();
+    for (const deck of selectedDecks) {
+      try {
+        const videos = await this.sproutVideo.fetchVideosByPlaylistId(deck.id);
+        // Step 2: Deduplicate within each deck by English title (case-insensitive)
+        const seen = new Set<string>();
+        const deduped: Array<{ id: string; title: string }> = [];
+        for (const v of videos) {
+          const key = (v.title ?? '').trim().toLowerCase();
+          if (!key || seen.has(key)) continue;
+          seen.add(key);
+          deduped.push({ id: v.id, title: v.title.trim() });
+        }
+        // Step 3: Shuffle each deck randomly
+        for (let i = deduped.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [deduped[i], deduped[j]] = [deduped[j], deduped[i]];
+        }
+        deckCards.set(deck.id, deduped);
+      } catch (err) {
+        appendLtiLog('prompt-decks', `Failed to fetch deck ${deck.id}`, { error: String(err) });
+        deckCards.set(deck.id, []);
+      }
+    }
+
+    // Step 4: Round-robin selection across decks
+    const selected: Array<{ title: string; videoId?: string }> = [];
+    const usedTitles = new Set<string>();
+    const deckIndices = new Map<string, number>(); // Track current position in each deck
+    selectedDecks.forEach(d => deckIndices.set(d.id, 0));
+
+    let deckRound = 0;
+    while (selected.length < totalCards) {
+      let addedThisRound = false;
+      for (const deck of selectedDecks) {
+        if (selected.length >= totalCards) break;
+
+        const cards = deckCards.get(deck.id) ?? [];
+        let idx = deckIndices.get(deck.id) ?? 0;
+
+        // Step 5: Skip duplicates - if title already in selected, take next from same deck
+        while (idx < cards.length) {
+          const card = cards[idx];
+          const key = card.title.toLowerCase().trim();
+          if (!usedTitles.has(key)) {
+            selected.push({ title: card.title, videoId: card.id });
+            usedTitles.add(key);
+            idx++;
+            addedThisRound = true;
+            break;
+          }
+          idx++; // Skip duplicate
+        }
+
+        deckIndices.set(deck.id, idx);
+      }
+
+      // Step 6b: If no cards added this round, all decks are exhausted
+      if (!addedThisRound) break;
+      deckRound++;
+    }
+
+    // Step 7: Warning if can't reach totalCards
+    let warning: string | undefined;
+    if (selected.length < totalCards) {
+      warning = `Only ${selected.length} unique words available across selected decks — showing ${selected.length} instead of ${totalCards}.`;
+    }
+
+    // Step 8: Final shuffle of selected prompts
+    for (let i = selected.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [selected[i], selected[j]] = [selected[j], selected[i]];
+    }
+
+    // Step 3 (Timing): Fetch video durations
+    const videoIds = selected.filter(s => s.videoId).map(s => s.videoId!);
+    const durations = await this.sproutVideo.getVideoDurations(videoIds);
+    const prompts = selected.map(s => ({
+      title: s.title,
+      videoId: s.videoId,
+      // totalPromptTime = 1.5s + videoDuration, fallback 3s
+      duration: 1.5 + (durations.get(s.videoId!) ?? 3),
+    }));
+
+    return { prompts, warning };
+  }
+
   async verifyAccess(
     ctx: LtiContext,
     accessCode: string,

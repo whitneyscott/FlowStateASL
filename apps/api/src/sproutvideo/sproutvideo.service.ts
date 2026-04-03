@@ -326,6 +326,75 @@ export class SproutVideoService {
   }
 
   /**
+   * Get video details including duration for a list of video IDs.
+   * Returns a map of video ID to duration in seconds.
+   */
+  async getVideoDurations(videoIds: string[]): Promise<Map<string, number>> {
+    const apiKey = this.config.get('SPROUT_KEY');
+    if (!apiKey || videoIds.length === 0) return new Map();
+
+    const result = new Map<string, number>();
+    const perPage = 100;
+    const baseDelay = (() => {
+      const raw = this.config.get<string>('SPROUTVIDEO_VIDEO_FETCH_DELAY_MS');
+      const parsed = raw ? parseInt(raw, 10) : NaN;
+      return Number.isFinite(parsed) && parsed >= 0 ? parsed : 300;
+    })();
+
+    // Fetch videos in batches using the videos endpoint with ids filter
+    for (let i = 0; i < videoIds.length; i += perPage) {
+      const batch = videoIds.slice(i, i + perPage);
+      const idsParam = batch.map(id => `id=${encodeURIComponent(id)}`).join('&');
+      const url = `https://api.sproutvideo.com/v1/videos?${idsParam}`;
+
+      let res: Response | null = null;
+      const maxRetries = 3;
+      let backoff = baseDelay;
+
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+          res = await fetch(url, {
+            headers: { 'SproutVideo-Api-Key': apiKey },
+          });
+        } catch (err) {
+          if (attempt === maxRetries) throw err;
+          await this.delay(backoff);
+          backoff *= 2;
+          continue;
+        }
+
+        if (res.ok) break;
+        if (res.status === 429 || (res.status >= 500 && res.status < 600)) {
+          if (attempt === maxRetries) throw new Error(`SproutVideo API error: ${res.status}`);
+          const retryAfter = res.headers.get('Retry-After');
+          const waitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : backoff;
+          await this.delay(waitMs);
+          backoff *= 2;
+          continue;
+        }
+        throw new Error(`SproutVideo API error: ${res.status}`);
+      }
+
+      if (!res || !res.ok) continue;
+
+      const data = (await res.json()) as {
+        videos?: Array<{ id?: string; length?: number }>;
+      };
+
+      const videos = data.videos ?? [];
+      for (const v of videos) {
+        if (v.id && typeof v.length === 'number') {
+          result.set(String(v.id), v.length);
+        }
+      }
+
+      await this.delay(baseDelay);
+    }
+
+    return result;
+  }
+
+  /**
    * Upload a video to SproutVideo (multipart/form-data). Optional folder_id for organization.
    * Returns the video id, security_token, and embed URL for use as fallback link.
    */
