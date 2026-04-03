@@ -129,7 +129,7 @@ export class CourseSettingsController {
   }
 
   @Post('recreate-announcement')
-  async recreateAnnouncement(@Req() req: Request) {
+  async recreateAnnouncement(@Req() req: Request, @Res() res: Response) {
     const ctx = req.session?.ltiContext as LtiContext | undefined;
     if (!ctx?.courseId) {
       throw new ForbiddenException('LTI context required');
@@ -141,12 +141,42 @@ export class CourseSettingsController {
     if (!(canvasAccessToken ?? '').trim()) {
       throw new HttpException(getOAuth401Body(req), HttpStatus.UNAUTHORIZED);
     }
-    await this.courseSettings.recreateAnnouncement(ctx.courseId, {
-      canvasDomain: ctx.canvasDomain,
-      canvasBaseUrl: ctx.canvasBaseUrl,
-      platformIss: ctx.platformIss,
-      canvasAccessToken: canvasAccessToken ?? undefined,
-    });
-    return { success: true };
+    try {
+      await this.courseSettings.recreateAnnouncement(ctx.courseId, {
+        canvasDomain: ctx.canvasDomain,
+        canvasBaseUrl: ctx.canvasBaseUrl,
+        platformIss: ctx.platformIss,
+        canvasAccessToken: canvasAccessToken ?? undefined,
+      });
+      return res.json({ success: true });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const looksLikeCanvasPermission403 =
+        /\b403\b/.test(msg) &&
+        (
+          msg.includes('Canvas create assignment failed') ||
+          msg.includes('Canvas list assignment groups failed') ||
+          msg.includes('Canvas create assignment group failed') ||
+          msg.includes('"status":"unauthorized"')
+        );
+      if (looksLikeCanvasPermission403) {
+        appendLtiLog('course-settings', 'recreate-announcement: Canvas permission denied, forcing re-authorization', {
+          courseId: ctx.courseId,
+          message: msg.slice(0, 300),
+        });
+        const sess = req.session as { canvasAccessToken?: string; save?: (cb: (e?: unknown) => void) => void } | undefined;
+        if (sess) {
+          delete sess.canvasAccessToken;
+          if (typeof sess.save === 'function') {
+            await new Promise<void>((resolve) => sess.save?.(() => resolve()));
+          }
+        }
+        const body = getOAuth401Body(req);
+        body.message =
+          'Canvas denied assignment creation (403). Re-authorize with Canvas and retry. If your Developer Key enforces scopes, ensure assignment and assignment_groups write scopes are enabled.';
+        return res.status(401).json(body);
+      }
+      throw err;
+    }
   }
 }

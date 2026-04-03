@@ -1,3 +1,8 @@
+export interface VideoPromptConfig {
+  selectedDecks: Array<{ id: string; title: string }>;
+  totalCards: number;
+}
+
 export interface PromptConfigJson {
   minutes?: number;
   prompts?: string[];
@@ -13,6 +18,10 @@ export interface PromptConfigJson {
   lockAt?: string;
   allowedAttempts?: number;
   version?: string;
+  
+  // NEW: Deck-based prompts from flashcard decks
+  promptMode?: 'text' | 'decks'; // defaults to 'text' if absent
+  videoPromptConfig?: VideoPromptConfig;
 }
 
 export class PutPromptConfigDto {
@@ -31,4 +40,11 @@ export class PutPromptConfigDto {
   lockAt?: string;
   allowedAttempts?: number;
   version?: string;
+  
+  // NEW: Deck-based prompts from flashcard decks
+  promptMode?: 'text' | 'decks';
+  videoPromptConfig?: {
+    selectedDecks?: Array<{ id?: string; title?: string }>;
+    totalCards?: number;
+  };
 }

@@ -391,7 +391,13 @@ export class PromptService {
     }
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
     const blob = await this.readPromptManagerSettingsBlob(ctx.courseId, domainOverride, token);
-    const config = blob?.configs?.[assignmentId] ?? null;
+    let config = blob?.configs?.[assignmentId] ?? null;
+    
+    // Backward compatibility: default promptMode to 'text' if not present
+    if (config && !config.promptMode) {
+      config = { ...config, promptMode: 'text' };
+    }
+    
     return config ?? null;
   }
 
@@ -461,6 +467,19 @@ export class PromptService {
       ...(dto.lockAt !== undefined && { lockAt: dto.lockAt }),
       ...(dto.allowedAttempts !== undefined && { allowedAttempts: dto.allowedAttempts }),
       ...(dto.version !== undefined && { version: dto.version }),
+      // NEW: Deck-based prompt configuration
+      ...(dto.promptMode !== undefined && { promptMode: dto.promptMode }),
+      ...(dto.videoPromptConfig !== undefined && {
+        videoPromptConfig: dto.videoPromptConfig.selectedDecks
+          ? {
+              selectedDecks: dto.videoPromptConfig.selectedDecks.map(d => ({
+                id: d.id ?? '',
+                title: d.title ?? '',
+              })),
+              totalCards: dto.videoPromptConfig.totalCards ?? 0,
+            }
+          : undefined,
+      }),
     };
 
     const assignmentTitle = (merged.assignmentName ?? '').trim() || `Assignment ${assignmentId}`;
