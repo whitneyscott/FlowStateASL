@@ -36,9 +36,9 @@ export function ToolSelector({ context, currentTool }: ToolSelectorProps) {
       <span className="px-4 py-2 rounded font-semibold bg-emerald-600 text-white">
         Flashcards
       </span>
-      <span className="px-4 py-2 rounded font-semibold bg-zinc-800 text-zinc-500" title="Use Prompter LTI placement">
+      <NavLink to="/prompter" className={navLinkClass}>
         Prompt Manager
-      </span>
+      </NavLink>
     </div>
   );
 }
