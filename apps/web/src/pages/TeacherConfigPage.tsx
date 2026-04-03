@@ -71,6 +71,13 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const [instructions, setInstructions] = useState('');
   const [showSettings, setShowSettings] = useState(true);
   const [showManualTokenModal, setShowManualTokenModal] = useState(false);
+  
+  // Deck mode state
+  const [promptMode, setPromptMode] = useState<'text' | 'decks'>('text');
+  const [selectedDecks, setSelectedDecks] = useState<promptApi.DeckConfig[]>([]);
+  const [totalCards, setTotalCards] = useState(10);
+  const [deckPromptWarning, setDeckPromptWarning] = useState<string | null>(null);
+  const [estimatedSessionLength, setEstimatedSessionLength] = useState<string>('');
 
   const teacher = context && isTeacher(context.roles);
   const hasLti = context?.courseId && context.userId !== 'standalone';
@@ -163,6 +170,11 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         setLockAt(data.lockAt ?? '');
         setAllowedAttempts(data.allowedAttempts ?? -1);
         setInstructions(data.instructions ?? '');
+        setPromptMode(data.promptMode ?? 'text');
+        if (data.videoPromptConfig) {
+          setSelectedDecks(data.videoPromptConfig.selectedDecks ?? []);
+          setTotalCards(data.videoPromptConfig.totalCards ?? 10);
+        }
       } else {
         setMinutes(5);
         setPrompts([]);
@@ -255,6 +267,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
           unlockAt: unlockAt.trim() || undefined,
           lockAt: lockAt.trim() || undefined,
           allowedAttempts,
+          promptMode,
+          videoPromptConfig: promptMode === 'decks' ? { selectedDecks, totalCards } : undefined,
         },
         targetId!
       );
@@ -401,6 +415,11 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setLockAt('');
     setAllowedAttempts(-1);
     setInstructions('');
+    setPromptMode('text');
+    setSelectedDecks([]);
+    setTotalCards(10);
+    setDeckPromptWarning(null);
+    setEstimatedSessionLength('');
     if (!assignmentId) {
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
@@ -412,7 +431,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     try {
       setLastFunction('PUT /api/prompt/config');
       await promptApi.putPromptConfig(
-        { minutes: 5, prompts: [], accessCode: '', assignmentName: '', moduleId: '', pointsPossible: 10, instructions: '', dueAt: '', unlockAt: '', lockAt: '', allowedAttempts: -1 },
+        { minutes: 5, prompts: [], accessCode: '', assignmentName: '', moduleId: '', pointsPossible: 10, instructions: '', dueAt: '', unlockAt: '', lockAt: '', allowedAttempts: -1, promptMode: 'text' },
         assignmentId
       );
       setLastApiResult('PUT /api/prompt/config', 200, true);
@@ -712,25 +731,102 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                   <div className="prompter-settings-resize-handle" title="Column divider" />
                   <div className="prompter-settings-col-prompts">
                     <div className="prompter-settings-header-row">
-                      <label className="prompter-settings-label"><strong>Prompts (warm-up text)</strong></label>
-                      <button type="button" onClick={addPrompt} className="prompter-btn-add-pool">
-                        + Add to Pool
-                      </button>
+                      <label className="prompter-settings-label"><strong>Prompt Source</strong></label>
                     </div>
-                    {prompts.map((p, i) => (
-                      <div key={i} className="prompter-prompt-item-row">
-                        <textarea
-                          value={p}
-                          onChange={(e) => updatePrompt(i, e.target.value)}
-                          rows={2}
-                          className="prompter-settings-input"
-                          placeholder="Prompt text..."
+                    <div className="prompter-settings-section">
+                      <label className="prompter-settings-label prompter-settings-label-block">
+                        <input
+                          type="radio"
+                          name="promptMode"
+                          value="text"
+                          checked={promptMode === 'text'}
+                          onChange={() => setPromptMode('text')}
                         />
-                        <button type="button" onClick={() => removePrompt(i)} className="prompter-btn-remove">
-                          Remove
-                        </button>
+                        {' '}Text Prompts (manual)
+                      </label>
+                      <label className="prompter-settings-label prompter-settings-label-block">
+                        <input
+                          type="radio"
+                          name="promptMode"
+                          value="decks"
+                          checked={promptMode === 'decks'}
+                          onChange={() => setPromptMode('decks')}
+                        />
+                        {' '}Deck Prompts (from flashcard decks)
+                      </label>
+                    </div>
+                    
+                    {promptMode === 'text' ? (
+                      <>
+                        <div className="prompter-settings-header-row">
+                          <label className="prompter-settings-label"><strong>Text Prompts</strong></label>
+                          <button type="button" onClick={addPrompt} className="prompter-btn-add-pool">
+                            + Add to Pool
+                          </button>
+                        </div>
+                        {prompts.map((p, i) => (
+                          <div key={i} className="prompter-prompt-item-row">
+                            <textarea
+                              value={p}
+                              onChange={(e) => updatePrompt(i, e.target.value)}
+                              rows={2}
+                              className="prompter-settings-input"
+                              placeholder="Prompt text..."
+                            />
+                            <button type="button" onClick={() => removePrompt(i)} className="prompter-btn-remove">
+                              Remove
+                            </button>
+                          </div>
+                        ))}
+                      </>
+                    ) : (
+                      <div className="prompter-settings-section">
+                        <label className="prompter-settings-label"><strong>Deck Configuration</strong></label>
+                        <p className="prompter-hint">Select flashcard decks to use as prompts. Words will be selected using round-robin from all selected decks.</p>
+                        
+                        <div className="prompter-settings-field">
+                          <label className="prompter-settings-label">Total Cards:</label>
+                          <input
+                            type="number"
+                            min={1}
+                            max={100}
+                            value={totalCards}
+                            onChange={(e) => setTotalCards(Number(e.target.value) || 10)}
+                            className="prompter-settings-input prompter-settings-input-narrow"
+                          />
+                        </div>
+                        
+                        <div className="prompter-settings-field">
+                          <label className="prompter-settings-label">Selected Decks:</label>
+                          <div className="prompter-deck-list">
+                            {selectedDecks.length === 0 ? (
+                              <p className="prompter-hint">No decks selected. Deck selection UI coming soon — use API to configure.</p>
+                            ) : (
+                              selectedDecks.map((deck, i) => (
+                                <div key={i} className="prompter-deck-item">
+                                  <span>{deck.title}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedDecks((d) => d.filter((_, j) => j !== i))}
+                                    className="prompter-btn-remove-sm"
+                                  >
+                                    Remove
+                                  </button>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        </div>
+                        
+                        {deckPromptWarning && (
+                          <p className="prompter-error-message">{deckPromptWarning}</p>
+                        )}
+                        
+                        {estimatedSessionLength && (
+                          <p className="prompter-hint">Estimated session length: {estimatedSessionLength}</p>
+                        )}
                       </div>
-                    ))}
+                    )}
                   </div>
                 </div>
                 <div className="prompter-settings-save-row prompter-settings-actions-row">
