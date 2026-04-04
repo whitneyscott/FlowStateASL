@@ -76,9 +76,9 @@ interface PromptConfigJson {
 
 **Checklist**
 
-- [ ] Prompt Manager deck mode: section multi-select row (parity with Flashcards hub).
-- [ ] Available decks count matches filtered hub after curriculum + unit + section selection.
-- [ ] No reliance on undecoded CSV for hierarchy (batch JSON uses plain strings).
+- [x] Prompt Manager deck mode: section multi-select row (parity with Flashcards hub).
+- [x] Available decks count matches filtered hub after curriculum + unit + section selection.
+- [x] No reliance on undecoded CSV for hierarchy (batch JSON uses plain strings).
 
 ### Part 6 — Student Experience
 - Extend TimerPage for decks mode

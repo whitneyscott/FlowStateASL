@@ -1,36 +1,55 @@
-# ASL Express
+# Plans Directory Map
 
-NestJS + React monorepo for ASL Express Drill and Assess.
+This directory now separates active plans, setup/how-to docs, archived/superseded plans, and non-plan key artifacts.
 
-## Phase A — Foundation
+## Structure
 
-- Nx monorepo with `apps/api` (NestJS) and `apps/web` (React + Vite + Tailwind CSS)
-- TypeORM with PostgreSQL
-- DataModule with CONFIG_REPOSITORY and ASSESSMENT_REPOSITORY (Postgres implementations)
-- LtiModule: `POST /api/lti/launch/flashcards`, `POST /api/lti/launch/prompter`, `GET /api/lti/context`
-- TeacherRoleGuard (8 PHP role patterns)
-- React AppRouter, useLtiContext hook, Tailwind baseline
+- `plans/active/`: Current plans and operational docs with incomplete work.
+- `plans/setup/`: How-to and setup documentation.
+- `plans/archive/`: Superseded investigations/plans kept verbatim for historical context.
+- `plans/LESSONS_LEARNED.md`: Cross-cutting historical lessons kept at the plans root.
+- `developer-keys/` (outside `plans/`): Canvas Developer Key JSON and related key setup notes.
 
-## Phase B — SproutVideo and Canvas Services
+## Quick Index
 
-- SproutVideoService: fetchAllPlaylists, getSmartVersions, isBlacklisted, filterPlaylists, getPlaylistItems
-- CanvasService: getModuleInfo, buildFilterFromModuleName, submitGrade, initiateFileUpload, uploadFileToCanvas, submitAssignmentWithFile, renameAssignment, findAssignmentByName
-- GET /api/flashcard/playlists?filter=, GET /api/flashcard/items?playlist_id=, GET /api/canvas/module?course_id=&module_id=
+### Active
 
-## Setup
+| File | Focus |
+|------|-------|
+| `plans/active/PromptManagerToDo.md` | Prompt Manager remaining roadmap items |
+| `plans/active/FlashcardToDo.md` | Flashcards unfinished feature backlog |
+| `plans/active/prompt-manager-sproutvideo-fallback.plan.md` | Prompt Manager fallback and reliability follow-up |
 
-1. Copy `.env.example` to `.env` and set `DATABASE_URL`, `SPROUT_KEY`. Canvas domain is auto-extracted from LTI launch. Set `CANVAS_OAUTH_CLIENT_ID`, `CANVAS_OAUTH_CLIENT_SECRET`, `CANVAS_OAUTH_REDIRECT_URI` for Canvas API (teachers and students use OAuth).
-2. Run migrations (requires DATABASE_URL in .env):
-   `npx typeorm migration:run -d apps/api/src/data/data-source.ts`
-3. `npm install`
+### Setup
 
-## Services to Run (Local Dev)
+| File | Focus |
+|------|-------|
+| `plans/setup/LTI_SETUP_CANVAS.md` | LTI setup baseline for Canvas |
+| `plans/setup/LTI_1.3_DEV_SETUP_WALKTHROUGH.md` | Local LTI 1.3 dev setup walkthrough |
+| `plans/setup/LTI_1.3_PROMPT_MANAGER_CANVAS_SETUP.md` | Prompt Manager-specific Canvas setup |
+| `plans/setup/HOWTO-SEED-DATABASE.md` | Database seeding including QTI seeding |
 
-| Service      | Command             | Purpose                                   |
-|--------------|---------------------|-------------------------------------------|
-| PostgreSQL   | (running)           | DB for DATABASE_URL                       |
-| API + Web | `npm run start:dev` | API :3000, Web :4200 (fully local; Canvas in Docker) |
+### Archived Milestones
 
-## LTI Launch
+| File | Why it matters |
+|------|----------------|
+| `plans/archive/announcement-based_flashcard_settings_778499cb.plan.md` | Captures delivered announcement-primary settings architecture |
+| `plans/archive/assignment-description-settings-storage.plan.md` | Records delivered assignment-description settings path |
+| `plans/archive/QTI-SEED-PLAN.md` | Records completed QTI parser + seed workflow |
+| `plans/archive/DeckPromptsPlan.md` | Deck prompt picker parity work completed and archived |
+| `plans/archive/lti-flow-analysis.plan.md` | Historical analysis context for LTI launch/submission behavior |
 
-POST to `/api/lti/launch/flashcards` or `/api/lti/launch/prompter` with LTI 1.1 parameters (e.g. from Canvas). Redirects to `/flashcards` or `/prompter`. The SPA fetches `GET /api/lti/context` to bootstrap.
+## Why Items Were Archived
+
+- Duplicated planning docs were archived when a newer canonical version existed.
+- Investigation-only docs were archived after conclusions were captured in implementation and lessons learned.
+- Strategy docs tied to retired approaches were archived once replaced by the unified assignment-anchor strategy and version-aware fallback chain.
+- Migration planning docs were archived after execution moved to operational follow-up and active implementation docs.
+
+## Operating Rules
+
+- Archived files are moved verbatim (no content edits).
+- Active files stay in `plans/active/` for current execution.
+- How-to/setup docs belong in `plans/setup/`.
+- Files with completed checklists move to `plans/archive/` unless they are setup/how-to docs.
+- New historical investigations should be added to `plans/archive/` once superseded.

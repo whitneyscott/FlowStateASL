@@ -41,4 +41,5 @@ export interface LtiContext {
   submissionToken?: string;
   /** Submission display title from deep-link item (resource_link.title or custom.sprout_video_title). */
   submissionTitle?: string;
+  ltiLaunchType?: '1.1' | '1.3';
 }

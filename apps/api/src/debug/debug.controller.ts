@@ -125,4 +125,177 @@ export class DebugController {
     if (msg) appendLtiLog(tag ?? 'viewer', msg);
     return { ok: true };
   }
+
+  /**
+   * Automated A/B runner for module LTI link creation diagnostics.
+   * Uses DEBUG_CANVAS_TOKEN (or provided canvasToken) so it can run without browser/session loops.
+   */
+  @Post('lti-link-experiment')
+  async runLtiLinkExperiment(
+    @Body()
+    body: {
+      courseId?: string;
+      moduleId?: string;
+      moduleName?: string;
+      assignmentId?: string;
+      assignmentName?: string;
+      domainOverride?: string;
+      canvasToken?: string;
+      clearLogFirst?: boolean;
+      variants?: Array<'content_id_only' | 'content_id_plus_external_url'>;
+    },
+    @Req() req: Request,
+  ) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new ForbiddenException('lti-link-experiment is disabled in production');
+    }
+    if (body?.clearLogFirst) clearLtiLog();
+
+    const courseId = String(body?.courseId ?? '').trim();
+    if (!courseId) {
+      throw new ForbiddenException('courseId is required');
+    }
+    const domainOverride = String(
+      body?.domainOverride ??
+      this.config.get<string>('CANVAS_API_BASE_URL') ??
+      'http://localhost',
+    ).trim();
+    const tokenFromSession = (req.session as { canvasAccessToken?: string } | undefined)?.canvasAccessToken;
+    const token = String(
+      body?.canvasToken ??
+      this.config.get<string>('DEBUG_CANVAS_TOKEN') ??
+      tokenFromSession ??
+      '',
+    ).trim();
+    if (!token) {
+      throw new ForbiddenException('canvas token required: provide canvasToken or set DEBUG_CANVAS_TOKEN');
+    }
+
+    appendLtiLog('debug', 'lti-link-experiment: start', {
+      courseId,
+      hasDomainOverride: !!domainOverride,
+      tokenSource: body?.canvasToken ? 'body' : this.config.get<string>('DEBUG_CANVAS_TOKEN') ? 'env' : 'session',
+    });
+
+    let moduleId = String(body?.moduleId ?? '').trim();
+    const moduleName = String(body?.moduleName ?? 'ASL Link Automation Lab').trim() || 'ASL Link Automation Lab';
+    if (!moduleId) {
+      const modules = await this.canvas.listModules(courseId, domainOverride, token);
+      const existing = modules.find((m) => m.name.trim() === moduleName);
+      if (existing) {
+        moduleId = String(existing.id);
+      } else {
+        const createdModule = await this.canvas.createModule(
+          courseId,
+          moduleName,
+          undefined,
+          domainOverride,
+          token,
+        );
+        moduleId = String(createdModule.id);
+      }
+    }
+
+    let assignmentId = String(body?.assignmentId ?? '').trim();
+    const assignmentName = String(
+      body?.assignmentName ?? `LTI Link Automation ${new Date().toISOString().slice(0, 19)}`,
+    ).trim();
+    if (!assignmentId) {
+      assignmentId = await this.canvas.createAssignment(
+        courseId,
+        assignmentName,
+        {
+          submissionTypes: ['online_text_entry'],
+          pointsPossible: 1,
+          published: true,
+          tokenOverride: token,
+        },
+        domainOverride,
+      );
+    }
+
+    await this.canvas.addAssignmentToModule(
+      courseId,
+      moduleId,
+      assignmentId,
+      domainOverride,
+      token,
+    );
+
+    const variantsInput = Array.isArray(body?.variants) ? body.variants : [];
+    const variants: Array<'content_id_only' | 'content_id_plus_external_url'> =
+      variantsInput.length > 0
+        ? variantsInput.filter(
+            (v): v is 'content_id_only' | 'content_id_plus_external_url' =>
+              v === 'content_id_only' || v === 'content_id_plus_external_url',
+          )
+        : ['content_id_only', 'content_id_plus_external_url'];
+
+    const results: Array<{
+      variant: 'content_id_only' | 'content_id_plus_external_url';
+      created: boolean;
+      skippedReason?: string;
+      moduleItemId?: number;
+      diagnosisBucket?: string;
+      moduleItemDetails?: Record<string, unknown> | null;
+      sessionless?: Record<string, unknown> | null;
+      resourceLinksCount: number;
+    }> = [];
+
+    for (const variant of variants) {
+      const syncResult = await this.canvas.syncPrompterLtiModuleItem(
+        courseId,
+        moduleId,
+        assignmentId,
+        domainOverride,
+        token,
+        {
+          linkTitle: `${assignmentName} — Prompter (${variant})`,
+          payloadVariant: variant,
+        },
+      );
+      const moduleItemDetails = syncResult.itemId
+        ? await this.canvas.getModuleItemDetails(courseId, moduleId, syncResult.itemId, domainOverride, token)
+        : null;
+      const sessionless = syncResult.itemId
+        ? await this.canvas.getSessionlessLaunchForModuleItem(courseId, syncResult.itemId, domainOverride, token)
+        : null;
+      const resourceLinks = syncResult.itemId
+        ? await this.canvas.findResourceLinksForModuleItem(courseId, syncResult.itemId, domainOverride, token)
+        : [];
+      results.push({
+        variant,
+        created: syncResult.created,
+        skippedReason: syncResult.skippedReason,
+        moduleItemId: syncResult.itemId,
+        diagnosisBucket: syncResult.diagnosisBucket,
+        moduleItemDetails,
+        sessionless,
+        resourceLinksCount: resourceLinks.length,
+      });
+    }
+
+    appendLtiLog('debug', 'lti-link-experiment: complete', {
+      courseId,
+      moduleId,
+      assignmentId,
+      results: results.map((r) => ({
+        variant: r.variant,
+        created: r.created,
+        diagnosisBucket: r.diagnosisBucket ?? null,
+        moduleItemId: r.moduleItemId ?? null,
+        resourceLinksCount: r.resourceLinksCount,
+      })),
+    });
+
+    return {
+      ok: true,
+      courseId,
+      moduleId,
+      assignmentId,
+      assignmentName,
+      domainOverride,
+      results,
+    };
+  }
 }

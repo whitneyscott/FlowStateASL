@@ -353,3 +353,125 @@ cloudflared tunnel --url http://localhost:3000
 ---
 
 *FlowStateASL — ASL Express Prompt Manager — LTI 1.3 Deep Linking Lessons Learned*
+
+---
+
+## Homework Submission / Module Placement Follow-up — April 4, 2026
+
+## Lesson 15: API-Created ExternalTool Module Items Can Succeed Structurally While Failing Launch Association
+
+**Problem:** Module item creation returned success, but launch still failed with "valid setting for this link" behavior.
+
+**Root Cause:** A successful Modules API create does not guarantee a valid LTI launch association. In repeated runs, the created module items had:
+- `diagnosisBucket = tool_launch_mismatch`
+- `resourceLinksCount = 0`
+- no `resourceLinkId`/`ltiResourceLinkId` signals
+
+**What this means:** "Created" is not equivalent to "launchable." Post-create probes must verify launch association, not just HTTP 2xx on create.
+
+**Rule:** Treat module-link creation as two gates:
+1) item created
+2) launch association present
+If gate (2) fails, do not treat the flow as working.
+
+---
+
+## Lesson 16: Assignment-Anchor Is the Primary Unified Path Across LTI 1.1 and 1.3
+
+**Problem:** Earlier strategy treated 1.1 and 1.3 as separate primary workstreams.
+
+**Resolution:** Live validation confirmed assignment-anchor works as the primary path in both versions. The architecture is now:
+- one primary path: `assignment_anchor`
+- version-aware fallback chain only when anchor fails
+
+**Rule:** Maintain one primary placement strategy, not parallel primary tracks by version.
+
+---
+
+## Lesson 17: 1.3 Validation Must Be Scored by Correct Fallback Behavior, Not Full Placement Success
+
+**Problem:** Expecting full 1.3 placement resolution during a phase where `deep_link_13` is intentionally stubbed causes false failure conclusions.
+
+**Resolution:** 1.3 runs were validated by marker sequence and graceful termination behavior:
+- `ltiVersionDetected` (`1.3`)
+- `assignmentAnchorLaunchFail` (when forced)
+- `templateCloneBlockedFor13`
+- `deepLink13NotImplemented`
+- terminal `manual_hybrid` marker with reason/code
+
+**Rule:** During stub phases, success criteria are correct branch routing + terminal diagnostics, not complete functional parity.
+
+---
+
+## Lesson 18: Structured Placement Markers with Attempt IDs Turn Debugging Into Deterministic Evidence
+
+**Problem:** Free-form logs made multi-branch placement failures hard to reconstruct and compare.
+
+**Resolution:** Standardized placement marker payload enabled deterministic tracing:
+`{ placementAttemptId, ltiVersion, path, marker, outcome, reason?, canvasResponseCode? }`
+
+Critical effect:
+- every branch and failure exit produced explicit terminal evidence
+- one `placementAttemptId` ties the entire decision chain together
+
+**Rule:** For decision-tree flows, require branch-complete structured markers with a per-attempt ID and terminal outcome marker.
+
+---
+
+## Lesson 19: Real 1.3 Signed Launch Automation Is Possible Without Guessing OIDC Parameters
+
+**Problem:** Directly guessing `lti_message_hint` or OIDC params produced invalid request errors.
+
+**Resolution:** Reliable automation path:
+1. Get a real Canvas sessionless launch URL for a module item
+2. Read Canvas-rendered OIDC hidden inputs (`iss`, `login_hint`, `client_id`, `target_link_uri`, `lti_message_hint`)
+3. Replay OIDC login + auth chain
+4. Post real signed `id_token` + `state` to `/api/lti/launch`
+
+This produced a true 1.3 session for downstream save-flow validation.
+
+**Rule:** Never synthesize `lti_message_hint`; harvest real values from Canvas launch HTML.
+
+---
+
+## Lesson 20: Environment/Session Context Mismatch Is a First-Class Failure Mode
+
+**Problem:** Validation scripts can report misleading failures if API server/session state is stale or mis-hydrated (missing launch-type context, missing session continuity, malformed body mode).
+
+**Resolution:** Reliable run discipline:
+- verify API availability first
+- ensure launch context is created in the same cookie/session used for save calls
+- use request body mode expected by endpoint
+- confirm branch evidence from placement markers, not just response code
+
+**Rule:** In LTI validation, session continuity and context hydration are part of the test contract.
+
+---
+
+## Lesson X — Code to Outcomes, Not Methods
+
+**Problem:** Investigation anchored to a specific API method (Modules API payload variants) and kept optimizing it after consistent negative evidence, consuming hours without questioning whether the approach itself was wrong.
+
+**Resolution:** Reframing from "make the Modules API work" to "auto-place a functional LTI module item that launches correctly" immediately opened the assignment-anchor path that solved the problem across both LTI versions.
+
+**Rule:** When approaching any implementation problem, define the desired outcome first and treat any specific method as one candidate path, not the destination. When a method produces consistent negative evidence, question the method before optimizing it further.
+
+---
+
+## Lesson Y — Apply Diagnostics That Match the LTI Version of the Environment
+
+**Problem:** Eight hours were spent probing LTI 1.3 constructs (Lti::ResourceLink records, sessionless launch associations, resource link probes) in a production environment running LTI 1.1. These probes returned empty not because anything was broken, but because those constructs do not exist in LTI 1.1. The diagnostic was measuring the wrong thing, producing misleading failure evidence and a premature go-no-go conclusion.
+
+**Resolution:** Establishing the runtime LTI version as a prerequisite to any diagnostic work — and using only the diagnostic constructs appropriate to that version — eliminated the false signals entirely.
+
+**Rule:** Before running any LTI diagnostic, confirm the runtime version. Never apply 1.3 diagnostic constructs (resource link probes, Deep Linking association checks) to a 1.1 environment. Treat version mismatch between diagnostics and environment as a first-class failure mode.
+
+---
+
+## Lesson Z — Automation-First Verification Is the Default When Stuck
+
+**Problem:** Manual click/retest loops are slow, inconsistent, and tend to blur signal with noise when debugging complex launch flows. They also delay hard go/no-go decisions by relying on subjective observations.
+
+**Resolution:** Converting blocked investigations into scripted, repeatable validation runs (API experiments, session bootstrap, save-flow execution, marker capture) produced deterministic evidence quickly, exposed branch behavior clearly, and prevented further time loss on guesswork.
+
+**Rule:** When progress stalls, switch immediately to automation-first verification. Treat scripted repro + structured evidence capture as the default method for breaking deadlocks, not a last resort.

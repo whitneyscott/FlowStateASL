@@ -2,7 +2,12 @@ import { Inject, Injectable } from '@nestjs/common';
 import { ASSESSMENT_REPOSITORY, PROMPT_DATA_REPOSITORY } from '../data/tokens';
 import type { IAssessmentRepository } from '../data/interfaces/assessment-repository.interface';
 import type { IPromptDataRepository } from '../data/interfaces/prompt-data-repository.interface';
-import { appendLtiLog } from '../common/last-error.store';
+import {
+  appendLtiLog,
+  appendPlacementMarker,
+  type PlacementLtiVersion,
+  type PlacementPath,
+} from '../common/last-error.store';
 import { ConfigService } from '@nestjs/config';
 import { CanvasService } from '../canvas/canvas.service';
 import { CourseSettingsService } from '../course-settings/course-settings.service';
@@ -190,6 +195,50 @@ export class PromptService {
     private readonly promptFallbackStore: PromptFallbackStore,
     private readonly promptVideoTitleStore: PromptVideoTitleStore,
   ) {}
+
+  private createPlacementAttemptId(): string {
+    return randomUUID().replace(/-/g, '').slice(0, 8);
+  }
+
+  private detectLtiVersion(ctx: LtiContext): PlacementLtiVersion {
+    if (ctx.ltiLaunchType === '1.1' || ctx.ltiLaunchType === '1.3') return ctx.ltiLaunchType;
+    if (ctx.messageType === 'LtiDeepLinkingRequest') return '1.3';
+    if (ctx.agsLineitemsUrl || ctx.agsLineitemUrl || ctx.deepLinkReturnUrl || ctx.deploymentId) return '1.3';
+    if (ctx.lisOutcomeServiceUrl || ctx.lisResultSourcedid) return '1.1';
+    return 'unknown';
+  }
+
+  private toCanvasResponseCode(err: unknown): number | undefined {
+    const msg = err instanceof Error ? err.message : String(err);
+    const m = msg.match(/failed:\s*(\d{3})/i) ?? msg.match(/\b(\d{3})\b/);
+    if (!m) return undefined;
+    const n = Number(m[1]);
+    return Number.isFinite(n) ? n : undefined;
+  }
+
+  private placementMarker(args: {
+    placementAttemptId: string;
+    ltiVersion: PlacementLtiVersion;
+    path: PlacementPath;
+    marker: string;
+    outcome: 'ok' | 'fail' | 'skip' | 'warn';
+    assignmentId: string;
+    moduleId: string;
+    reason?: string;
+    canvasResponseCode?: number;
+  }): void {
+    appendPlacementMarker({
+      placementAttemptId: args.placementAttemptId,
+      ltiVersion: args.ltiVersion,
+      path: args.path,
+      marker: args.marker,
+      outcome: args.outcome,
+      reason: args.reason,
+      canvasResponseCode: args.canvasResponseCode,
+      assignmentId: args.assignmentId,
+      moduleId: args.moduleId,
+    });
+  }
 
   /**
    * Resolve the visible assignment ID. In course_navigation, assignmentId comes from query param
@@ -601,10 +650,50 @@ export class PromptService {
 
     const moduleId = merged.moduleId?.trim();
     if (moduleId) {
-      appendLtiLog('prompt', 'putConfig: module sync start', {
-        moduleId,
+      const placementAttemptId = this.createPlacementAttemptId();
+      const ltiVersion = this.detectLtiVersion(ctx);
+      const assignAnchorSpike = ['1', 'true', 'yes', 'on'].includes(
+        (
+          this.config.get<string>('ASSIGN_ANCHOR_SPIKE') ??
+          process.env.ASSIGN_ANCHOR_SPIKE ??
+          ''
+        )
+          .trim()
+          .toLowerCase(),
+      );
+
+      this.placementMarker({
+        placementAttemptId,
+        ltiVersion,
+        path: 'assignment_anchor',
+        marker: 'ltiVersionDetected',
+        outcome: 'ok',
         assignmentId,
+        moduleId,
+        reason: ltiVersion,
       });
+      if (ltiVersion === 'unknown') {
+        this.placementMarker({
+          placementAttemptId,
+          ltiVersion,
+          path: 'assignment_anchor',
+          marker: 'ltiVersionUnknown',
+          outcome: 'warn',
+          assignmentId,
+          moduleId,
+          reason: 'routing_as_11_conservative',
+        });
+      }
+      this.placementMarker({
+        placementAttemptId,
+        ltiVersion,
+        path: 'assignment_anchor',
+        marker: 'pathSelected',
+        outcome: 'ok',
+        assignmentId,
+        moduleId,
+      });
+
       try {
         const assignmentSync = await this.canvas.addAssignmentToModule(
           ctx.courseId,
@@ -613,39 +702,167 @@ export class PromptService {
           domainOverride,
           token,
         );
-        appendLtiLog('prompt', 'putConfig: assignment module item sync result', {
-          moduleId,
+        this.placementMarker({
+          placementAttemptId,
+          ltiVersion,
+          path: 'assignment_anchor',
+          marker: 'assignmentAnchorLaunchOk',
+          outcome: 'ok',
           assignmentId,
-          created: assignmentSync.created,
-          itemId: assignmentSync.itemId ?? null,
+          moduleId,
+          reason: assignmentSync.created ? 'assignment_module_item_created' : 'assignment_module_item_already_present',
         });
-        const nameTrim = (merged.assignmentName ?? '').trim();
-        const linkTitle = nameTrim ? `${nameTrim} — Prompter` : 'ASL Express – Open Prompter (record here)';
-        const ltiSync = await this.canvas.syncPrompterLtiModuleItem(
-          ctx.courseId,
-          moduleId,
-          assignmentId,
-          domainOverride,
-          token,
-          { linkTitle },
-        );
-        appendLtiLog('prompt', 'putConfig: prompter LTI module item sync result', {
-          moduleId,
-          assignmentId,
-          created: ltiSync.created,
-          itemId: ltiSync.itemId ?? null,
-          skippedReason: ltiSync.skippedReason ?? null,
-        });
-        if (ltiSync.skippedReason && ltiSync.skippedReason !== 'already_linked') {
-          throw new Error(`Prompter LTI module item sync skipped: ${ltiSync.skippedReason}`);
+
+        if (assignAnchorSpike) {
+          this.placementMarker({
+            placementAttemptId,
+            ltiVersion,
+            path: 'assignment_anchor',
+            marker: 'placementTerminal',
+            outcome: 'ok',
+            assignmentId,
+            moduleId,
+            reason: 'assignment_anchor_spike_enabled',
+          });
+        } else {
+          this.placementMarker({
+            placementAttemptId,
+            ltiVersion,
+            path: 'assignment_anchor',
+            marker: 'placementTerminal',
+            outcome: 'ok',
+            assignmentId,
+            moduleId,
+            reason: 'assignment_anchor_primary',
+          });
         }
-      } catch (modErr) {
-        appendLtiLog('prompt', 'putConfig: module assignment/LTI sync failed', {
-          error: String(modErr),
-          moduleId,
+      } catch (assignmentErr) {
+        const canvasResponseCode = this.toCanvasResponseCode(assignmentErr);
+        this.placementMarker({
+          placementAttemptId,
+          ltiVersion,
+          path: 'assignment_anchor',
+          marker: 'assignmentAnchorLaunchFail',
+          outcome: 'fail',
           assignmentId,
+          moduleId,
+          reason: String(assignmentErr),
+          canvasResponseCode,
         });
-        throw modErr;
+
+        if (ltiVersion === '1.3') {
+          this.placementMarker({
+            placementAttemptId,
+            ltiVersion,
+            path: 'template_clone_11',
+            marker: 'templateCloneBlockedFor13',
+            outcome: 'skip',
+            assignmentId,
+            moduleId,
+            reason: 'template_clone_11_is_11_only',
+          });
+          this.placementMarker({
+            placementAttemptId,
+            ltiVersion,
+            path: 'deep_link_13',
+            marker: 'pathSelected',
+            outcome: 'ok',
+            assignmentId,
+            moduleId,
+          });
+          this.placementMarker({
+            placementAttemptId,
+            ltiVersion,
+            path: 'deep_link_13',
+            marker: 'deepLink13NotImplemented',
+            outcome: 'skip',
+            assignmentId,
+            moduleId,
+            reason: 'deep_link_13_step_not_implemented',
+          });
+          this.placementMarker({
+            placementAttemptId,
+            ltiVersion,
+            path: 'manual_hybrid',
+            marker: 'placementTerminal',
+            outcome: 'fail',
+            assignmentId,
+            moduleId,
+            reason: 'assignment_anchor_failed_and_deep_link_13_unavailable',
+            canvasResponseCode,
+          });
+          throw assignmentErr;
+        }
+
+        this.placementMarker({
+          placementAttemptId,
+          ltiVersion,
+          path: 'template_clone_11',
+          marker: 'pathSelected',
+          outcome: 'ok',
+          assignmentId,
+          moduleId,
+        });
+        try {
+          const nameTrim = (merged.assignmentName ?? '').trim();
+          const linkTitle = nameTrim ? `${nameTrim} — Prompter` : 'ASL Express – Open Prompter (record here)';
+          const ltiSync = await this.canvas.syncPrompterLtiModuleItem(
+            ctx.courseId,
+            moduleId,
+            assignmentId,
+            domainOverride,
+            token,
+            { linkTitle },
+          );
+          if (ltiSync.skippedReason && ltiSync.skippedReason !== 'already_linked') {
+            throw new Error(`Prompter LTI module item sync skipped: ${ltiSync.skippedReason}`);
+          }
+          this.placementMarker({
+            placementAttemptId,
+            ltiVersion,
+            path: 'template_clone_11',
+            marker: 'templateClone11Result',
+            outcome: 'ok',
+            assignmentId,
+            moduleId,
+            reason: ltiSync.created ? 'external_tool_module_item_created' : 'external_tool_module_item_already_present',
+          });
+          this.placementMarker({
+            placementAttemptId,
+            ltiVersion,
+            path: 'template_clone_11',
+            marker: 'placementTerminal',
+            outcome: 'ok',
+            assignmentId,
+            moduleId,
+            reason: 'template_clone_11_success',
+          });
+        } catch (cloneErr) {
+          const cloneResponseCode = this.toCanvasResponseCode(cloneErr);
+          this.placementMarker({
+            placementAttemptId,
+            ltiVersion,
+            path: 'template_clone_11',
+            marker: 'templateClone11Result',
+            outcome: 'fail',
+            assignmentId,
+            moduleId,
+            reason: String(cloneErr),
+            canvasResponseCode: cloneResponseCode,
+          });
+          this.placementMarker({
+            placementAttemptId,
+            ltiVersion,
+            path: 'manual_hybrid',
+            marker: 'placementTerminal',
+            outcome: 'fail',
+            assignmentId,
+            moduleId,
+            reason: 'assignment_anchor_failed_and_template_clone_11_failed',
+            canvasResponseCode: cloneResponseCode,
+          });
+          throw cloneErr;
+        }
       }
     }
 
@@ -665,8 +882,9 @@ export class PromptService {
     const allowedAttempts = Number.isFinite(Number(allowedAttemptsRaw))
       ? Math.max(1, Math.round(Number(allowedAttemptsRaw)))
       : 1;
-    const hasAssignmentUpdates =
-      agId || assignmentName || instructions !== '' || pointsPossible !== 100 || dueAt || unlockAt || lockAt || allowedAttempts !== 1;
+    const hasAssignmentUpdates = Boolean(
+      agId || assignmentName || instructions !== '' || pointsPossible !== 100 || dueAt || unlockAt || lockAt || allowedAttempts !== 1,
+    );
 
     if (rawDueAt || dueAt) {
       appendLtiLog('prompt', 'update-due-at', {

@@ -84,39 +84,18 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
     const isSyncTraceLine = (line: string): boolean => {
       const lc = lineLc(line);
       return (
-        lc.includes('sync-to-canvas') ||
-        lc.includes('putconfig') ||
-        lc.includes('syncprompterltimoduleitem') ||
-        lc.includes('resolvepromptercontextexternaltoolid') ||
-        lc.includes('module sync start') ||
-        lc.includes('assignment module item sync result') ||
-        lc.includes('prompter lti module item sync result') ||
-        lc.includes('externaltoolid') ||
-        lc.includes('moduleitemid') ||
-        lc.includes('resourcelinkid') ||
-        lc.includes('ltiresourcelinkid') ||
-        lc.includes('moduleitempayload') ||
-        lc.includes('sessionlesslaunchurl') ||
-        lc.includes('toollaunchurl') ||
-        lc.includes('resourcelinks') ||
-        lc.includes('updateassignment')
+        lc.includes('[placement]') ||
+        lc.includes('sync-to-canvas: putconfig failed')
       ) && !isSettingsBlobNoise(line);
     };
     const isLaunchDiagnosticsLine = (line: string): boolean => {
       const lc = lineLc(line);
       return (
+        lc.includes('[placement]') ||
         lc.includes('[launch-entry]') ||
         lc.includes('post /api/lti/launch received') ||
         lc.includes('post /api/lti/launch/prompter received') ||
-        lc.includes('post /api/lti/launch/flashcards received') ||
-        lc.includes('get /api/lti/oidc/login') ||
-        lc.includes('post /api/lti/oidc/login') ||
-        lc.includes('oidc login') ||
-        lc.includes('sessionlesslaunchurl') ||
-        lc.includes('moduleitemexternalurl') ||
-        lc.includes('moduleitemhtmlurl') ||
-        lc.includes('toollaunchurl') ||
-        lc.includes('resourcelinks')
+        lc.includes('post /api/lti/launch/flashcards received')
       ) && !isSettingsBlobNoise(line);
     };
 
@@ -125,18 +104,10 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
     const agLines = ltiLog.filter(
       (line) =>
         (
-          line.toLowerCase().includes('assignment group') ||
-          line.toLowerCase().includes('create-assignment') ||
-          line.toLowerCase().includes('createassignment') ||
-          line.toLowerCase().includes('create-group') ||
-          line.toLowerCase().includes('update-due-at') ||
-          line.toLowerCase().includes('sync-to-canvas') ||
-          line.toLowerCase().includes('putconfig') ||
-          line.toLowerCase().includes('module assignment/lti sync') ||
-          line.toLowerCase().includes('prompter lti module item') ||
-          line.toLowerCase().includes('externaltool') ||
-          line.toLowerCase().includes('resolvepromptercontextexternaltoolid') ||
-          line.toLowerCase().includes('lti context ids resolved')
+          line.toLowerCase().includes('create-assignment failed') ||
+          line.toLowerCase().includes('create-assignment success') ||
+          line.toLowerCase().includes('create-assignment: completed successfully') ||
+          line.toLowerCase().includes('delete-assignment')
         ) &&
         !isSettingsBlobNoise(line)
     );

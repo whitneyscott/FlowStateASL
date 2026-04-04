@@ -2,6 +2,17 @@
 
 This document describes the plan for seeding playlists and videos from QTI export files (zip archives).
 
+## Completion Status (Updated to Implemented Method)
+
+Status: Completed and functional.
+
+Implemented method:
+
+- Parser implemented at `apps/api/src/qti/qti-parser.ts`.
+- Seed runner implemented at `apps/api/src/scripts/seed-qti.ts`.
+- Package script present in `package.json` as `seed:qti`.
+- Workflow reads `qtifiles/*.zip` and upserts playlist/video records.
+
 ## Overview
 
 QTI (Question and Test Interoperability) exports from course platforms can be used as a source of playlist data. Each zip file represents one playlist; the zip contents are parsed to extract playlist metadata and video information.

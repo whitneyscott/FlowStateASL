@@ -1209,8 +1209,21 @@ export class CanvasService {
     assignmentId: string,
     domainOverride?: string,
     tokenOverride?: string | null,
-    options?: { linkTitle?: string },
-  ): Promise<{ created: boolean; skippedReason?: string; itemId?: number }> {
+    options?: {
+      linkTitle?: string;
+      payloadVariant?: 'content_id_only' | 'content_id_plus_external_url';
+    },
+  ): Promise<{
+    created: boolean;
+    skippedReason?: string;
+    itemId?: number;
+    payloadVariant: 'content_id_only' | 'content_id_plus_external_url';
+    diagnosisBucket?:
+      | 'association_created'
+      | 'association_missing_after_create'
+      | 'tool_launch_mismatch'
+      | 'sessionless_unresolvable';
+  }> {
     const collectLaunchIdHints = (
       item: Record<string, unknown> | null | undefined,
     ): { resourceLinkId?: string | null; ltiResourceLinkId?: string | null; launchUrlResourceLinkId?: string | null } => {
@@ -1254,18 +1267,36 @@ export class CanvasService {
       };
     };
 
-    appendLtiLog('canvas', 'syncPrompterLtiModuleItem: start', { courseId, moduleId, assignmentId });
+    const payloadVariantEnv = (
+      this.config.get<string>('CANVAS_PROMPTER_MODULE_PAYLOAD_MODE') ??
+      process.env.CANVAS_PROMPTER_MODULE_PAYLOAD_MODE ??
+      ''
+    )
+      .trim()
+      .toLowerCase();
+    const payloadVariant =
+      options?.payloadVariant ??
+      (payloadVariantEnv === 'content_id_plus_external_url'
+        ? 'content_id_plus_external_url'
+        : 'content_id_only');
+    appendLtiLog('canvas', 'syncPrompterLtiModuleItem: start', {
+      courseId,
+      moduleId,
+      assignmentId,
+      payloadVariant,
+    });
     const toolIdStr = await this.resolvePrompterContextExternalToolId(courseId, domainOverride, tokenOverride);
     if (!toolIdStr) {
       return {
         created: false,
         skippedReason:
           'Prompter external tool not found (resolver returned no candidate). Check Bridge Log lines for resolvePrompterContextExternalToolId ranked candidates, ensure OAuth scope allows GET /courses/:course_id/external_tools, and verify tool launch URL targets /api/lti/launch.',
+        payloadVariant,
       };
     }
     const toolIdNum = parseInt(toolIdStr, 10);
     if (Number.isNaN(toolIdNum)) {
-      return { created: false, skippedReason: 'Invalid external tool id' };
+      return { created: false, skippedReason: 'Invalid external tool id', payloadVariant };
     }
 
     const items = await this.listModuleItems(courseId, moduleId, domainOverride, tokenOverride);
@@ -1274,6 +1305,9 @@ export class CanvasService {
 
     const base = this.getBaseUrl(domainOverride);
     const externalUrl = `${base}/courses/${courseId}/external_tools/${toolIdStr}?assignment_id=${encodeURIComponent(assignmentId)}`;
+    const title =
+      (options?.linkTitle ?? '').trim() ||
+      'ASL Express – Open Prompter (record here)';
 
     const urlMatchesAssignment = (url: string | undefined): boolean => {
       if (!url) return false;
@@ -1286,9 +1320,41 @@ export class CanvasService {
       }
     };
 
-    const existing = items.find(
-      (i) => i.type === 'ExternalTool' && i.content_id === toolIdNum && urlMatchesAssignment(i.external_url),
+    const existing = items.find((i) =>
+      i.type === 'ExternalTool' &&
+      i.content_id === toolIdNum &&
+      (
+        payloadVariant === 'content_id_plus_external_url'
+          ? urlMatchesAssignment(i.external_url)
+          : String(i.title ?? '').trim() === title
+      ),
     );
+
+    const classifyDiagnosisBucket = (args: {
+      launchIds: {
+        resourceLinkId?: string | null;
+        ltiResourceLinkId?: string | null;
+        launchUrlResourceLinkId?: string | null;
+      };
+      sessionless: Record<string, unknown> | null;
+      resourceLinks: Array<Record<string, unknown>>;
+    }): 'association_created' | 'association_missing_after_create' | 'tool_launch_mismatch' | 'sessionless_unresolvable' => {
+      const hasLaunchIds = !!(
+        args.launchIds.resourceLinkId ||
+        args.launchIds.ltiResourceLinkId ||
+        args.launchIds.launchUrlResourceLinkId
+      );
+      const hasResourceLinks = Array.isArray(args.resourceLinks) && args.resourceLinks.length > 0;
+      const hasAssociation = hasLaunchIds || hasResourceLinks;
+      const sessionlessUrl = String(args.sessionless?.url ?? '').trim();
+      const hasSessionlessUrl = !!sessionlessUrl;
+      const sessionlessError = !!args.sessionless?.error;
+      if (hasAssociation && hasSessionlessUrl) return 'association_created';
+      if (!hasAssociation && hasSessionlessUrl) return 'tool_launch_mismatch';
+      if ((hasAssociation && !hasSessionlessUrl) || sessionlessError) return 'sessionless_unresolvable';
+      return 'association_missing_after_create';
+    };
+
     if (existing) {
       const externalTool = await this.getExternalTool(courseId, toolIdNum, domainOverride, tokenOverride);
       const existingDetails = await this.getModuleItemDetails(
@@ -1311,10 +1377,17 @@ export class CanvasService {
         domainOverride,
         tokenOverride,
       );
+      const diagnosisBucket = classifyDiagnosisBucket({
+        launchIds: existingLaunchIds,
+        sessionless,
+        resourceLinks,
+      });
       appendLtiLog('canvas', 'syncPrompterLtiModuleItem: already present', {
         externalToolId: toolIdNum,
         moduleItemId: existing.id,
         assignmentId,
+        payloadVariant,
+        diagnosisBucket,
         resourceLinkId: existingLaunchIds.resourceLinkId ?? null,
         ltiResourceLinkId: existingLaunchIds.ltiResourceLinkId ?? null,
         launchUrlResourceLinkId: existingLaunchIds.launchUrlResourceLinkId ?? null,
@@ -1332,24 +1405,30 @@ export class CanvasService {
           canvasLaunchUrl: r.canvas_launch_url ?? null,
         })),
       });
-      return { created: false, skippedReason: 'already_linked', itemId: existing.id };
+      return {
+        created: false,
+        skippedReason: 'already_linked',
+        itemId: existing.id,
+        payloadVariant,
+        diagnosisBucket,
+      };
     }
 
     const position = assignmentItem?.position ?? (items.length ? Math.max(...items.map((i) => i.position)) + 1 : 1);
-    const title =
-      (options?.linkTitle ?? '').trim() ||
-      'ASL Express – Open Prompter (record here)';
 
     const url = `${base}/api/v1/courses/${courseId}/modules/${moduleId}/items`;
+    const moduleItemPayload: Record<string, unknown> = {
+      type: 'ExternalTool',
+      content_id: toolIdNum,
+      position,
+      title,
+      new_tab: true,
+    };
+    if (payloadVariant === 'content_id_plus_external_url') {
+      moduleItemPayload.external_url = externalUrl;
+    }
     const body = {
-      module_item: {
-        type: 'ExternalTool',
-        content_id: toolIdNum,
-        external_url: externalUrl,
-        position,
-        title,
-        new_tab: true,
-      },
+      module_item: moduleItemPayload,
     };
     appendLtiLog('canvas', 'syncPrompterLtiModuleItem: POST ExternalTool module item', {
       moduleItemPayload: body.module_item,
@@ -1357,7 +1436,8 @@ export class CanvasService {
       assignmentId,
       externalToolId: toolIdStr,
       assignmentModuleItemId: assignmentItem?.id ?? null,
-      externalUrl,
+      externalUrl: payloadVariant === 'content_id_plus_external_url' ? externalUrl : null,
+      payloadVariant,
       title,
     });
     const res = await fetch(url, {
@@ -1387,11 +1467,18 @@ export class CanvasService {
       ? await this.findResourceLinksForModuleItem(courseId, created.id, domainOverride, tokenOverride)
       : [];
     const createdLaunchIds = collectLaunchIdHints(createdDetails ?? created);
+    const diagnosisBucket = classifyDiagnosisBucket({
+      launchIds: createdLaunchIds,
+      sessionless,
+      resourceLinks,
+    });
     appendLtiLog('canvas', 'syncPrompterLtiModuleItem OK', {
       externalToolId: toolIdStr,
       moduleItemId: created?.id,
       assignmentModuleItemId: assignmentItem?.id ?? null,
       assignmentId,
+      payloadVariant,
+      diagnosisBucket,
       resourceLinkId: createdLaunchIds.resourceLinkId ?? null,
       ltiResourceLinkId: createdLaunchIds.ltiResourceLinkId ?? null,
       launchUrlResourceLinkId: createdLaunchIds.launchUrlResourceLinkId ?? null,
@@ -1410,7 +1497,12 @@ export class CanvasService {
         canvasLaunchUrl: r.canvas_launch_url ?? null,
       })),
     });
-    return { created: true, itemId: created?.id };
+    return {
+      created: true,
+      itemId: created?.id,
+      payloadVariant,
+      diagnosisBucket,
+    };
   }
 
   /** Create a course module. Position is 1-based; pass 1 for first, or modules.length+1 for end. */

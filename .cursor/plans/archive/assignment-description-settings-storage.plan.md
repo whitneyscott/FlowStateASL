@@ -1,11 +1,28 @@
 ---
 name: Assignment Description Settings Storage
-overview: Replace course_settings table with assignment description as primary storage. On teacher save, fetch playlists and full video details (title, embed) for filtered playlists — takes 30–60 seconds; show modal so teacher knows. Students get instant deck opens with cached data. SproutVideo update check on teacher load for staleness.
+overview: Completed using a functional variant: Flashcard settings are stored in assignment description as backup and dual-written to a course announcement that students read. This plan's original full-playlist cache design was not required for success.
 todos: []
 isProject: false
 ---
 
 # Store Teacher Settings in Flashcard Progress Assignment Description
+
+## Completion Status (Updated to Implemented Method)
+
+Status: Completed and functional.
+
+Implemented method:
+
+- Teacher save writes settings JSON to the Flashcard Settings assignment description via `CourseSettingsService.save` and `CanvasService.updateAssignmentDescription`.
+- The same save flow dual-writes to Canvas announcement storage (student-facing primary read path).
+- Teacher reads use assignment description parsing from Canvas.
+- Student reads use announcement-based settings flow through `getForStudent`.
+- Teacher UI includes the long-save modal copy ("Configuring decks for best student experience...").
+
+Notes on variance from original plan:
+
+- The originally proposed full `filteredPlaylists/items` cache-in-description architecture was not required for functional completion.
+- Completion criteria used here are operational behavior in the shipped codepath, not strict parity with the original design draft.
 
 ## Current State
 

@@ -1,11 +1,33 @@
 ---
 name: Announcement-Based Flashcard Settings
-overview: "Implement a two-tier Flashcard Settings storage: primary (Course Announcement readable by students with their own OAuth token) and backup (Flashcard Settings assignment). Extend OAuth to all users, add Canvas Announcement API, and adjust teacher/student flows accordingly."
+overview: "Completed. Two-tier Flashcard Settings storage is live: primary course announcement for student reads and assignment-description backup for teacher/admin recovery."
 todos: []
 isProject: false
 ---
 
 # Announcement-Based Flashcard Settings Architecture
+
+## Completion Status (Updated to Implemented Method)
+
+Status: Completed and functional.
+
+Implemented method:
+
+- OAuth launch flow requests Canvas OAuth for all users when token is missing.
+- Canvas announcement API support was added in `CanvasService`:
+  - `findFlashcardSettingsAnnouncement`
+  - `createFlashcardSettingsAnnouncement`
+  - `updateFlashcardSettingsAnnouncement`
+- `CourseSettingsService.save` performs dual-write:
+  - writes assignment description backup
+  - upserts announcement payload used by students
+- Student flashcard constraints resolve from announcement path (`getForStudent`) using student OAuth token.
+- Teacher flows include announcement health/recovery endpoints:
+  - `GET /api/course-settings/announcement-status`
+  - `POST /api/course-settings/recreate-announcement`
+- Teacher UI recovery modal is implemented in `TeacherSettings.tsx` when announcement is missing.
+
+This plan is complete and ready for archival as implemented history.
 
 ## Step 1: Existing Codebase Report
 

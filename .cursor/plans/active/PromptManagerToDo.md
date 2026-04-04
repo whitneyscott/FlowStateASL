@@ -56,7 +56,7 @@ Every new Prompter API step MUST emit to the Bridge Debug Log via `appendLtiLog`
 
 ### Teacher Config Enhancements
 
-- [ ] Full assignment options UI: points, assignment group, rubric, due/unlock/lock, attempts
+- [x] Full assignment options UI: points, assignment group, rubric, due/unlock/lock, attempts
 - [ ] Prompt reorder (drag-and-drop or up/down)
 - [ ] Rich text for prompts (Quill or equivalent)
 

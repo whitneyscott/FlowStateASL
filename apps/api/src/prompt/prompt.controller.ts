@@ -52,7 +52,8 @@ export class PromptController {
     if (!raw) throw new ForbiddenException('LTI context required');
     const ctx = sanitizeLtiContext(raw) as LtiContext;
     const canvasAccessToken = (req.session as { canvasAccessToken?: string })?.canvasAccessToken;
-    return { ...ctx, canvasAccessToken };
+    const ltiLaunchType = (req.session as { ltiLaunchType?: '1.1' | '1.3' })?.ltiLaunchType;
+    return { ...ctx, canvasAccessToken, ltiLaunchType };
   }
 
   /** Merge assignmentId from query into ctx for teacher endpoints (course_navigation has no assignment). */
