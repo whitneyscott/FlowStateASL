@@ -1,4 +1,4 @@
-# Prompt Manager To-Do
+# Prompt Manager Todo
 
 ## Context (Apr 2026 — what we were sorting out)
 
