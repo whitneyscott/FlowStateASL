@@ -44,7 +44,9 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const [configuredAssignments, setConfiguredAssignments] = useState<promptApi.ConfiguredAssignment[]>([]);
   const [loadingAssignments, setLoadingAssignments] = useState(false);
   const [, setGradeDropdownValue] = useState('');
-  const [assignmentActionMode, setAssignmentActionMode] = useState<'edit' | 'grade'>('edit');
+  const [assignmentActionMode, setAssignmentActionMode] = useState<'edit' | 'grade' | 'create'>(
+    createMode || !assignmentId ? 'create' : 'edit'
+  );
   const [configAssignValue, setConfigAssignValue] = useState('');
   const [creatingAssignment, setCreatingAssignment] = useState(false);
   const [deletingAssignment, setDeletingAssignment] = useState(false);
@@ -238,15 +240,18 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
 
   useEffect(() => {
     if (assignmentId) setConfigAssignValue(assignmentId);
-    else setConfigAssignValue('__new__');
-  }, [assignmentId]);
+    else setConfigAssignValue(assignmentActionMode === 'create' ? '__new__' : '');
+  }, [assignmentId, assignmentActionMode]);
 
   useEffect(() => {
     if (assignmentActionMode === 'grade' && configAssignValue === '__new__') {
       setConfigAssignValue('');
     }
-    if (assignmentActionMode === 'edit' && !configAssignValue) {
-      setConfigAssignValue(assignmentId || '__new__');
+    if (assignmentActionMode === 'create' && configAssignValue !== '__new__') {
+      setConfigAssignValue('__new__');
+    }
+    if (assignmentActionMode === 'edit' && (!configAssignValue || configAssignValue === '__new__')) {
+      setConfigAssignValue(assignmentId || '');
     }
   }, [assignmentActionMode, configAssignValue, assignmentId]);
 
@@ -455,6 +460,26 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     });
   const removePrompt = (i: number) => setPrompts((p) => p.filter((_, j) => j !== i));
 
+  const enterCreateMode = () => {
+    setAssignmentActionMode('create');
+    setSearchParams({ create: '1' });
+    setConfigAssignValue('__new__');
+    setAssignmentName('ASL Express Assignment');
+    setMinutes(5);
+    setPrompts([]);
+    setAccessCode('');
+    setModuleId('');
+    setAssignmentGroupId('');
+    setRubricId('');
+    setPointsPossible(10);
+    setDueAt('');
+    setUnlockAt('');
+    setLockAt('');
+    setAllowedAttempts(-1);
+    setInstructions('');
+    setPromptMode('text');
+  };
+
   const handleConfigAssignSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const v = e.target.value;
     setConfigAssignValue(v);
@@ -470,22 +495,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       }
       return;
     }
-    if (v === '__new__') {
-      setSearchParams({ create: '1' });
-      setAssignmentName('ASL Express Assignment');
-      setMinutes(5);
-      setPrompts([]);
-      setAccessCode('');
-      setModuleId('');
-      setAssignmentGroupId('');
-      setRubricId('');
-      setPointsPossible(10);
-      setDueAt('');
-      setUnlockAt('');
-      setLockAt('');
-      setAllowedAttempts(-1);
-      setInstructions('');
-    } else if (v) {
+    if (v) {
       setSearchParams({ assignmentId: v });
     }
   };
@@ -505,6 +515,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       setCreateAssignName('');
       await loadAssignments();
       setSearchParams({ assignmentId: newId });
+      setAssignmentActionMode('edit');
+      setShowSettings(true);
       setConfigAssignValue(newId);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -530,6 +542,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       await promptApi.deleteConfiguredAssignment(configAssignValue);
       setLastApiResult('DELETE /api/prompt/configured-assignments/:assignmentId', 204, true);
       setSearchParams({ create: '1' });
+      setAssignmentActionMode('create');
       setConfigAssignValue('__new__');
       setGradeDropdownValue('');
       setAssignmentName('ASL Express Assignment');
@@ -641,6 +654,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
 
   const showForm = hasLti;
   const effectiveAssignmentId = assignmentId;
+  const canEditAssignmentSettings = assignmentActionMode === 'edit' && !!assignmentId;
 
   if (assignmentId && loading) {
     return (
@@ -770,9 +784,6 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
               <button type="button" className="prompter-btn-toggle-settings" onClick={() => setShowSettings((s) => !s)}>
                 {showSettings ? 'Hide Settings' : 'Show Settings'}
               </button>
-              <button type="button" className="prompter-btn-ready" onClick={handleSave} disabled={saving}>
-                {saving ? <><span className="prompter-inline-spinner" /> Saving...</> : 'Save'}
-              </button>
               {effectiveAssignmentId && (
                 <Link
                   to={`/viewer?assignmentId=${encodeURIComponent(effectiveAssignmentId)}&grading=1`}
@@ -806,31 +817,42 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                       >
                         Grade
                       </button>
+                      <button
+                        type="button"
+                        className={assignmentActionMode === 'create' ? 'prompter-btn-ready' : 'prompter-btn-secondary'}
+                        onClick={enterCreateMode}
+                        disabled={loadingAssignments || saving}
+                      >
+                        Create
+                      </button>
                     </div>
-                    <label className="prompter-settings-label">
-                      {assignmentActionMode === 'grade' ? 'Select assignment for grading' : 'Select an assignment to edit or create new'}
-                    </label>
-                    <select
-                      className="prompter-settings-input"
-                      value={assignmentActionMode === 'grade' && configAssignValue === '__new__' ? '' : configAssignValue}
-                      onChange={handleConfigAssignSelect}
-                      disabled={loadingAssignments}
-                      style={{ maxWidth: 480 }}
-                    >
-                      <option value="">
-                        {loadingAssignments
-                          ? 'Loading assignments...'
-                          : assignmentActionMode === 'grade'
-                            ? '— Select Assignment to Grade —'
-                            : '— Select Assignment to Edit —'}
-                      </option>
-                      {assignmentActionMode === 'edit' && <option value="__new__">+ Create new assignment</option>}
-                      {configuredAssignments.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.name} ({a.submissionCount} submissions{assignmentActionMode === 'grade' ? `, ${a.ungradedCount} ungraded` : ''})
-                        </option>
-                      ))}
-                    </select>
+                    {assignmentActionMode !== 'create' && (
+                      <>
+                        <label className="prompter-settings-label">
+                          {assignmentActionMode === 'grade' ? 'Select assignment for grading' : 'Select an assignment to edit'}
+                        </label>
+                        <select
+                          className="prompter-settings-input"
+                          value={assignmentActionMode === 'grade' && configAssignValue === '__new__' ? '' : configAssignValue}
+                          onChange={handleConfigAssignSelect}
+                          disabled={loadingAssignments}
+                          style={{ maxWidth: 480 }}
+                        >
+                          <option value="">
+                            {loadingAssignments
+                              ? 'Loading assignments...'
+                              : assignmentActionMode === 'grade'
+                                ? '— Select Assignment to Grade —'
+                                : '— Select Assignment to Edit —'}
+                          </option>
+                          {configuredAssignments.map((a) => (
+                            <option key={a.id} value={a.id}>
+                              {a.name} ({a.submissionCount} submissions{assignmentActionMode === 'grade' ? `, ${a.ungradedCount} ungraded` : ''})
+                            </option>
+                          ))}
+                        </select>
+                      </>
+                    )}
                     {assignmentActionMode === 'edit' && configAssignValue !== '__new__' && !!configAssignValue && (
                       <div className="prompter-settings-actions-row" style={{ marginTop: 10 }}>
                         <button
@@ -844,7 +866,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                       </div>
                     )}
                   </div>
-                  {assignmentActionMode === 'edit' && configAssignValue === '__new__' && (
+                  {assignmentActionMode === 'create' && (
                     <div className="prompter-create-module-form" style={{ marginTop: 12 }}>
                       <label className="prompter-settings-label">New assignment name</label>
                       <input
@@ -877,7 +899,11 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         {showForm && (
           <div className="prompter-settings-card">
             <h2 className="prompter-settings-card-title">Configure Assignment</h2>
-            {showSettings && (
+            {!canEditAssignmentSettings ? (
+              <p className="prompter-hint">
+                Create an assignment first, then switch to Edit mode to configure prompt settings.
+              </p>
+            ) : showSettings && (
               <div className="prompter-settings-config-form">
                 <div className="prompter-settings-two-col">
                   <div className="prompter-settings-col-assignment">
@@ -1140,6 +1166,9 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                   </div>
                 </div>
                 <div className="prompter-settings-save-row prompter-settings-actions-row">
+                  <button type="button" onClick={handleSave} disabled={saving} className="prompter-btn-ready">
+                    {saving ? <><span className="prompter-inline-spinner" /> Saving...</> : 'Save'}
+                  </button>
                   <button type="button" onClick={handleReset} disabled={saving} className="prompter-btn-secondary">
                     {resetting ? <><span className="prompter-inline-spinner" /> Resetting...</> : 'Reset'}
                   </button>
