@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams, useNavigate, Link } from 'react-router-dom';
 import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
 import { resolveLtiContextValue } from '../utils/lti-context';
 import * as promptApi from '../api/prompt.api';
 import * as flashcardTeacherApi from '../api/flashcard-teacher.api';
+import type { PlaylistHierarchyRow } from '../api/flashcard-teacher.api';
 import { ManualTokenModal } from '../components/ManualTokenModal';
+import { computeDeckHubFilters } from '../utils/deckHierarchyFilters';
 import '../components/TeacherSettings.css';
 import './PrompterPage.css';
 
@@ -80,11 +82,10 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const [totalCards, setTotalCards] = useState(10);
   const [deckPromptWarning, setDeckPromptWarning] = useState<string | null>(null);
   const [estimatedSessionLength, setEstimatedSessionLength] = useState<string>('');
-  const [deckPickerCurricula, setDeckPickerCurricula] = useState<string[]>([]);
-  const [deckPickerUnits, setDeckPickerUnits] = useState<string[]>([]);
+  const [deckHierarchyPlaylists, setDeckHierarchyPlaylists] = useState<PlaylistHierarchyRow[]>([]);
   const [deckFilterCurricula, setDeckFilterCurricula] = useState<string[]>([]);
   const [deckFilterUnits, setDeckFilterUnits] = useState<string[]>([]);
-  const [deckPickerPlaylists, setDeckPickerPlaylists] = useState<Array<{ id: string; title: string }>>([]);
+  const [deckFilterSections, setDeckFilterSections] = useState<string[]>([]);
   const [deckPickerLoading, setDeckPickerLoading] = useState(false);
   const [deckPickerError, setDeckPickerError] = useState<string | null>(null);
   const [deckPickerRefreshKey, setDeckPickerRefreshKey] = useState(0);
@@ -237,6 +238,12 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     }
   }, [teacher, hasLti, assignmentId, load, loadModules, loadAssignmentGroups, loadRubrics]);
 
+  const { hubCurricula: deckPickerCurricula, hubUnits: deckPickerUnits, hubSections: deckPickerSections, filteredPlaylists: deckPickerPlaylists } =
+    useMemo(
+      () => computeDeckHubFilters(deckHierarchyPlaylists, deckFilterCurricula, deckFilterUnits, deckFilterSections),
+      [deckHierarchyPlaylists, deckFilterCurricula, deckFilterUnits, deckFilterSections],
+    );
+
   useEffect(() => {
     if (promptMode !== 'decks' || !teacher || !hasLti) {
       return;
@@ -246,37 +253,24 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       setDeckPickerLoading(true);
       setDeckPickerError(null);
       try {
-        setLastFunction('GET /api/flashcard/curricula');
-        const curricula = await flashcardTeacherApi.getFlashcardCurricula();
+        setLastFunction('GET /api/flashcard/student-playlists-batch');
+        const { playlists, error } = await flashcardTeacherApi.getStudentPlaylistsBatchForDeckPicker(true);
         if (cancelled) return;
-        setDeckPickerCurricula(curricula);
-        setLastApiResult('GET /api/flashcard/curricula', 200, true);
-
-        setLastFunction('GET /api/flashcard/units');
-        const units = await flashcardTeacherApi.getFlashcardUnitsForCurricula(deckFilterCurricula);
-        if (cancelled) return;
-        setDeckPickerUnits(units);
-        setDeckFilterUnits((prev) => prev.filter((u) => units.includes(u)));
-        setLastApiResult('GET /api/flashcard/units', 200, true);
-
-        setLastFunction('GET /api/flashcard/teacher-playlists');
-        const rows = await flashcardTeacherApi.getFlashcardTeacherPlaylists(
-          deckFilterCurricula,
-          deckFilterUnits,
-        );
-        if (cancelled) return;
-        setDeckPickerPlaylists(rows);
-        setLastApiResult('GET /api/flashcard/teacher-playlists', 200, true);
+        setDeckHierarchyPlaylists(playlists);
+        if (playlists.length > 0) {
+          setDeckPickerError(null);
+        } else if (error === 'announcement_missing') {
+          setDeckPickerError('Course materials are not yet configured. Configure flashcard course settings first.');
+        }
+        setLastApiResult('GET /api/flashcard/student-playlists-batch', 200, true);
       } catch (e: unknown) {
         if (e instanceof promptApi.NeedsManualTokenError) {
           if (!cancelled) setShowManualTokenModal(true);
         } else if (!cancelled) {
           const msg = e instanceof Error ? e.message : String(e);
           setDeckPickerError(msg);
-          setDeckPickerCurricula([]);
-          setDeckPickerUnits([]);
-          setDeckPickerPlaylists([]);
-          setLastApiError('GET /api/flashcard/deck-catalog', 0, msg);
+          setDeckHierarchyPlaylists([]);
+          setLastApiError('GET /api/flashcard/student-playlists-batch', 0, msg);
         }
       } finally {
         if (!cancelled) setDeckPickerLoading(false);
@@ -285,17 +279,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     return () => {
       cancelled = true;
     };
-  }, [
-    promptMode,
-    teacher,
-    hasLti,
-    deckFilterCurricula,
-    deckFilterUnits,
-    deckPickerRefreshKey,
-    setLastFunction,
-    setLastApiResult,
-    setLastApiError,
-  ]);
+  }, [promptMode, teacher, hasLti, deckPickerRefreshKey, setLastFunction, setLastApiResult, setLastApiError]);
 
   const toggleDeckFilterCurriculum = (c: string) => {
     setDeckFilterCurricula((prev) =>
@@ -305,6 +289,10 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
 
   const toggleDeckFilterUnit = (u: string) => {
     setDeckFilterUnits((prev) => (prev.includes(u) ? prev.filter((x) => x !== u) : [...prev, u]));
+  };
+
+  const toggleDeckFilterSection = (s: string) => {
+    setDeckFilterSections((prev) => (prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]));
   };
 
   const addDeckToSelection = (deck: { id: string; title: string }) => {
@@ -520,6 +508,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setEstimatedSessionLength('');
     setDeckFilterCurricula([]);
     setDeckFilterUnits([]);
+    setDeckFilterSections([]);
     setDeckPickerError(null);
     if (!assignmentId) {
       setSaved(true);
@@ -888,7 +877,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                       <div className="prompter-settings-section prompter-deck-config-section">
                         <label className="prompter-settings-label"><strong>Deck Configuration</strong></label>
                         <p className="prompter-hint">
-                          Filter by curriculum and unit, then add decks below. Prompts use round-robin across all selected decks.
+                          Filter by curriculum, unit, and section (same as the flashcard deck browser), then add decks below.
+                          Prompts use round-robin across all selected decks.
                         </p>
 
                         <div className="prompter-settings-field">
@@ -910,8 +900,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                           <p className="prompter-error-message">{deckPickerError}</p>
                         )}
 
-                        <div className="teacher-settings-row teacher-settings-multiselect-row prompter-deck-picker-filters">
-                          <div className="teacher-settings-checkbox-group">
+                        <div className="prompter-deck-picker-filters teacher-settings-multiselect-row">
+                          <div className="teacher-settings-checkbox-group prompter-deck-picker-filter-col">
                             <span className="teacher-settings-label">Curriculum</span>
                             <div className="teacher-settings-checkbox-list prompter-deck-picker-scroll">
                               {deckPickerCurricula.length === 0 && !deckPickerLoading ? (
@@ -930,11 +920,11 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                               )}
                             </div>
                           </div>
-                          <div className="teacher-settings-checkbox-group">
+                          <div className="teacher-settings-checkbox-group prompter-deck-picker-filter-col">
                             <span className="teacher-settings-label">Units</span>
                             <div className="teacher-settings-checkbox-list prompter-deck-picker-scroll">
                               {deckPickerUnits.length === 0 && !deckPickerLoading ? (
-                                <span className="prompter-hint">No units (try selecting curricula).</span>
+                                <span className="prompter-hint">No units yet (narrow by curriculum or wait for load).</span>
                               ) : (
                                 deckPickerUnits.map((u) => (
                                   <label key={u} className="teacher-settings-checkbox-label">
@@ -944,6 +934,25 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                                       onChange={() => toggleDeckFilterUnit(u)}
                                     />
                                     {u}
+                                  </label>
+                                ))
+                              )}
+                            </div>
+                          </div>
+                          <div className="teacher-settings-checkbox-group prompter-deck-picker-filter-col">
+                            <span className="teacher-settings-label">Sections</span>
+                            <div className="teacher-settings-checkbox-list prompter-deck-picker-scroll">
+                              {deckPickerSections.length === 0 && !deckPickerLoading ? (
+                                <span className="prompter-hint">No sections (optional — narrow by unit first).</span>
+                              ) : (
+                                deckPickerSections.map((s) => (
+                                  <label key={s} className="teacher-settings-checkbox-label">
+                                    <input
+                                      type="checkbox"
+                                      checked={deckFilterSections.includes(s)}
+                                      onChange={() => toggleDeckFilterSection(s)}
+                                    />
+                                    {s}
                                   </label>
                                 ))
                               )}

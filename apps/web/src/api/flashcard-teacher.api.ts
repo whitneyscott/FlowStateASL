@@ -61,3 +61,37 @@ export async function getFlashcardTeacherPlaylists(
     return { id: String(r.id ?? ''), title: String(r.title ?? '') };
   });
 }
+
+export type PlaylistHierarchyRow = {
+  id: string;
+  title: string;
+  curriculum: string;
+  unit: string;
+  section: string;
+};
+
+/**
+ * Same hierarchy payload as Flashcards hub. showAllCatalog=true → showHidden=1 (full catalog for teacher deck picker).
+ */
+export async function getStudentPlaylistsBatchForDeckPicker(showAllCatalog: boolean): Promise<{
+  playlists: PlaylistHierarchyRow[];
+  error?: string;
+}> {
+  const q = showAllCatalog ? '?showHidden=1' : '?showHidden=0';
+  const data = await fetchFlashcardJson<{
+    playlists?: unknown[];
+    error?: string;
+  }>(`/api/flashcard/student-playlists-batch${q}`);
+  const raw = Array.isArray(data.playlists) ? data.playlists : [];
+  const playlists = raw.map((row: unknown) => {
+    const p = row as { id?: string; title?: string; curriculum?: string; unit?: string; section?: string };
+    return {
+      id: String(p.id ?? ''),
+      title: String(p.title ?? ''),
+      curriculum: String(p.curriculum ?? ''),
+      unit: String(p.unit ?? ''),
+      section: String(p.section ?? ''),
+    };
+  });
+  return { playlists, error: data.error };
+}

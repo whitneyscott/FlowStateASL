@@ -1184,7 +1184,18 @@
 }
 
 .prompter-deck-picker-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
   margin-top: 12px;
+  align-items: flex-start;
+  justify-content: flex-start;
+}
+
+.prompter-deck-picker-filter-col {
+  flex: 1 1 200px;
+  min-width: 160px;
+  max-width: 100%;
 }
 
 .prompter-deck-picker-scroll {

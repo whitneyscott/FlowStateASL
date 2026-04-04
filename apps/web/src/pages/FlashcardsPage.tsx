@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
 import { resolveLtiContextValue } from '../utils/lti-context';
+import { computeDeckHubFilters } from '../utils/deckHierarchyFilters';
 import { TeacherSettings } from '../components/TeacherSettings';
 import { ManualTokenModal } from '../components/ManualTokenModal';
 import './FlashcardsPage.css';
@@ -185,37 +186,17 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
   const { hubCurricula, hubUnits, hubSections, filteredPlaylists } = useMemo(() => {
     const teacherCurricula = courseSettings?.selectedCurriculums ?? [];
     const teacherUnits = courseSettings?.selectedUnits ?? [];
-    let list = allPlaylistsWithHierarchy;
+    let baseList = allPlaylistsWithHierarchy;
     if (hubFilterMode === 'current') {
-      list = list.filter((p) => {
+      baseList = baseList.filter((p) => {
         const matchCurr = teacherCurricula.length === 0 || teacherCurricula.includes(p.curriculum);
         const matchUnit = teacherUnits.length === 0 || teacherUnits.includes(p.unit);
         return matchCurr && matchUnit;
       });
     } else if (hubFilterMode === 'additional') {
-      list = teacherUnits.length > 0 ? list.filter((p) => !teacherUnits.includes(p.unit)) : [];
+      baseList = teacherUnits.length > 0 ? baseList.filter((p) => !teacherUnits.includes(p.unit)) : [];
     }
-    const curricula = [...new Set(list.map((p) => p.curriculum).filter(Boolean))].sort();
-    if (hubSelectedCurricula.length > 0) {
-      list = list.filter((p) => hubSelectedCurricula.includes(p.curriculum));
-    }
-    const units = [...new Set(list.map((p) => p.unit).filter(Boolean))].sort();
-    const sections =
-      hubSelectedUnits.length > 0
-        ? [...new Set(list.filter((p) => hubSelectedUnits.includes(p.unit)).map((p) => p.section).filter(Boolean))].sort()
-        : [...new Set(list.map((p) => p.section).filter(Boolean))].sort();
-    if (hubSelectedUnits.length > 0) {
-      list = list.filter((p) => hubSelectedUnits.includes(p.unit));
-    }
-    if (hubSelectedSections.length > 0) {
-      list = list.filter((p) => hubSelectedSections.includes(p.section));
-    }
-    return {
-      hubCurricula: curricula,
-      hubUnits: units,
-      hubSections: sections,
-      filteredPlaylists: list.sort((a, b) => a.title.localeCompare(b.title)).map((p) => ({ id: p.id, title: p.title })),
-    };
+    return computeDeckHubFilters(baseList, hubSelectedCurricula, hubSelectedUnits, hubSelectedSections);
   }, [allPlaylistsWithHierarchy, courseSettings?.selectedCurriculums, courseSettings?.selectedUnits, hubSelectedCurricula, hubSelectedUnits, hubSelectedSections, hubFilterMode]);
 
   /** Decks shown in the menu / used for "Next" — must match selectPlaylist indices (students use hub filters, not `playlists`). */
