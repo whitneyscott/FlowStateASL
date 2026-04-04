@@ -1,0 +1,16 @@
+---
+description: When executing a plan, finish all plan items unless the user limits scope or stops you
+alwaysApply: true
+---
+
+# Plan execution
+
+When the user asks you to **execute**, **implement**, or **ship** a **plan** (including a doc in `.cursor/plans/`, a `CreatePlan` output, or an explicit checklist):
+
+1. **Complete every item** that plan commits to (sections, todos, checklists, numbered steps)—**before** treating the task as done.
+2. **Do not** stop after the first convenient slice (e.g. one file, one API, or “the main fix”) unless the user **explicitly** narrows scope (e.g. “token fix only”, “skip module work”) or tells you to **stop early**.
+3. If something is **blocked** (missing secret, unclear spec, external dependency), say so and either **document the blocker in the plan** or ask **one focused** question—do not silently omit plan items.
+
+The user should **not** have to add “and do the rest of the plan.” They will say when they want a **partial** run.
+
+This applies to **plan execution**, not to quick one-off questions or exploratory reads that never adopted a multi-item plan.
