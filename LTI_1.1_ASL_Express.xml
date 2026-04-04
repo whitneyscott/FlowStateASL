@@ -12,17 +12,17 @@
     <blti:secure_launch_url>https://flowstateasl.onrender.com/api/lti/launch</blti:secure_launch_url>
     
     <blti:extensions platform="canvas.instructure.com">
-        <!-- Course Navigation: Flashcards (for practice/study) -->
+        <!-- Course Navigation: ASLxpr Flashcards (for practice/study) -->
         <lticm:options name="course_navigation">
-            <lticm:property name="text">Flashcards</lticm:property>
+            <lticm:property name="text">ASLxpr Flashcards</lticm:property>
             <lticm:property name="url">https://flowstateasl.onrender.com/api/lti/launch/flashcards</lticm:property>
             <lticm:property name="visibility">admins,teachers,students,student_observors</lticm:property>
             <lticm:property name="selection_directive">force_new</lticm:property>
         </lticm:options>
         
-        <!-- Course Navigation: Prompt Manager (for teacher configuration) -->
+        <!-- Course Navigation: ASLxpr Prompt Manager (for teacher configuration) -->
         <lticm:options name="course_navigation">
-            <lticm:property name="text">Prompt Manager</lticm:property>
+            <lticm:property name="text">ASLxpr Prompt Manager</lticm:property>
             <lticm:property name="url">https://flowstateasl.onrender.com/api/lti/launch/prompter</lticm:property>
             <lticm:property name="visibility">admins,teachers</lticm:property>
             <lticm:property name="selection_directive">force_new</lticm:property>
