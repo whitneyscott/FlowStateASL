@@ -1177,3 +1177,75 @@
 .prompter-viewer-comment-action-btn.danger:hover {
   background: #fdd;
 }
+
+/* Prompt Manager — deck picker (flashcard catalog) */
+.prompter-deck-config-section {
+  text-align: left;
+}
+
+.prompter-deck-picker-filters {
+  margin-top: 12px;
+}
+
+.prompter-deck-picker-scroll {
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 8px;
+  background: #fafafa;
+}
+
+.prompter-deck-picker-available {
+  margin-top: 6px;
+}
+
+.prompter-deck-picker-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 4px;
+  border-bottom: 1px solid #eee;
+}
+
+.prompter-deck-picker-row:last-child {
+  border-bottom: none;
+}
+
+.prompter-deck-picker-title {
+  text-align: left;
+  flex: 1;
+  font-size: 14px;
+}
+
+.prompter-deck-list {
+  margin-top: 6px;
+  text-align: left;
+}
+
+.prompter-deck-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  background: #f4f7f9;
+  border-radius: 6px;
+  border: 1px solid #e0e0e0;
+}
+
+.prompter-btn-remove-sm {
+  padding: 4px 10px;
+  font-size: 12px;
+  background: var(--prompter-danger-red, #d9534f);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.prompter-btn-remove-sm:hover {
+  filter: brightness(1.05);
+}

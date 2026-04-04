@@ -30,15 +30,6 @@ export function ToolSelector({ context, currentTool }: ToolSelectorProps) {
     );
   }
 
-  if (!teacher) return null;
-  return (
-    <div className="w-full max-w-4xl mx-auto px-4 py-3 flex gap-2">
-      <span className="px-4 py-2 rounded font-semibold bg-emerald-600 text-white">
-        Flashcards
-      </span>
-      <NavLink to="/prompter" className={navLinkClass}>
-        Prompt Manager
-      </NavLink>
-    </div>
-  );
+  // Flashcards: no Prompt Manager / Flashcards cross-links — unified entry from Canvas placement.
+  return null;
 }

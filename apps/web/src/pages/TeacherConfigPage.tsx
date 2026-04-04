@@ -4,7 +4,9 @@ import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
 import { resolveLtiContextValue } from '../utils/lti-context';
 import * as promptApi from '../api/prompt.api';
+import * as flashcardTeacherApi from '../api/flashcard-teacher.api';
 import { ManualTokenModal } from '../components/ManualTokenModal';
+import '../components/TeacherSettings.css';
 import './PrompterPage.css';
 
 const TEACHER_PATTERNS = [
@@ -78,6 +80,14 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const [totalCards, setTotalCards] = useState(10);
   const [deckPromptWarning, setDeckPromptWarning] = useState<string | null>(null);
   const [estimatedSessionLength, setEstimatedSessionLength] = useState<string>('');
+  const [deckPickerCurricula, setDeckPickerCurricula] = useState<string[]>([]);
+  const [deckPickerUnits, setDeckPickerUnits] = useState<string[]>([]);
+  const [deckFilterCurricula, setDeckFilterCurricula] = useState<string[]>([]);
+  const [deckFilterUnits, setDeckFilterUnits] = useState<string[]>([]);
+  const [deckPickerPlaylists, setDeckPickerPlaylists] = useState<Array<{ id: string; title: string }>>([]);
+  const [deckPickerLoading, setDeckPickerLoading] = useState(false);
+  const [deckPickerError, setDeckPickerError] = useState<string | null>(null);
+  const [deckPickerRefreshKey, setDeckPickerRefreshKey] = useState(0);
 
   const teacher = context && isTeacher(context.roles);
   const hasLti = context?.courseId && context.userId !== 'standalone';
@@ -174,6 +184,9 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         if (data.videoPromptConfig) {
           setSelectedDecks(data.videoPromptConfig.selectedDecks ?? []);
           setTotalCards(data.videoPromptConfig.totalCards ?? 10);
+        } else {
+          setSelectedDecks([]);
+          setTotalCards(10);
         }
       } else {
         setMinutes(5);
@@ -224,8 +237,89 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     }
   }, [teacher, hasLti, assignmentId, load, loadModules, loadAssignmentGroups, loadRubrics]);
 
+  useEffect(() => {
+    if (promptMode !== 'decks' || !teacher || !hasLti) {
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      setDeckPickerLoading(true);
+      setDeckPickerError(null);
+      try {
+        setLastFunction('GET /api/flashcard/curricula');
+        const curricula = await flashcardTeacherApi.getFlashcardCurricula();
+        if (cancelled) return;
+        setDeckPickerCurricula(curricula);
+        setLastApiResult('GET /api/flashcard/curricula', 200, true);
+
+        setLastFunction('GET /api/flashcard/units');
+        const units = await flashcardTeacherApi.getFlashcardUnitsForCurricula(deckFilterCurricula);
+        if (cancelled) return;
+        setDeckPickerUnits(units);
+        setDeckFilterUnits((prev) => prev.filter((u) => units.includes(u)));
+        setLastApiResult('GET /api/flashcard/units', 200, true);
+
+        setLastFunction('GET /api/flashcard/teacher-playlists');
+        const rows = await flashcardTeacherApi.getFlashcardTeacherPlaylists(
+          deckFilterCurricula,
+          deckFilterUnits,
+        );
+        if (cancelled) return;
+        setDeckPickerPlaylists(rows);
+        setLastApiResult('GET /api/flashcard/teacher-playlists', 200, true);
+      } catch (e: unknown) {
+        if (e instanceof promptApi.NeedsManualTokenError) {
+          if (!cancelled) setShowManualTokenModal(true);
+        } else if (!cancelled) {
+          const msg = e instanceof Error ? e.message : String(e);
+          setDeckPickerError(msg);
+          setDeckPickerCurricula([]);
+          setDeckPickerUnits([]);
+          setDeckPickerPlaylists([]);
+          setLastApiError('GET /api/flashcard/deck-catalog', 0, msg);
+        }
+      } finally {
+        if (!cancelled) setDeckPickerLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    promptMode,
+    teacher,
+    hasLti,
+    deckFilterCurricula,
+    deckFilterUnits,
+    deckPickerRefreshKey,
+    setLastFunction,
+    setLastApiResult,
+    setLastApiError,
+  ]);
+
+  const toggleDeckFilterCurriculum = (c: string) => {
+    setDeckFilterCurricula((prev) =>
+      prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c],
+    );
+  };
+
+  const toggleDeckFilterUnit = (u: string) => {
+    setDeckFilterUnits((prev) => (prev.includes(u) ? prev.filter((x) => x !== u) : [...prev, u]));
+  };
+
+  const addDeckToSelection = (deck: { id: string; title: string }) => {
+    if (!deck.id) return;
+    setSelectedDecks((d) =>
+      d.some((x) => x.id === deck.id) ? d : [...d, { id: deck.id, title: deck.title }],
+    );
+  };
+
   const handleSave = async () => {
     if (!teacher || !hasLti) return;
+    if (promptMode === 'decks' && selectedDecks.length === 0) {
+      setError('Select at least one flashcard deck when using Deck Prompts.');
+      return;
+    }
     setSaving(true);
     setError(null);
     setSaved(false);
@@ -282,9 +376,13 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       }
       if (targetId) load(targetId ?? undefined);
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setError(msg);
-      setLastApiError('PUT /api/prompt/config', 0, msg);
+      if (e instanceof promptApi.NeedsManualTokenError) {
+        setShowManualTokenModal(true);
+      } else {
+        const msg = e instanceof Error ? e.message : String(e);
+        setError(msg);
+        setLastApiError('PUT /api/prompt/config', 0, msg);
+      }
     } finally {
       setSaving(false);
     }
@@ -420,6 +518,9 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setTotalCards(10);
     setDeckPromptWarning(null);
     setEstimatedSessionLength('');
+    setDeckFilterCurricula([]);
+    setDeckFilterUnits([]);
+    setDeckPickerError(null);
     if (!assignmentId) {
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
@@ -438,9 +539,13 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setError(msg);
-      setLastApiError('PUT /api/prompt/config', 0, msg);
+      if (e instanceof promptApi.NeedsManualTokenError) {
+        setShowManualTokenModal(true);
+      } else {
+        const msg = e instanceof Error ? e.message : String(e);
+        setError(msg);
+        setLastApiError('PUT /api/prompt/config', 0, msg);
+      }
     } finally {
       setSaving(false);
     }
@@ -780,10 +885,12 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                         ))}
                       </>
                     ) : (
-                      <div className="prompter-settings-section">
+                      <div className="prompter-settings-section prompter-deck-config-section">
                         <label className="prompter-settings-label"><strong>Deck Configuration</strong></label>
-                        <p className="prompter-hint">Select flashcard decks to use as prompts. Words will be selected using round-robin from all selected decks.</p>
-                        
+                        <p className="prompter-hint">
+                          Filter by curriculum and unit, then add decks below. Prompts use round-robin across all selected decks.
+                        </p>
+
                         <div className="prompter-settings-field">
                           <label className="prompter-settings-label">Total Cards:</label>
                           <input
@@ -795,22 +902,93 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                             className="prompter-settings-input prompter-settings-input-narrow"
                           />
                         </div>
-                        
+
+                        {deckPickerLoading && (
+                          <p className="prompter-hint">Loading deck catalog…</p>
+                        )}
+                        {deckPickerError && !deckPickerLoading && (
+                          <p className="prompter-error-message">{deckPickerError}</p>
+                        )}
+
+                        <div className="teacher-settings-row teacher-settings-multiselect-row prompter-deck-picker-filters">
+                          <div className="teacher-settings-checkbox-group">
+                            <span className="teacher-settings-label">Curriculum</span>
+                            <div className="teacher-settings-checkbox-list prompter-deck-picker-scroll">
+                              {deckPickerCurricula.length === 0 && !deckPickerLoading ? (
+                                <span className="prompter-hint">No curricula loaded.</span>
+                              ) : (
+                                deckPickerCurricula.map((c) => (
+                                  <label key={c} className="teacher-settings-checkbox-label">
+                                    <input
+                                      type="checkbox"
+                                      checked={deckFilterCurricula.includes(c)}
+                                      onChange={() => toggleDeckFilterCurriculum(c)}
+                                    />
+                                    {c}
+                                  </label>
+                                ))
+                              )}
+                            </div>
+                          </div>
+                          <div className="teacher-settings-checkbox-group">
+                            <span className="teacher-settings-label">Units</span>
+                            <div className="teacher-settings-checkbox-list prompter-deck-picker-scroll">
+                              {deckPickerUnits.length === 0 && !deckPickerLoading ? (
+                                <span className="prompter-hint">No units (try selecting curricula).</span>
+                              ) : (
+                                deckPickerUnits.map((u) => (
+                                  <label key={u} className="teacher-settings-checkbox-label">
+                                    <input
+                                      type="checkbox"
+                                      checked={deckFilterUnits.includes(u)}
+                                      onChange={() => toggleDeckFilterUnit(u)}
+                                    />
+                                    {u}
+                                  </label>
+                                ))
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
                         <div className="prompter-settings-field">
-                          <label className="prompter-settings-label">Selected Decks:</label>
+                          <label className="prompter-settings-label">Available decks ({deckPickerPlaylists.length})</label>
+                          <div className="prompter-deck-picker-available prompter-deck-picker-scroll">
+                            {deckPickerPlaylists.length === 0 && !deckPickerLoading ? (
+                              <p className="prompter-hint">No decks match the current filters.</p>
+                            ) : (
+                              deckPickerPlaylists.map((deck) => {
+                                const already = selectedDecks.some((d) => d.id === deck.id);
+                                return (
+                                  <div key={deck.id} className="prompter-deck-picker-row">
+                                    <span className="prompter-deck-picker-title">{deck.title}</span>
+                                    <button
+                                      type="button"
+                                      className="prompter-btn-add-pool"
+                                      disabled={already || !deck.id}
+                                      onClick={() => addDeckToSelection(deck)}
+                                    >
+                                      {already ? 'Added' : 'Add'}
+                                    </button>
+                                  </div>
+                                );
+                              })
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="prompter-settings-field">
+                          <label className="prompter-settings-label">Selected decks ({selectedDecks.length})</label>
                           <div className="prompter-deck-list">
                             {selectedDecks.length === 0 ? (
-                              <>
-                                <p className="prompter-hint">No decks selected.</p>
-                                <p className="prompter-hint">To add decks: 1) Open ASLxpr Flashcards to browse available decks, 2) Note deck titles, 3) Return here and enter deck info via API or contact support.</p>
-                              </>
+                              <p className="prompter-hint">No decks selected yet — add from the list above.</p>
                             ) : (
-                              selectedDecks.map((deck, i) => (
-                                <div key={i} className="prompter-deck-item">
+                              selectedDecks.map((deck) => (
+                                <div key={deck.id} className="prompter-deck-item">
                                   <span>{deck.title}</span>
                                   <button
                                     type="button"
-                                    onClick={() => setSelectedDecks((d) => d.filter((_, j) => j !== i))}
+                                    onClick={() => setSelectedDecks((d) => d.filter((x) => x.id !== deck.id))}
                                     className="prompter-btn-remove-sm"
                                   >
                                     Remove
@@ -820,11 +998,11 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                             )}
                           </div>
                         </div>
-                        
+
                         {deckPromptWarning && (
                           <p className="prompter-error-message">{deckPromptWarning}</p>
                         )}
-                        
+
                         {estimatedSessionLength && (
                           <p className="prompter-hint">Estimated session length: {estimatedSessionLength}</p>
                         )}
@@ -862,6 +1040,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
           message="LTI 1.1 does not support OAuth. Enter your Canvas API token to configure assignments."
           onSuccess={() => {
             setShowManualTokenModal(false);
+            setDeckPickerRefreshKey((k) => k + 1);
             loadAssignments();
             loadModules();
             loadAssignmentGroups();
