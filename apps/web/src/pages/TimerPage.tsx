@@ -167,6 +167,11 @@ export default function TimerPage({ context }: TimerPageProps) {
   const minutes = config?.minutes ?? 5;
   const prompts = config?.prompts ?? [];
   const needsAccessCode = !!config?.accessCode?.trim();
+  
+  // Use deck prompts in deck mode, otherwise use text prompts
+  const displayPrompts = deckPrompts.length > 0 
+    ? deckPrompts.map(p => p.title) 
+    : prompts;
 
   const loadConfig = useCallback(async () => {
     if (!context?.courseId) {
@@ -256,10 +261,10 @@ export default function TimerPage({ context }: TimerPageProps) {
   }, []);
 
   const finishAndSubmit = useCallback(() => {
-    pendingPromptRef.current = prompts[promptIndex] ?? prompts[0] ?? '';
+    pendingPromptRef.current = displayPrompts[promptIndex] ?? displayPrompts[0] ?? '';
     submitOnStopRef.current = true;
     stopRecording();
-  }, [prompts, promptIndex, stopRecording]);
+  }, [displayPrompts, promptIndex, stopRecording]);
 
   useEffect(() => {
     if (phase === 'record') {
@@ -300,7 +305,7 @@ export default function TimerPage({ context }: TimerPageProps) {
       setRecordedBlob(blob);
       if (submitOnStopRef.current) {
         submitOnStopRef.current = false;
-        const promptSnapshot = pendingPromptRef.current || (prompts[promptIndex] ?? prompts[0] ?? '');
+        const promptSnapshot = pendingPromptRef.current || (displayPrompts[promptIndex] ?? displayPrompts[0] ?? '');
         console.log('[TimerPage:recorder.onstop] Calling doSubmit...');
         doSubmit(promptSnapshot, blob);
       }
@@ -395,7 +400,7 @@ export default function TimerPage({ context }: TimerPageProps) {
   if (phase === 'warmup') {
     const m = Math.floor(secondsLeft / 60);
     const s = secondsLeft % 60;
-    const display = prompts[promptIndex] ?? (prompts[0] ?? 'Warm up. When the timer ends, you will record.');
+    const display = displayPrompts[promptIndex] ?? (displayPrompts[0] ?? 'Warm up. When the timer ends, you will record.');
     return (
       <div className="prompter-page">
         <div className="prompter-card">
@@ -448,7 +453,7 @@ export default function TimerPage({ context }: TimerPageProps) {
           </div>
           <div className="prompter-record-layout">
             <div className="prompter-prompt-column" style={{ flex: '1 1 300px', maxWidth: 480 }}>
-              {prompts[promptIndex] ?? (prompts[0] ?? '')}
+              {displayPrompts[promptIndex] ?? (displayPrompts[0] ?? '')}
             </div>
             <div className="prompter-record-video-col">
               <div className="prompter-video-container">
