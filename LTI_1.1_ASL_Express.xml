@@ -15,7 +15,7 @@
         <!-- Course Navigation: Flashcards (for practice/study) -->
         <lticm:options name="course_navigation">
             <lticm:property name="text">Flashcards</lticm:property>
-            <lticm:property name="url">https://flowstateasl.onrender.com/api/lti/launch</lticm:property>
+            <lticm:property name="url">https://flowstateasl.onrender.com/api/lti/launch/flashcards</lticm:property>
             <lticm:property name="visibility">admins,teachers,students,student_observors</lticm:property>
             <lticm:property name="selection_directive">force_new</lticm:property>
         </lticm:options>
@@ -23,7 +23,7 @@
         <!-- Course Navigation: Prompt Manager (for teacher configuration) -->
         <lticm:options name="course_navigation">
             <lticm:property name="text">Prompt Manager</lticm:property>
-            <lticm:property name="url">https://flowstateasl.onrender.com/api/lti/launch</lticm:property>
+            <lticm:property name="url">https://flowstateasl.onrender.com/api/lti/launch/prompter</lticm:property>
             <lticm:property name="visibility">admins,teachers</lticm:property>
             <lticm:property name="selection_directive">force_new</lticm:property>
         </lticm:options>
@@ -31,7 +31,7 @@
         <!-- Assignment/Module: ASL Express Assessment (for student submissions) -->
         <lticm:options name="homework_submission">
             <lticm:property name="text">ASL Express Assessment</lticm:property>
-            <lticm:property name="url">https://flowstateasl.onrender.com/api/lti/launch</lticm:property>
+            <lticm:property name="url">https://flowstateasl.onrender.com/api/lti/launch/prompter</lticm:property>
         </lticm:options>
         
         <!-- Deep Linking: For creating assignments from modules -->
