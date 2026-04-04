@@ -896,6 +896,68 @@ export class CanvasService {
     return raw && typeof raw === 'object' ? raw : null;
   }
 
+  /** Read single external tool details for diagnostics. */
+  async getExternalTool(
+    courseId: string,
+    externalToolId: number | string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<Record<string, unknown> | null> {
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/external_tools/${externalToolId}`;
+    const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
+    if (!res.ok) return null;
+    const raw = (await res.json()) as Record<string, unknown>;
+    return raw && typeof raw === 'object' ? raw : null;
+  }
+
+  /** Probe Canvas launch resolution for a module item (helps explain settings errors). */
+  async getSessionlessLaunchForModuleItem(
+    courseId: string,
+    moduleItemId: number | string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<Record<string, unknown> | null> {
+    const base = this.getBaseUrl(domainOverride);
+    const url = new URL(`${base}/api/v1/courses/${courseId}/external_tools/sessionless_launch`);
+    url.searchParams.set('launch_type', 'module_item');
+    url.searchParams.set('module_item_id', String(moduleItemId));
+    const res = await fetch(url.toString(), { headers: this.getAuthHeaders(tokenOverride) });
+    if (!res.ok) {
+      const text = await res.text();
+      return {
+        error: true,
+        status: res.status,
+        statusText: res.statusText,
+        bodyPreview: text.slice(0, 600),
+      };
+    }
+    const raw = (await res.json()) as Record<string, unknown>;
+    return raw && typeof raw === 'object' ? raw : null;
+  }
+
+  /** Find LTI resource-link records associated to a given module item. */
+  async findResourceLinksForModuleItem(
+    courseId: string,
+    moduleItemId: number | string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<Array<Record<string, unknown>>> {
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/lti_resource_links?per_page=100`;
+    const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
+    if (!res.ok) return [];
+    const raw = (await res.json()) as Array<Record<string, unknown>>;
+    if (!Array.isArray(raw)) return [];
+    const itemIdNum = Number(moduleItemId);
+    return raw.filter((entry) => {
+      if (!entry || typeof entry !== 'object') return false;
+      const associatedType = String(entry.associated_content_type ?? '');
+      const associatedId = Number(entry.associated_content_id ?? NaN);
+      return associatedType.toLowerCase().includes('moduleitem') && !Number.isNaN(associatedId) && associatedId === itemIdNum;
+    });
+  }
+
   /**
    * Course Context External Tool id for the Prompter LTI app (module item content_id).
    * Prefer env CANVAS_PROMPTER_EXTERNAL_TOOL_ID / LTI_PROMPTER_EXTERNAL_TOOL_ID when set;
@@ -1207,6 +1269,7 @@ export class CanvasService {
       (i) => i.type === 'ExternalTool' && i.content_id === toolIdNum && urlMatchesAssignment(i.external_url),
     );
     if (existing) {
+      const externalTool = await this.getExternalTool(courseId, toolIdNum, domainOverride, tokenOverride);
       const existingDetails = await this.getModuleItemDetails(
         courseId,
         moduleId,
@@ -1215,6 +1278,18 @@ export class CanvasService {
         tokenOverride,
       );
       const existingLaunchIds = collectLaunchIdHints(existingDetails);
+      const sessionless = await this.getSessionlessLaunchForModuleItem(
+        courseId,
+        existing.id,
+        domainOverride,
+        tokenOverride,
+      );
+      const resourceLinks = await this.findResourceLinksForModuleItem(
+        courseId,
+        existing.id,
+        domainOverride,
+        tokenOverride,
+      );
       appendLtiLog('canvas', 'syncPrompterLtiModuleItem: already present', {
         externalToolId: toolIdNum,
         moduleItemId: existing.id,
@@ -1222,6 +1297,19 @@ export class CanvasService {
         resourceLinkId: existingLaunchIds.resourceLinkId ?? null,
         ltiResourceLinkId: existingLaunchIds.ltiResourceLinkId ?? null,
         launchUrlResourceLinkId: existingLaunchIds.launchUrlResourceLinkId ?? null,
+        moduleItemExternalUrl: existing.external_url ?? null,
+        toolLaunchUrl: String(externalTool?.url ?? externalTool?.target_link_uri ?? '') || null,
+        toolDomain: String(externalTool?.domain ?? '') || null,
+        sessionlessLaunchUrl: String(sessionless?.url ?? '') || null,
+        resourceLinks: resourceLinks.map((r) => ({
+          id: r.id ?? null,
+          contextExternalToolId: r.context_external_tool_id ?? null,
+          resourceLinkUuid: r.resource_link_uuid ?? null,
+          lookupUuid: r.lookup_uuid ?? null,
+          associatedContentType: r.associated_content_type ?? null,
+          associatedContentId: r.associated_content_id ?? null,
+          canvasLaunchUrl: r.canvas_launch_url ?? null,
+        })),
       });
       return { created: false, skippedReason: 'already_linked', itemId: existing.id };
     }
@@ -1243,6 +1331,7 @@ export class CanvasService {
       },
     };
     appendLtiLog('canvas', 'syncPrompterLtiModuleItem: POST ExternalTool module item', {
+      moduleItemPayload: body.module_item,
       position,
       assignmentId,
       externalToolId: toolIdStr,
@@ -1257,13 +1346,25 @@ export class CanvasService {
     });
     if (!res.ok) {
       const text = await res.text();
+      setLastCanvasApiResponse({
+        status: res.status,
+        statusText: res.statusText,
+        bodyPreview: text.slice(0, 1200),
+      });
       appendLtiLog('canvas', 'syncPrompterLtiModuleItem FAIL', { status: res.status, text: text.slice(0, 400) });
       throw new Error(`Canvas add ExternalTool module item failed: ${res.status} ${text}`);
     }
     const created = (await res.json()) as { id?: number; [key: string]: unknown };
+    const externalTool = await this.getExternalTool(courseId, toolIdNum, domainOverride, tokenOverride);
     const createdDetails = created?.id
       ? await this.getModuleItemDetails(courseId, moduleId, created.id, domainOverride, tokenOverride)
       : null;
+    const sessionless = created?.id
+      ? await this.getSessionlessLaunchForModuleItem(courseId, created.id, domainOverride, tokenOverride)
+      : null;
+    const resourceLinks = created?.id
+      ? await this.findResourceLinksForModuleItem(courseId, created.id, domainOverride, tokenOverride)
+      : [];
     const createdLaunchIds = collectLaunchIdHints(createdDetails ?? created);
     appendLtiLog('canvas', 'syncPrompterLtiModuleItem OK', {
       externalToolId: toolIdStr,
@@ -1273,6 +1374,20 @@ export class CanvasService {
       resourceLinkId: createdLaunchIds.resourceLinkId ?? null,
       ltiResourceLinkId: createdLaunchIds.ltiResourceLinkId ?? null,
       launchUrlResourceLinkId: createdLaunchIds.launchUrlResourceLinkId ?? null,
+      moduleItemExternalUrl: String((createdDetails?.external_url ?? created.external_url) ?? '') || null,
+      moduleItemHtmlUrl: String((createdDetails?.html_url ?? created.html_url) ?? '') || null,
+      toolLaunchUrl: String(externalTool?.url ?? externalTool?.target_link_uri ?? '') || null,
+      toolDomain: String(externalTool?.domain ?? '') || null,
+      sessionlessLaunchUrl: String(sessionless?.url ?? '') || null,
+      resourceLinks: resourceLinks.map((r) => ({
+        id: r.id ?? null,
+        contextExternalToolId: r.context_external_tool_id ?? null,
+        resourceLinkUuid: r.resource_link_uuid ?? null,
+        lookupUuid: r.lookup_uuid ?? null,
+        associatedContentType: r.associated_content_type ?? null,
+        associatedContentId: r.associated_content_id ?? null,
+        canvasLaunchUrl: r.canvas_launch_url ?? null,
+      })),
     });
     return { created: true, itemId: created?.id };
   }

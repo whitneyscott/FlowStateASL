@@ -90,6 +90,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const [deckPickerLoading, setDeckPickerLoading] = useState(false);
   const [deckPickerError, setDeckPickerError] = useState<string | null>(null);
   const [deckPickerRefreshKey, setDeckPickerRefreshKey] = useState(0);
+  const [pendingDeckFilterSeedIds, setPendingDeckFilterSeedIds] = useState<string[] | null>(null);
 
   const teacher = context && isTeacher(context.roles);
   const hasLti = context?.courseId && context.userId !== 'standalone';
@@ -184,11 +185,22 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         setInstructions(data.instructions ?? '');
         setPromptMode(data.promptMode ?? 'text');
         if (data.videoPromptConfig) {
-          setSelectedDecks(data.videoPromptConfig.selectedDecks ?? []);
+          const loadedDecks = data.videoPromptConfig.selectedDecks ?? [];
+          setSelectedDecks(loadedDecks);
           setTotalCards(data.videoPromptConfig.totalCards ?? 10);
+          const deckIds = loadedDecks.map((d) => d.id).filter(Boolean);
+          if (!applyDeckFiltersFromSelectedDeckIds(deckIds, deckHierarchyPlaylists)) {
+            setPendingDeckFilterSeedIds(deckIds);
+          } else {
+            setPendingDeckFilterSeedIds(null);
+          }
         } else {
           setSelectedDecks([]);
           setTotalCards(10);
+          setDeckFilterCurricula([]);
+          setDeckFilterUnits([]);
+          setDeckFilterSections([]);
+          setPendingDeckFilterSeedIds(null);
         }
       } else {
         setMinutes(5);
@@ -204,6 +216,10 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         setLockAt('');
         setAllowedAttempts(-1);
         setInstructions('');
+        setDeckFilterCurricula([]);
+        setDeckFilterUnits([]);
+        setDeckFilterSections([]);
+        setPendingDeckFilterSeedIds(null);
       }
     } catch (e: unknown) {
       if (e instanceof promptApi.NeedsManualTokenError) {
@@ -216,7 +232,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     } finally {
       setLoading(false);
     }
-  }, [hasLti, assignmentId, setLastFunction, setLastApiResult, setLastApiError]);
+  }, [hasLti, assignmentId, setLastFunction, setLastApiResult, setLastApiError, deckHierarchyPlaylists]);
 
   useEffect(() => {
     if (teacher && hasLti) loadAssignments();
@@ -302,6 +318,23 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       d.some((x) => x.id === deck.id) ? d : [...d, { id: deck.id, title: deck.title }],
     );
   };
+
+  const applyDeckFiltersFromSelectedDeckIds = (deckIds: string[], sourceRows: PlaylistHierarchyRow[]) => {
+    if (!deckIds.length || !sourceRows.length) return false;
+    const selected = sourceRows.filter((row) => deckIds.includes(row.id));
+    if (!selected.length) return false;
+    setDeckFilterCurricula([...new Set(selected.map((row) => row.curriculum).filter(Boolean))]);
+    setDeckFilterUnits([...new Set(selected.map((row) => row.unit).filter(Boolean))]);
+    setDeckFilterSections([...new Set(selected.map((row) => row.section).filter(Boolean))]);
+    return true;
+  };
+
+  useEffect(() => {
+    if (!pendingDeckFilterSeedIds || pendingDeckFilterSeedIds.length === 0) return;
+    if (applyDeckFiltersFromSelectedDeckIds(pendingDeckFilterSeedIds, deckHierarchyPlaylists)) {
+      setPendingDeckFilterSeedIds(null);
+    }
+  }, [pendingDeckFilterSeedIds, deckHierarchyPlaylists]);
 
   const handleSave = async () => {
     if (!teacher || !hasLti) return;
@@ -556,6 +589,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setDeckFilterCurricula([]);
     setDeckFilterUnits([]);
     setDeckFilterSections([]);
+    setPendingDeckFilterSeedIds(null);
     setDeckPickerError(null);
     if (!assignmentId) {
       setSaved(true);

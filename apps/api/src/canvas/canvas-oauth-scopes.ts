@@ -34,6 +34,9 @@ export const DEFAULT_CANVAS_OAUTH_SCOPES = [
   'url:GET|/api/v1/courses/:course_id/modules/:module_id/items',
   'url:POST|/api/v1/courses/:course_id/modules/:module_id/items',
   'url:GET|/api/v1/courses/:course_id/external_tools',
+  'url:GET|/api/v1/courses/:course_id/external_tools/:external_tool_id',
+  'url:GET|/api/v1/courses/:course_id/external_tools/sessionless_launch',
+  'url:GET|/api/v1/courses/:course_id/lti_resource_links',
   'url:GET|/api/v1/courses/:course_id/quizzes',
   'url:POST|/api/v1/courses/:course_id/quizzes',
 ].join(' ');

@@ -95,7 +95,28 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
         lc.includes('moduleitemid') ||
         lc.includes('resourcelinkid') ||
         lc.includes('ltiresourcelinkid') ||
+        lc.includes('moduleitempayload') ||
+        lc.includes('sessionlesslaunchurl') ||
+        lc.includes('toollaunchurl') ||
+        lc.includes('resourcelinks') ||
         lc.includes('updateassignment')
+      ) && !isSettingsBlobNoise(line);
+    };
+    const isLaunchDiagnosticsLine = (line: string): boolean => {
+      const lc = lineLc(line);
+      return (
+        lc.includes('[launch-entry]') ||
+        lc.includes('post /api/lti/launch received') ||
+        lc.includes('post /api/lti/launch/prompter received') ||
+        lc.includes('post /api/lti/launch/flashcards received') ||
+        lc.includes('get /api/lti/oidc/login') ||
+        lc.includes('post /api/lti/oidc/login') ||
+        lc.includes('oidc login') ||
+        lc.includes('sessionlesslaunchurl') ||
+        lc.includes('moduleitemexternalurl') ||
+        lc.includes('moduleitemhtmlurl') ||
+        lc.includes('toollaunchurl') ||
+        lc.includes('resourcelinks')
       ) && !isSettingsBlobNoise(line);
     };
 
@@ -133,6 +154,16 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
       newLines.push(...syncLines);
     } else {
       newLines.push('(No sync trace lines yet)');
+    }
+
+    // Launch / module diagnostics (click path + stored Canvas state)
+    newLines.push('');
+    newLines.push('--- Module Launch Diagnostics ---');
+    const launchDiagnosticsLines = ltiLog.filter(isLaunchDiagnosticsLine);
+    if (launchDiagnosticsLines.length > 0) {
+      newLines.push(...launchDiagnosticsLines);
+    } else {
+      newLines.push('(No launch diagnostics yet)');
     }
 
     // Video submission flow (Finish & Submit / timer expiry → Canvas)

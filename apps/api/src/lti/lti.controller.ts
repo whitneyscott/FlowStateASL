@@ -78,12 +78,49 @@ export class LtiController {
     });
   }
 
+  private logLaunchEntry(
+    req: Request,
+    source: string,
+    fields: {
+      courseId?: string;
+      assignmentId?: string;
+      moduleId?: string;
+      resourceLinkId?: string;
+      userId?: string;
+      roles?: string;
+      hasIdToken?: boolean;
+      hasOAuthSignature?: boolean;
+    } = {},
+  ): void {
+    appendLtiLog('launch-entry', source, {
+      method: req.method,
+      path: req.path,
+      courseId: fields.courseId ?? '',
+      assignmentId: fields.assignmentId ?? '',
+      moduleId: fields.moduleId ?? '',
+      resourceLinkId: fields.resourceLinkId ?? '',
+      userId: fields.userId ?? '',
+      roles: fields.roles ? String(fields.roles).slice(0, 180) : '',
+      hasIdToken: !!fields.hasIdToken,
+      hasOAuthSignature: !!fields.hasOAuthSignature,
+    });
+  }
+
   @Post('launch/flashcards')
   async launchFlashcards(
     @Body() body: Record<string, string>,
     @Req() req: Request,
     @Res() res: Response,
   ) {
+    this.logLaunchEntry(req, 'POST /api/lti/launch/flashcards received', {
+      courseId: body.custom_canvas_course_id,
+      assignmentId: body.custom_canvas_assignment_id,
+      moduleId: body.custom_canvas_module_id,
+      resourceLinkId: body.resource_link_id,
+      userId: body.custom_canvas_user_id,
+      roles: body.roles,
+      hasOAuthSignature: !!body.oauth_signature,
+    });
     const roleKeys = ['custom_roles','roles','ext_roles','canvas_membership_roles'];
     const rolesReceived = roleKeys
       .filter((k) => body[k])
@@ -127,6 +164,15 @@ export class LtiController {
     @Req() req: Request,
     @Res() res: Response,
   ) {
+    this.logLaunchEntry(req, 'POST /api/lti/launch/prompter received', {
+      courseId: body.custom_canvas_course_id,
+      assignmentId: body.custom_canvas_assignment_id,
+      moduleId: body.custom_canvas_module_id,
+      resourceLinkId: body.resource_link_id,
+      userId: body.custom_canvas_user_id,
+      roles: body.roles,
+      hasOAuthSignature: !!body.oauth_signature,
+    });
     const ctx = this.ltiService.extractContext(body);
     if (!ctx) {
       return res.status(400).send('Missing LTI parameters');
@@ -152,6 +198,7 @@ export class LtiController {
 
   @Get('context')
   getContext(@Req() req: Request) {
+    this.logLaunchEntry(req, 'GET /api/lti/context', {});
     const ctx = req.session?.ltiContext;
     if (ctx) {
       console.log('[LTI] context from session', { courseId: ctx.courseId, roles: ctx.roles?.slice(0, 30) });
@@ -240,12 +287,20 @@ export class LtiController {
 
   @Get('oidc/login')
   async oidcLoginGet(@Req() req: Request, @Res() res: Response) {
+    this.logLaunchEntry(req, 'GET /api/lti/oidc/login', {
+      hasIdToken: !!(req.query as Record<string, unknown>)?.id_token,
+      hasOAuthSignature: !!(req.query as Record<string, unknown>)?.oauth_signature,
+    });
     const params = { ...req.query } as Record<string, string | undefined>;
     return this.handleOidcLogin(req, params, res);
   }
 
   @Post('oidc/login')
   async oidcLoginPost(@Req() req: Request, @Res() res: Response) {
+    this.logLaunchEntry(req, 'POST /api/lti/oidc/login', {
+      hasIdToken: !!(req.body as Record<string, unknown>)?.id_token,
+      hasOAuthSignature: !!(req.body as Record<string, unknown>)?.oauth_signature,
+    });
     const params = { ...req.body, ...req.query } as Record<string, string | undefined>;
     return this.handleOidcLogin(req, params, res);
   }
@@ -283,6 +338,14 @@ export class LtiController {
         !clientId && 'client_id',
         !redirectUri && 'LTI_REDIRECT_URI (set in .env)',
       ].filter(Boolean);
+      appendLtiLog('oidc', 'OIDC login missing required params', {
+        missing,
+        hasIss: !!iss,
+        hasLoginHint: !!loginHint,
+        hasTargetLinkUri: !!targetLinkUri,
+        hasClientId: !!clientId,
+        hasRedirectUri: !!redirectUri,
+      });
       return res.status(400).send(`Missing OIDC params: ${missing.join(', ')}`);
     }
     const state = randomBytes(16).toString('hex');
@@ -317,6 +380,13 @@ export class LtiController {
         hint: 'Canvas requires redirect_uri to match Developer Key exactly. Check trailing slash, http vs https.',
       });
     }
+    appendLtiLog('oidc', 'OIDC login redirecting to Canvas authorize_redirect', {
+      iss,
+      clientId,
+      hasLtiMessageHint: !!ltiMessageHint,
+      targetLinkUri,
+      redirectUri,
+    });
     return res.redirect(fullAuthUrl);
   }
 
@@ -326,6 +396,12 @@ export class LtiController {
     @Req() req: Request,
     @Res() res: Response,
   ) {
+    const idTokenForEntry = (body?.id_token ?? body?.idToken ?? '').toString().trim();
+    const oauthSignatureForEntry = (body?.oauth_signature ?? '').toString().trim();
+    this.logLaunchEntry(req, 'POST /api/lti/launch received', {
+      hasIdToken: !!idTokenForEntry,
+      hasOAuthSignature: !!oauthSignatureForEntry,
+    });
     appendLtiLog('launch', 'POST /launch received', { bodyKeys: body ? Object.keys(body) : [] });
     const canvasError = (body?.error ?? '').toString().trim();
     const canvasErrorDesc = (body?.error_description ?? body?.errorDescription ?? '').toString().trim();
