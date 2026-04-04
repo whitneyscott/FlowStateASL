@@ -1,5 +1,6 @@
 let lastError: { endpoint: string; message: string; stack?: string } | null = null;
 const ltiLog: string[] = [];
+const MAX_LTI_LOG_LINES = 400;
 let lastCanvasApiResponse: { status: number; statusText: string; bodyPreview: string } | null = null;
 
 export function setLastError(endpoint: string, err: unknown): void {
@@ -17,7 +18,7 @@ export function getLastError(): { endpoint: string; message: string } | null {
 export function appendLtiLog(tag: string, message: string, extra?: Record<string, unknown>): void {
   const line = `[${new Date().toISOString()}] [${tag}] ${message}${extra ? ' ' + JSON.stringify(extra) : ''}`;
   ltiLog.push(line);
-  if (ltiLog.length > 100) ltiLog.shift();
+  while (ltiLog.length > MAX_LTI_LOG_LINES) ltiLog.shift();
 }
 
 export function getLtiLog(): string[] {
