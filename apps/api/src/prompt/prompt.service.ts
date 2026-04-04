@@ -406,11 +406,24 @@ export class PromptService {
     if (!assignmentId) {
       throw new Error('Assignment ID required. In course_navigation, pass assignmentId as query parameter.');
     }
+    appendLtiLog('prompt', 'putConfig: start', {
+      assignmentId,
+      moduleId: dto.moduleId ?? '(none)',
+      assignmentGroupId: dto.assignmentGroupId ?? '(none)',
+      promptMode: dto.promptMode ?? '(unset)',
+      minutes: dto.minutes ?? '(unset)',
+      promptsCount: Array.isArray(dto.prompts) ? dto.prompts.length : '(unset)',
+    });
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
     if (!token) {
       throw new Error('Canvas OAuth token required. Complete the Canvas OAuth flow (launch via LTI as teacher).');
     }
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
+    appendLtiLog('prompt', 'putConfig: token/domain resolved', {
+      assignmentId,
+      hasToken: !!token,
+      domainOverride: domainOverride ?? '(none)',
+    });
 
     try {
       await this.quiz.ensurePromptStorageQuiz(ctx);
@@ -549,6 +562,10 @@ export class PromptService {
         );
       }
     } catch (annErr) {
+      appendLtiLog('prompt', 'putConfig: settings announcement sync failed (non-fatal)', {
+        assignmentId,
+        error: String(annErr),
+      });
     }
 
 
@@ -614,21 +631,9 @@ export class PromptService {
     const dueAt = toCanvasIso8601(rawDueAt);
     const unlockAt = toCanvasIso8601(rawUnlockAt);
     const lockAt = toCanvasIso8601(rawLockAt);
-    const allowedAttemptsRaw = merged.allowedAttempts;
-    // Canvas accepts allowed_attempts only when > 0. Omit the field for unlimited/default.
-    const allowedAttemptsForCanvas =
-      typeof allowedAttemptsRaw === 'number' && Number.isFinite(allowedAttemptsRaw) && allowedAttemptsRaw > 0
-        ? Math.floor(allowedAttemptsRaw)
-        : undefined;
+    const allowedAttempts = merged.allowedAttempts ?? -1;
     const hasAssignmentUpdates =
-      !!agId ||
-      !!assignmentName ||
-      instructions !== '' ||
-      pointsPossible !== 100 ||
-      !!dueAt ||
-      !!unlockAt ||
-      !!lockAt ||
-      allowedAttemptsForCanvas !== undefined;
+      agId || assignmentName || instructions !== '' || pointsPossible !== 100 || dueAt || unlockAt || lockAt || allowedAttempts !== -1;
 
     if (rawDueAt || dueAt) {
       appendLtiLog('prompt', 'update-due-at', {
@@ -641,58 +646,34 @@ export class PromptService {
       assignmentId,
       assignmentGroupId: agId || '(none)',
       hasAssignmentUpdates,
-      allowedAttemptsRaw: allowedAttemptsRaw ?? null,
-      allowedAttemptsForCanvas: allowedAttemptsForCanvas ?? '(omitted)',
     });
     if (hasAssignmentUpdates || rubricId) {
       try {
         if (hasAssignmentUpdates) {
-          const updatePayload = {
-            ...(agId && { assignmentGroupId: agId }),
-            ...(assignmentName && { name: assignmentName }),
-            description: instructions,
-            pointsPossible,
-            ...(dueAt && { dueAt }),
-            ...(unlockAt && { unlockAt }),
-            ...(lockAt && { lockAt }),
-            ...(allowedAttemptsForCanvas !== undefined && { allowedAttempts: allowedAttemptsForCanvas }),
-          };
-          try {
-            await this.canvas.updateAssignment(
-              ctx.courseId,
+          const attemptsForCanvas =
+            process.env.NODE_ENV !== 'production' ? -1 : allowedAttempts;
+          if (process.env.NODE_ENV !== 'production' && allowedAttempts !== -1) {
+            appendLtiLog('prompt', 'putConfig: dev override — forcing allowedAttempts to -1 so you can resubmit', {
               assignmentId,
-              updatePayload,
-              domainOverride,
-              token,
-            );
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            // Defensive fallback: if Canvas rejects allowed_attempts, retry without it.
-            if (allowedAttemptsForCanvas !== undefined && /allowed_attempts|allowed attempts/i.test(msg)) {
-              appendLtiLog('prompt', 'putConfig: Canvas rejected allowed_attempts, retrying without it', {
-                assignmentId,
-                allowedAttemptsForCanvas,
-                error: msg,
-              });
-              await this.canvas.updateAssignment(
-                ctx.courseId,
-                assignmentId,
-                {
-                  ...(agId && { assignmentGroupId: agId }),
-                  ...(assignmentName && { name: assignmentName }),
-                  description: instructions,
-                  pointsPossible,
-                  ...(dueAt && { dueAt }),
-                  ...(unlockAt && { unlockAt }),
-                  ...(lockAt && { lockAt }),
-                },
-                domainOverride,
-                token,
-              );
-            } else {
-              throw err;
-            }
+              requestedAttempts: allowedAttempts,
+            });
           }
+          await this.canvas.updateAssignment(
+            ctx.courseId,
+            assignmentId,
+            {
+              ...(agId && { assignmentGroupId: agId }),
+              ...(assignmentName && { name: assignmentName }),
+              description: instructions,
+              pointsPossible,
+              ...(dueAt && { dueAt }),
+              ...(unlockAt && { unlockAt }),
+              ...(lockAt && { lockAt }),
+              allowedAttempts: attemptsForCanvas,
+            },
+            domainOverride,
+            token,
+          );
         }
         if (rubricId) {
           await this.canvas.associateRubricWithAssignment(
@@ -711,6 +692,12 @@ export class PromptService {
         throw agErr;
       }
     }
+    appendLtiLog('prompt', 'putConfig: complete', {
+      assignmentId,
+      moduleId: merged.moduleId ?? '(none)',
+      hasAssignmentUpdates,
+      hadRubricUpdate: !!rubricId,
+    });
   }
 
   /**

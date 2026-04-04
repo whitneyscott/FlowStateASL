@@ -764,6 +764,11 @@ export class CanvasService {
     domainOverride?: string,
     tokenOverride?: string | null,
   ): Promise<{ created: boolean; itemId?: number }> {
+    appendLtiLog('canvas', 'addAssignmentToModule: start', {
+      courseId,
+      moduleId,
+      assignmentId,
+    });
     const base = this.getBaseUrl(domainOverride);
     const listUrl = `${base}/api/v1/courses/${courseId}/modules/${moduleId}/items?per_page=50`;
     const listRes = await fetch(listUrl, { headers: this.getAuthHeaders(tokenOverride) });
@@ -775,6 +780,10 @@ export class CanvasService {
     const aid = parseInt(assignmentId, 10);
     const existing = Array.isArray(items) && items.some((i) => i.content_id === aid);
     if (existing) {
+      appendLtiLog('canvas', 'addAssignmentToModule: already present', {
+        moduleId,
+        assignmentId,
+      });
       return { created: false };
     }
     const url = `${base}/api/v1/courses/${courseId}/modules/${moduleId}/items`;
@@ -786,9 +795,20 @@ export class CanvasService {
     });
     if (!res.ok) {
       const text = await res.text();
+      appendLtiLog('canvas', 'addAssignmentToModule FAIL', {
+        moduleId,
+        assignmentId,
+        status: res.status,
+        text: text.slice(0, 300),
+      });
       throw new Error(`Canvas add assignment to module failed: ${res.status} ${text}`);
     }
     const created = (await res.json()) as { id?: number };
+    appendLtiLog('canvas', 'addAssignmentToModule OK', {
+      moduleId,
+      assignmentId,
+      moduleItemId: created?.id ?? null,
+    });
     return { created: true, itemId: created?.id };
   }
 

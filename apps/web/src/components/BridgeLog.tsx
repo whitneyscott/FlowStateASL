@@ -76,6 +76,22 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
 
   useEffect(() => {
     const newLines: string[] = [];
+    const lineLc = (line: string) => line.toLowerCase();
+    const isSyncTraceLine = (line: string): boolean => {
+      const lc = lineLc(line);
+      return (
+        lc.includes('sync-to-canvas') ||
+        lc.includes('putconfig') ||
+        lc.includes('syncprompterltimoduleitem') ||
+        lc.includes('resolvepromptercontextexternaltoolid') ||
+        lc.includes('module sync start') ||
+        lc.includes('assignment module item sync result') ||
+        lc.includes('prompter lti module item sync result') ||
+        lc.includes('externaltoolid') ||
+        lc.includes('moduleitemid') ||
+        lc.includes('updateassignment')
+      );
+    };
 
     // Assignment Group & Create Assignment section
     newLines.push('--- Assignment Group & Create Assignment ---');
@@ -98,6 +114,16 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
       newLines.push(...agLines);
     } else {
       newLines.push('(No assignment group activity yet)');
+    }
+
+    // Save / Sync trace section (explicit path for TeacherConfig save button)
+    newLines.push('');
+    newLines.push('--- Sync To Canvas Trace ---');
+    const syncLines = ltiLog.filter(isSyncTraceLine);
+    if (syncLines.length > 0) {
+      newLines.push(...syncLines);
+    } else {
+      newLines.push('(No sync trace lines yet)');
     }
 
     // Video submission flow (Finish & Submit / timer expiry → Canvas)
