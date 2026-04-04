@@ -800,7 +800,10 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                           <label className="prompter-settings-label">Selected Decks:</label>
                           <div className="prompter-deck-list">
                             {selectedDecks.length === 0 ? (
-                              <p className="prompter-hint">No decks selected. Deck selection UI coming soon — use API to configure.</p>
+                              <>
+                                <p className="prompter-hint">No decks selected.</p>
+                                <p className="prompter-hint">To add decks: 1) Open ASLxpr Flashcards to browse available decks, 2) Note deck titles, 3) Return here and enter deck info via API or contact support.</p>
+                              </>
                             ) : (
                               selectedDecks.map((deck, i) => (
                                 <div key={i} className="prompter-deck-item">
