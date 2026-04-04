@@ -72,6 +72,15 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
   useEffect(() => {
     const newLines: string[] = [];
     const lineLc = (line: string) => line.toLowerCase();
+    const isSettingsBlobNoise = (line: string): boolean => {
+      const lc = lineLc(line);
+      return (
+        lc.includes('settings blob') ||
+        lc.includes('prompt manager settings assignment') ||
+        lc.includes('ensurepromptmanagersettingsassignment') ||
+        lc.includes('readpromptmanagersettingsblob')
+      );
+    };
     const isSyncTraceLine = (line: string): boolean => {
       const lc = lineLc(line);
       return (
@@ -84,26 +93,31 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
         lc.includes('prompter lti module item sync result') ||
         lc.includes('externaltoolid') ||
         lc.includes('moduleitemid') ||
+        lc.includes('resourcelinkid') ||
+        lc.includes('ltiresourcelinkid') ||
         lc.includes('updateassignment')
-      );
+      ) && !isSettingsBlobNoise(line);
     };
 
     // Assignment Group & Create Assignment section
     newLines.push('--- Assignment Group & Create Assignment ---');
     const agLines = ltiLog.filter(
       (line) =>
-        line.toLowerCase().includes('assignment group') ||
-        line.toLowerCase().includes('create-assignment') ||
-        line.toLowerCase().includes('createassignment') ||
-        line.toLowerCase().includes('create-group') ||
-        line.toLowerCase().includes('update-due-at') ||
-        line.toLowerCase().includes('sync-to-canvas') ||
-        line.toLowerCase().includes('putconfig') ||
-        line.toLowerCase().includes('module assignment/lti sync') ||
-        line.toLowerCase().includes('prompter lti module item') ||
-        line.toLowerCase().includes('externaltool') ||
-        line.toLowerCase().includes('resolvepromptercontextexternaltoolid') ||
-        line.toLowerCase().includes('lti context ids resolved')
+        (
+          line.toLowerCase().includes('assignment group') ||
+          line.toLowerCase().includes('create-assignment') ||
+          line.toLowerCase().includes('createassignment') ||
+          line.toLowerCase().includes('create-group') ||
+          line.toLowerCase().includes('update-due-at') ||
+          line.toLowerCase().includes('sync-to-canvas') ||
+          line.toLowerCase().includes('putconfig') ||
+          line.toLowerCase().includes('module assignment/lti sync') ||
+          line.toLowerCase().includes('prompter lti module item') ||
+          line.toLowerCase().includes('externaltool') ||
+          line.toLowerCase().includes('resolvepromptercontextexternaltoolid') ||
+          line.toLowerCase().includes('lti context ids resolved')
+        ) &&
+        !isSettingsBlobNoise(line)
     );
     if (agLines.length > 0) {
       newLines.push(...agLines);
@@ -111,9 +125,9 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
       newLines.push('(No assignment group activity yet)');
     }
 
-    // Save / Sync trace section (explicit path for TeacherConfig save button)
+    // Save trace section (TeacherConfig save flow)
     newLines.push('');
-    newLines.push('--- Sync To Canvas Trace ---');
+    newLines.push('--- Save Trace ---');
     const syncLines = ltiLog.filter(isSyncTraceLine);
     if (syncLines.length > 0) {
       newLines.push(...syncLines);
@@ -126,20 +140,23 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
     newLines.push('--- Video Submission Flow (Finish & Submit → Canvas) ---');
     const submitLines = ltiLog.filter(
       (line) =>
-        line.includes('prompt-submit') ||
-        line.includes('prompt-upload') ||
-        line.includes('prompt-deeplink') ||
-        line.includes('submit-deep-link') ||
-        line.includes('upload-video') ||
-        line.includes('writeSubmissionBody') ||
-        line.includes('createSubmissionWithBody') ||
-        line.includes('initiateUserFileUpload') ||
-        line.includes('attachFileToSubmission') ||
-        line.includes('uploadFileToCanvas') ||
-        line.toLowerCase().includes('sproutvideo') ||
-        line.includes('PromptFallbackStore') ||
-        line.includes('fallback') ||
-        (line.includes('prompt') && (line.includes('POST') || line.includes('submit') || line.includes('upload')))
+        (
+          line.includes('prompt-submit') ||
+          line.includes('prompt-upload') ||
+          line.includes('prompt-deeplink') ||
+          line.includes('submit-deep-link') ||
+          line.includes('upload-video') ||
+          line.includes('writeSubmissionBody') ||
+          line.includes('createSubmissionWithBody') ||
+          line.includes('initiateUserFileUpload') ||
+          line.includes('attachFileToSubmission') ||
+          line.includes('uploadFileToCanvas') ||
+          line.toLowerCase().includes('sproutvideo') ||
+          line.includes('PromptFallbackStore') ||
+          line.includes('fallback') ||
+          (line.includes('prompt') && (line.includes('POST') || line.includes('submit') || line.includes('upload')))
+        ) &&
+        !isSettingsBlobNoise(line)
     );
     if (submitLines.length > 0) {
       newLines.push(...submitLines);
@@ -154,7 +171,6 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
       (line) =>
         !line.includes('listSubmissions') &&
         (line.includes('[viewer]') ||
-          line.includes('[canvas]') ||
           line.toLowerCase().includes('submissions') ||
           line.toLowerCase().includes('configured-assignments') ||
           line.includes('submissionHasFile') ||
@@ -163,7 +179,8 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
           line.includes('[debug]') ||
           line.includes('PING') ||
           line.includes('SproutVideo fallback') ||
-          line.includes('fallback for user'))
+          line.includes('fallback for user')) &&
+        !isSettingsBlobNoise(line)
     );
     if (viewerLines.length > 0) {
       newLines.push(...viewerLines);

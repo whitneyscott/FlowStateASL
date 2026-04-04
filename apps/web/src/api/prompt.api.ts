@@ -363,6 +363,22 @@ export async function createAssignment(
   });
 }
 
+export async function deleteConfiguredAssignment(assignmentId: string): Promise<void> {
+  const res = await fetch(`${base}/configured-assignments/${encodeURIComponent(assignmentId)}`, apiInit({
+    method: 'DELETE',
+  }));
+  const data = await res.json().catch(() => ({}));
+  const body = data as { redirectToOAuth?: boolean; needsManualToken?: boolean; message?: string };
+  if (res.status === 401 && body.redirectToOAuth) {
+    window.location.href = `/api/oauth/canvas?returnTo=${encodeURIComponent(window.location.href)}`;
+    throw new Error('Redirecting to Canvas OAuth');
+  }
+  if (res.status === 401 && body.needsManualToken) {
+    throw new NeedsManualTokenError(body.message);
+  }
+  if (!res.ok) throw new Error(body.message ?? `HTTP ${res.status}`);
+}
+
 export async function buildDeckPrompts(
   selectedDecks: DeckConfig[],
   totalCards: number

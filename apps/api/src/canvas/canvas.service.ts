@@ -707,6 +707,30 @@ export class CanvasService {
     }
   }
 
+  /** Delete an assignment from a course. */
+  async deleteAssignment(
+    courseId: string,
+    assignmentId: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<void> {
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}`;
+    appendLtiLog('canvas', 'deleteAssignment: DELETE from Canvas', {
+      courseId,
+      assignmentId,
+    });
+    const res = await fetch(url, {
+      method: 'DELETE',
+      headers: this.getAuthHeaders(tokenOverride),
+    });
+    if (!res.ok) {
+      if (res.status === 401) throw new CanvasTokenExpiredError(401);
+      const text = await res.text();
+      throw new Error(`Canvas delete assignment failed: ${res.status} ${text}`);
+    }
+  }
+
   /** Associate a rubric with an assignment for grading. */
   async associateRubricWithAssignment(
     courseId: string,
@@ -854,6 +878,22 @@ export class CanvasService {
         content_id: i.content_id,
         external_url: i.external_url,
       }));
+  }
+
+  /** Read one module item with content details (best effort for launch-id diagnostics). */
+  async getModuleItemDetails(
+    courseId: string,
+    moduleId: string,
+    itemId: number | string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<Record<string, unknown> | null> {
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/modules/${moduleId}/items/${itemId}?include[]=content_details`;
+    const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
+    if (!res.ok) return null;
+    const raw = (await res.json()) as Record<string, unknown>;
+    return raw && typeof raw === 'object' ? raw : null;
   }
 
   /**
@@ -1088,6 +1128,49 @@ export class CanvasService {
     tokenOverride?: string | null,
     options?: { linkTitle?: string },
   ): Promise<{ created: boolean; skippedReason?: string; itemId?: number }> {
+    const collectLaunchIdHints = (
+      item: Record<string, unknown> | null | undefined,
+    ): { resourceLinkId?: string | null; ltiResourceLinkId?: string | null; launchUrlResourceLinkId?: string | null } => {
+      if (!item) return {};
+      const asRecord = (v: unknown): Record<string, unknown> | null =>
+        v && typeof v === 'object' ? (v as Record<string, unknown>) : null;
+      const readId = (v: unknown): string | null => {
+        if (v == null) return null;
+        const s = String(v).trim();
+        return s.length ? s : null;
+      };
+      const parseResourceLinkFromUrl = (value: unknown): string | null => {
+        const url = readId(value);
+        if (!url) return null;
+        try {
+          const u = new URL(url);
+          return readId(u.searchParams.get('resource_link_id') ?? u.searchParams.get('lti_resource_link_id'));
+        } catch {
+          const m = url.match(/[?&](?:resource_link_id|lti_resource_link_id)=([^&]+)/i);
+          return m?.[1] ? decodeURIComponent(m[1]) : null;
+        }
+      };
+      const contentDetails = asRecord(item.content_details);
+      return {
+        resourceLinkId:
+          readId(item.resource_link_id) ??
+          readId(item.resourceLinkId) ??
+          readId(contentDetails?.resource_link_id) ??
+          null,
+        ltiResourceLinkId:
+          readId(item.lti_resource_link_id) ??
+          readId(item.ltiResourceLinkId) ??
+          readId(contentDetails?.lti_resource_link_id) ??
+          null,
+        launchUrlResourceLinkId:
+          parseResourceLinkFromUrl(item.external_url) ??
+          parseResourceLinkFromUrl(item.html_url) ??
+          parseResourceLinkFromUrl(item.url) ??
+          parseResourceLinkFromUrl(contentDetails?.url) ??
+          null,
+      };
+    };
+
     appendLtiLog('canvas', 'syncPrompterLtiModuleItem: start', { courseId, moduleId, assignmentId });
     const toolIdStr = await this.resolvePrompterContextExternalToolId(courseId, domainOverride, tokenOverride);
     if (!toolIdStr) {
@@ -1124,10 +1207,21 @@ export class CanvasService {
       (i) => i.type === 'ExternalTool' && i.content_id === toolIdNum && urlMatchesAssignment(i.external_url),
     );
     if (existing) {
+      const existingDetails = await this.getModuleItemDetails(
+        courseId,
+        moduleId,
+        existing.id,
+        domainOverride,
+        tokenOverride,
+      );
+      const existingLaunchIds = collectLaunchIdHints(existingDetails);
       appendLtiLog('canvas', 'syncPrompterLtiModuleItem: already present', {
         externalToolId: toolIdNum,
         moduleItemId: existing.id,
         assignmentId,
+        resourceLinkId: existingLaunchIds.resourceLinkId ?? null,
+        ltiResourceLinkId: existingLaunchIds.ltiResourceLinkId ?? null,
+        launchUrlResourceLinkId: existingLaunchIds.launchUrlResourceLinkId ?? null,
       });
       return { created: false, skippedReason: 'already_linked', itemId: existing.id };
     }
@@ -1166,12 +1260,19 @@ export class CanvasService {
       appendLtiLog('canvas', 'syncPrompterLtiModuleItem FAIL', { status: res.status, text: text.slice(0, 400) });
       throw new Error(`Canvas add ExternalTool module item failed: ${res.status} ${text}`);
     }
-    const created = (await res.json()) as { id?: number };
+    const created = (await res.json()) as { id?: number; [key: string]: unknown };
+    const createdDetails = created?.id
+      ? await this.getModuleItemDetails(courseId, moduleId, created.id, domainOverride, tokenOverride)
+      : null;
+    const createdLaunchIds = collectLaunchIdHints(createdDetails ?? created);
     appendLtiLog('canvas', 'syncPrompterLtiModuleItem OK', {
       externalToolId: toolIdStr,
       moduleItemId: created?.id,
       assignmentModuleItemId: assignmentItem?.id ?? null,
       assignmentId,
+      resourceLinkId: createdLaunchIds.resourceLinkId ?? null,
+      ltiResourceLinkId: createdLaunchIds.ltiResourceLinkId ?? null,
+      launchUrlResourceLinkId: createdLaunchIds.launchUrlResourceLinkId ?? null,
     });
     return { created: true, itemId: created?.id };
   }

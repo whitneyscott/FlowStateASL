@@ -1680,6 +1680,73 @@ export class PromptService {
     return result;
   }
 
+  /** Teacher only. Delete a configured assignment in Canvas and remove it from Prompt Manager Settings blob. */
+  async deleteConfiguredAssignment(ctx: LtiContext, assignmentId: string): Promise<void> {
+    const aid = (assignmentId ?? '').trim();
+    if (!aid) throw new Error('assignmentId is required');
+    const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
+    if (!token) {
+      throw new Error('Canvas OAuth token required. Complete the Canvas OAuth flow (launch via LTI as teacher).');
+    }
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
+    appendLtiLog('prompt', 'delete-assignment: start', {
+      assignmentId: aid,
+      courseId: ctx.courseId,
+    });
+
+    try {
+      await this.canvas.deleteAssignment(ctx.courseId, aid, domainOverride, token);
+      appendLtiLog('prompt', 'delete-assignment: Canvas assignment deleted', { assignmentId: aid });
+    } catch (err) {
+      // 404 means assignment already gone; still clean settings blob.
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.includes('404')) throw err;
+      appendLtiLog('prompt', 'delete-assignment: Canvas assignment already missing', { assignmentId: aid });
+    }
+
+    const blob = await this.readPromptManagerSettingsBlob(ctx.courseId, domainOverride, token);
+    const configs = { ...(blob?.configs ?? {}) };
+    if (configs[aid] !== undefined) {
+      delete configs[aid];
+      const settingsAssignmentId = await this.ensurePromptManagerSettingsAssignment(ctx.courseId, domainOverride, token);
+      const payload: PromptManagerSettingsBlob = {
+        ...blob,
+        v: 1,
+        configs,
+        updatedAt: new Date().toISOString(),
+      };
+      await this.canvas.updateAssignmentDescription(
+        ctx.courseId,
+        settingsAssignmentId,
+        JSON.stringify(payload),
+        domainOverride,
+        token,
+      );
+      try {
+        const ann = await this.canvas.findSettingsAnnouncementByTitle(
+          ctx.courseId,
+          PROMPT_MANAGER_SETTINGS_ANNOUNCEMENT_TITLE,
+          token,
+          domainOverride,
+        );
+        if (ann) {
+          await this.canvas.updateSettingsAnnouncement(
+            ctx.courseId,
+            ann.id,
+            JSON.stringify(payload),
+            token,
+            domainOverride,
+          );
+        }
+      } catch {
+        // optional announcement sync
+      }
+      appendLtiLog('prompt', 'delete-assignment: settings blob cleaned', { assignmentId: aid });
+    } else {
+      appendLtiLog('prompt', 'delete-assignment: no settings blob entry to remove', { assignmentId: aid });
+    }
+  }
+
   /** Teacher only. Returns course assignment groups for teacher config. */
   async getAssignmentGroups(ctx: LtiContext): Promise<Array<{ id: number; name: string }>> {
     const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken);

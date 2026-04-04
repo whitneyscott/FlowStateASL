@@ -46,6 +46,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const [gradeDropdownValue, setGradeDropdownValue] = useState('');
   const [configAssignValue, setConfigAssignValue] = useState('');
   const [creatingAssignment, setCreatingAssignment] = useState(false);
+  const [deletingAssignment, setDeletingAssignment] = useState(false);
   const [createAssignName, setCreateAssignName] = useState('');
   const [gradeConfirmModal, setGradeConfirmModal] = useState<{ name: string; id: string } | null>(null);
   const [modules, setModules] = useState<promptApi.CanvasModule[]>([]);
@@ -462,6 +463,52 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     }
   };
 
+  const handleDeleteConfiguredAssignment = async () => {
+    if (!teacher || !hasLti || deletingAssignment || !configAssignValue || configAssignValue === '__new__') return;
+    const target = configuredAssignments.find((a) => a.id === configAssignValue);
+    const label = target?.name ?? `Assignment ${configAssignValue}`;
+    const ok = window.confirm(
+      `Delete "${label}" from Canvas?\n\nThis also removes its Prompt Manager settings entry. This cannot be undone.`
+    );
+    if (!ok) return;
+    setDeletingAssignment(true);
+    setError(null);
+    try {
+      setLastFunction('DELETE /api/prompt/configured-assignments/:assignmentId');
+      await promptApi.deleteConfiguredAssignment(configAssignValue);
+      setLastApiResult('DELETE /api/prompt/configured-assignments/:assignmentId', 204, true);
+      setSearchParams({ create: '1' });
+      setConfigAssignValue('__new__');
+      setGradeDropdownValue('');
+      setAssignmentName('ASL Express Assignment');
+      setMinutes(5);
+      setPrompts([]);
+      setAccessCode('');
+      setModuleId('');
+      setAssignmentGroupId('');
+      setRubricId('');
+      setPointsPossible(10);
+      setDueAt('');
+      setUnlockAt('');
+      setLockAt('');
+      setAllowedAttempts(-1);
+      setInstructions('');
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+      await loadAssignments();
+    } catch (e: unknown) {
+      if (e instanceof promptApi.NeedsManualTokenError) {
+        setShowManualTokenModal(true);
+      } else {
+        const msg = e instanceof Error ? e.message : String(e);
+        setError(msg);
+        setLastApiError('DELETE /api/prompt/configured-assignments/:assignmentId', 0, msg);
+      }
+    } finally {
+      setDeletingAssignment(false);
+    }
+  };
+
   const handleGradeSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const v = e.target.value;
     if (!v) {
@@ -681,8 +728,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
               <button type="button" className="prompter-btn-toggle-settings" onClick={() => setShowSettings((s) => !s)}>
                 {showSettings ? 'Hide Settings' : 'Show Settings'}
               </button>
-              <button type="button" className="prompter-btn-ready prompter-btn-sync" onClick={handleSave} disabled={saving}>
-                {saving ? 'Saving...' : 'Sync to Canvas'}
+              <button type="button" className="prompter-btn-ready" onClick={handleSave} disabled={saving}>
+                {saving ? 'Saving...' : 'Save'}
               </button>
               {effectiveAssignmentId && (
                 <Link
@@ -714,6 +761,18 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                         </option>
                       ))}
                     </select>
+                    {configAssignValue !== '__new__' && !!configAssignValue && (
+                      <div className="prompter-settings-actions-row" style={{ marginTop: 10 }}>
+                        <button
+                          type="button"
+                          onClick={handleDeleteConfiguredAssignment}
+                          disabled={deletingAssignment}
+                          className="prompter-btn-secondary"
+                        >
+                          {deletingAssignment ? 'Deleting...' : 'Delete Assignment'}
+                        </button>
+                      </div>
+                    )}
                   </div>
                   {configAssignValue === '__new__' && (
                     <div className="prompter-create-module-form" style={{ marginTop: 12 }}>
@@ -1035,9 +1094,6 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                   </div>
                 </div>
                 <div className="prompter-settings-save-row prompter-settings-actions-row">
-                  <button type="button" onClick={handleSave} disabled={saving} className="prompter-btn-ready">
-                    {saving ? 'Saving...' : 'Save'}
-                  </button>
                   <button type="button" onClick={handleReset} disabled={saving} className="prompter-btn-secondary">
                     Reset
                   </button>
