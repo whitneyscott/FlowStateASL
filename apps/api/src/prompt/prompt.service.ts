@@ -392,12 +392,38 @@ export class PromptService {
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
     const blob = await this.readPromptManagerSettingsBlob(ctx.courseId, domainOverride, token);
     let config = blob?.configs?.[assignmentId] ?? null;
-    
+
     // Backward compatibility: default promptMode to 'text' if not present
     if (config && !config.promptMode) {
       config = { ...config, promptMode: 'text' };
     }
-    
+
+    // Hydrate key assignment-backed fields directly from Canvas so UI reflects current assignment state.
+    // Keep blob values as fallback when Canvas read is unavailable.
+    try {
+      const assignment = await this.canvas.getAssignment(ctx.courseId, assignmentId, domainOverride, token);
+      if (assignment) {
+        const hydrated: PromptConfigJson = {
+          ...(config ?? { minutes: 5, prompts: [], accessCode: '' }),
+          ...(assignment.name ? { assignmentName: String(assignment.name) } : {}),
+          ...(assignment.assignment_group_id != null ? { assignmentGroupId: String(assignment.assignment_group_id) } : {}),
+          ...(assignment.points_possible != null ? { pointsPossible: Number(assignment.points_possible) } : {}),
+          ...(assignment.allowed_attempts != null
+            ? { allowedAttempts: Number(assignment.allowed_attempts) }
+            : config?.allowedAttempts == null
+              ? { allowedAttempts: -1 }
+              : {}),
+        };
+        if (!hydrated.promptMode) hydrated.promptMode = 'text';
+        return hydrated;
+      }
+    } catch (err) {
+      appendLtiLog('prompt', 'getConfig: assignment hydration failed (non-fatal)', {
+        assignmentId,
+        error: String(err),
+      });
+    }
+
     return config ?? null;
   }
 
@@ -1864,7 +1890,17 @@ export class PromptService {
     // Ensure SproutVideo PromptSubmissions folder id is resolved and persisted (one-time lookup/create + log in Bridge)
     await this.getPromptSubmissionsFolderId(ctx.courseId, domainOverride, token);
     const blob = await this.readPromptManagerSettingsBlob(ctx.courseId, domainOverride, token);
-    const configs = { ...(blob?.configs ?? {}), [assignmentId]: { minutes: 5, prompts: [], accessCode: '', assignmentName: name } as PromptConfigJson };
+    const configs = {
+      ...(blob?.configs ?? {}),
+      [assignmentId]: {
+        minutes: 5,
+        prompts: [],
+        accessCode: '',
+        assignmentName: name,
+        ...(assignmentGroupId != null ? { assignmentGroupId: String(assignmentGroupId) } : {}),
+        promptMode: 'text',
+      } as PromptConfigJson,
+    };
     // Read → merge → write: only add new assignment to configs; preserve rest of blob (e.g. sproutPromptSubmissionsFolderId)
     const payload: PromptManagerSettingsBlob = {
       ...blob,

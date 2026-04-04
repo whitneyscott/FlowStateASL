@@ -43,7 +43,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const [config, setConfig] = useState<promptApi.PromptConfig | null>(null);
   const [configuredAssignments, setConfiguredAssignments] = useState<promptApi.ConfiguredAssignment[]>([]);
   const [loadingAssignments, setLoadingAssignments] = useState(false);
-  const [gradeDropdownValue, setGradeDropdownValue] = useState('');
+  const [, setGradeDropdownValue] = useState('');
+  const [assignmentActionMode, setAssignmentActionMode] = useState<'edit' | 'grade'>('edit');
   const [configAssignValue, setConfigAssignValue] = useState('');
   const [creatingAssignment, setCreatingAssignment] = useState(false);
   const [deletingAssignment, setDeletingAssignment] = useState(false);
@@ -54,6 +55,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const [rubrics, setRubrics] = useState<promptApi.CanvasRubric[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [minutes, setMinutes] = useState(5);
@@ -189,11 +191,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
           setSelectedDecks(loadedDecks);
           setTotalCards(data.videoPromptConfig.totalCards ?? 10);
           const deckIds = loadedDecks.map((d) => d.id).filter(Boolean);
-          if (!applyDeckFiltersFromSelectedDeckIds(deckIds, deckHierarchyPlaylists)) {
-            setPendingDeckFilterSeedIds(deckIds);
-          } else {
-            setPendingDeckFilterSeedIds(null);
-          }
+          setPendingDeckFilterSeedIds(deckIds.length ? deckIds : null);
         } else {
           setSelectedDecks([]);
           setTotalCards(10);
@@ -232,7 +230,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     } finally {
       setLoading(false);
     }
-  }, [hasLti, assignmentId, setLastFunction, setLastApiResult, setLastApiError, deckHierarchyPlaylists]);
+  }, [hasLti, assignmentId, setLastFunction, setLastApiResult, setLastApiError]);
 
   useEffect(() => {
     if (teacher && hasLti) loadAssignments();
@@ -242,6 +240,15 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     if (assignmentId) setConfigAssignValue(assignmentId);
     else setConfigAssignValue('__new__');
   }, [assignmentId]);
+
+  useEffect(() => {
+    if (assignmentActionMode === 'grade' && configAssignValue === '__new__') {
+      setConfigAssignValue('');
+    }
+    if (assignmentActionMode === 'edit' && !configAssignValue) {
+      setConfigAssignValue(assignmentId || '__new__');
+    }
+  }, [assignmentActionMode, configAssignValue, assignmentId]);
 
   useEffect(() => {
     if (teacher && hasLti) {
@@ -451,6 +458,18 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const handleConfigAssignSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const v = e.target.value;
     setConfigAssignValue(v);
+    if (assignmentActionMode === 'grade') {
+      if (!v) {
+        setGradeDropdownValue('');
+        return;
+      }
+      const a = configuredAssignments.find((x) => x.id === v);
+      if (a) {
+        setGradeDropdownValue(v);
+        setGradeConfirmModal({ name: a.name, id: a.id });
+      }
+      return;
+    }
     if (v === '__new__') {
       setSearchParams({ create: '1' });
       setAssignmentName('ASL Express Assignment');
@@ -542,19 +561,6 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     }
   };
 
-  const handleGradeSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const v = e.target.value;
-    if (!v) {
-      setGradeDropdownValue('');
-      return;
-    }
-    const a = configuredAssignments.find((x) => x.id === v);
-    if (a) {
-      setGradeDropdownValue(v);
-      setGradeConfirmModal({ name: a.name, id: a.id });
-    }
-  };
-
   const confirmGradeOpen = () => {
     if (gradeConfirmModal) {
       navigate(`/viewer?assignmentId=${encodeURIComponent(gradeConfirmModal.id)}`);
@@ -597,6 +603,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       return;
     }
     setSaving(true);
+    setResetting(true);
     setError(null);
     setSaved(false);
     try {
@@ -618,6 +625,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       }
     } finally {
       setSaving(false);
+      setResetting(false);
     }
   };
 
@@ -737,7 +745,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
               disabled={creatingModule || !createModuleName.trim()}
               className="prompter-btn-ready"
             >
-              {creatingModule ? 'Creating...' : 'Create Module'}
+              {creatingModule ? <><span className="prompter-inline-spinner" /> Creating...</> : 'Create Module'}
             </button>
             <button type="button" onClick={() => { setShowCreateModule(false); setCreateModuleName(''); setCreateModulePosition(''); }} className="prompter-btn-secondary">
               Cancel
@@ -763,7 +771,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                 {showSettings ? 'Hide Settings' : 'Show Settings'}
               </button>
               <button type="button" className="prompter-btn-ready" onClick={handleSave} disabled={saving}>
-                {saving ? 'Saving...' : 'Save'}
+                {saving ? <><span className="prompter-inline-spinner" /> Saving...</> : 'Save'}
               </button>
               {effectiveAssignmentId && (
                 <Link
@@ -778,24 +786,52 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
             </div>
             {hasLti && (
               <div className="prompter-settings-card" style={{ marginBottom: 16 }}>
-                <h2 className="prompter-settings-card-title">Assignment to Configure</h2>
+                <h2 className="prompter-settings-card-title">Assignments</h2>
                   <div className="prompter-settings-section">
-                    <label className="prompter-settings-label">Select an assignment or create new</label>
+                    <label className="prompter-settings-label">Action</label>
+                    <div className="prompter-settings-actions-row" style={{ marginBottom: 10 }}>
+                      <button
+                        type="button"
+                        className={assignmentActionMode === 'edit' ? 'prompter-btn-ready' : 'prompter-btn-secondary'}
+                        onClick={() => setAssignmentActionMode('edit')}
+                        disabled={loadingAssignments || saving}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        className={assignmentActionMode === 'grade' ? 'prompter-btn-ready' : 'prompter-btn-secondary'}
+                        onClick={() => setAssignmentActionMode('grade')}
+                        disabled={loadingAssignments || saving}
+                      >
+                        Grade
+                      </button>
+                    </div>
+                    <label className="prompter-settings-label">
+                      {assignmentActionMode === 'grade' ? 'Select assignment for grading' : 'Select an assignment to edit or create new'}
+                    </label>
                     <select
                       className="prompter-settings-input"
-                      value={configAssignValue}
+                      value={assignmentActionMode === 'grade' && configAssignValue === '__new__' ? '' : configAssignValue}
                       onChange={handleConfigAssignSelect}
                       disabled={loadingAssignments}
                       style={{ maxWidth: 480 }}
                     >
-                      <option value="__new__">+ Create new assignment</option>
+                      <option value="">
+                        {loadingAssignments
+                          ? 'Loading assignments...'
+                          : assignmentActionMode === 'grade'
+                            ? '— Select Assignment to Grade —'
+                            : '— Select Assignment to Edit —'}
+                      </option>
+                      {assignmentActionMode === 'edit' && <option value="__new__">+ Create new assignment</option>}
                       {configuredAssignments.map((a) => (
                         <option key={a.id} value={a.id}>
-                          {a.name} ({a.submissionCount} submissions)
+                          {a.name} ({a.submissionCount} submissions{assignmentActionMode === 'grade' ? `, ${a.ungradedCount} ungraded` : ''})
                         </option>
                       ))}
                     </select>
-                    {configAssignValue !== '__new__' && !!configAssignValue && (
+                    {assignmentActionMode === 'edit' && configAssignValue !== '__new__' && !!configAssignValue && (
                       <div className="prompter-settings-actions-row" style={{ marginTop: 10 }}>
                         <button
                           type="button"
@@ -803,12 +839,12 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                           disabled={deletingAssignment}
                           className="prompter-btn-secondary"
                         >
-                          {deletingAssignment ? 'Deleting...' : 'Delete Assignment'}
+                          {deletingAssignment ? <><span className="prompter-inline-spinner" /> Deleting...</> : 'Delete Assignment'}
                         </button>
                       </div>
                     )}
                   </div>
-                  {configAssignValue === '__new__' && (
+                  {assignmentActionMode === 'edit' && configAssignValue === '__new__' && (
                     <div className="prompter-create-module-form" style={{ marginTop: 12 }}>
                       <label className="prompter-settings-label">New assignment name</label>
                       <input
@@ -828,35 +864,11 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                           disabled={creatingAssignment}
                           className="prompter-btn-ready"
                         >
-                          {creatingAssignment ? 'Creating...' : 'Create Assignment'}
+                          {creatingAssignment ? <><span className="prompter-inline-spinner" /> Creating...</> : 'Create Assignment'}
                         </button>
                       </div>
                     </div>
                   )}
-                </div>
-            )}
-            {hasLti && (
-              <div className="prompter-settings-card" style={{ marginBottom: 16 }}>
-                <h2 className="prompter-settings-card-title">Grade Submissions</h2>
-                  <div className="prompter-settings-section">
-                    <label className="prompter-settings-label">Select assignment for grading</label>
-                    <select
-                      className="prompter-settings-input"
-                      value={gradeDropdownValue}
-                      onChange={handleGradeSelect}
-                      disabled={loadingAssignments}
-                      style={{ maxWidth: 480 }}
-                    >
-                      <option value="">
-                        {loadingAssignments ? 'Loading assignments...' : '— Select Assignment to Grade —'}
-                      </option>
-                      {configuredAssignments.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.name} ({a.submissionCount} submissions, {a.ungradedCount} ungraded)
-                        </option>
-                      ))}
-                    </select>
-                  </div>
                 </div>
             )}
           </>
@@ -1129,7 +1141,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                 </div>
                 <div className="prompter-settings-save-row prompter-settings-actions-row">
                   <button type="button" onClick={handleReset} disabled={saving} className="prompter-btn-secondary">
-                    Reset
+                    {resetting ? <><span className="prompter-inline-spinner" /> Resetting...</> : 'Reset'}
                   </button>
                 </div>
               </div>

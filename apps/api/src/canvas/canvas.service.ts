@@ -534,7 +534,14 @@ export class CanvasService {
     assignmentId: string,
     domainOverride?: string,
     tokenOverride?: string | null,
-  ): Promise<{ name?: string; description?: string; points_possible?: number; rubric?: Array<unknown> } | null> {
+  ): Promise<{
+    name?: string;
+    description?: string;
+    points_possible?: number;
+    rubric?: Array<unknown>;
+    assignment_group_id?: number;
+    allowed_attempts?: number;
+  } | null> {
     const base = this.getBaseUrl(domainOverride);
     const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}`;
     const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
@@ -542,8 +549,22 @@ export class CanvasService {
       if (res.status === 401) throw new CanvasTokenExpiredError(401);
       return null;
     }
-    const data = (await res.json()) as { name?: string; description?: string; points_possible?: number; rubric?: Array<unknown> };
-    return { name: data.name, description: data.description, points_possible: data.points_possible, rubric: data.rubric };
+    const data = (await res.json()) as {
+      name?: string;
+      description?: string;
+      points_possible?: number;
+      rubric?: Array<unknown>;
+      assignment_group_id?: number;
+      allowed_attempts?: number;
+    };
+    return {
+      name: data.name,
+      description: data.description,
+      points_possible: data.points_possible,
+      rubric: data.rubric,
+      assignment_group_id: data.assignment_group_id,
+      allowed_attempts: data.allowed_attempts,
+    };
   }
 
   /** List assignment groups for teacher config. */

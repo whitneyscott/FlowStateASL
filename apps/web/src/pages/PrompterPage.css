@@ -69,6 +69,23 @@
   filter: brightness(1.05);
 }
 
+.prompter-inline-spinner {
+  display: inline-block;
+  width: 0.9em;
+  height: 0.9em;
+  margin-right: 8px;
+  border: 2px solid rgba(255, 255, 255, 0.55);
+  border-top-color: #fff;
+  border-radius: 50%;
+  vertical-align: -0.1em;
+  animation: prompter-inline-spin 0.8s linear infinite;
+}
+
+@keyframes prompter-inline-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
 .prompter-video-container {
   position: relative;
   width: 100%;
