@@ -805,7 +805,22 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                       </div>
                       <div className="prompter-settings-field">
                         <label className="prompter-settings-label">Allowed Attempts:</label>
-                        <input type="number" min={-1} value={allowedAttempts} onChange={(e) => setAllowedAttempts(Number(e.target.value) ?? -1)} className="prompter-settings-input prompter-settings-input-narrow" title="-1 = unlimited" />
+                        <input
+                          type="number"
+                          min={-1}
+                          value={allowedAttempts}
+                          onChange={(e) => {
+                            const raw = e.target.value.trim();
+                            if (raw === '') {
+                              setAllowedAttempts(-1);
+                              return;
+                            }
+                            const n = Number(raw);
+                            setAllowedAttempts(Number.isFinite(n) ? n : -1);
+                          }}
+                          className="prompter-settings-input prompter-settings-input-narrow"
+                          title="-1 = unlimited"
+                        />
                         <span className="prompter-hint">(-1 = unlimited)</span>
                       </div>
                       <div className="prompter-settings-field">
