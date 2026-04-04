@@ -76,7 +76,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const [dueAt, setDueAt] = useState('');
   const [unlockAt, setUnlockAt] = useState('');
   const [lockAt, setLockAt] = useState('');
-  const [allowedAttempts, setAllowedAttempts] = useState(-1);
+  const [allowedAttempts, setAllowedAttempts] = useState(1);
   const [instructions, setInstructions] = useState('');
   const [showSettings, setShowSettings] = useState(true);
   const [showManualTokenModal, setShowManualTokenModal] = useState(false);
@@ -181,11 +181,11 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         setAssignmentGroupId(data.assignmentGroupId ?? '');
         setRubricId(data.rubricId ?? '');
         setAssignmentName(data.assignmentName ?? '');
-        setPointsPossible(data.pointsPossible ?? 10);
+        setPointsPossible(Math.max(0, Math.round(Number(data.pointsPossible ?? 10) || 10)));
         setDueAt(data.dueAt ?? '');
         setUnlockAt(data.unlockAt ?? '');
         setLockAt(data.lockAt ?? '');
-        setAllowedAttempts(data.allowedAttempts ?? -1);
+        setAllowedAttempts(Math.max(1, Number(data.allowedAttempts ?? 1) || 1));
         setInstructions(data.instructions ?? '');
         setPromptMode(data.promptMode ?? 'text');
         if (data.videoPromptConfig) {
@@ -214,7 +214,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         setDueAt('');
         setUnlockAt('');
         setLockAt('');
-        setAllowedAttempts(-1);
+        setAllowedAttempts(1);
         setInstructions('');
         setDeckFilterCurricula([]);
         setDeckFilterUnits([]);
@@ -475,7 +475,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setDueAt('');
     setUnlockAt('');
     setLockAt('');
-    setAllowedAttempts(-1);
+    setAllowedAttempts(1);
     setInstructions('');
     setPromptMode('text');
   };
@@ -556,7 +556,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       setDueAt('');
       setUnlockAt('');
       setLockAt('');
-      setAllowedAttempts(-1);
+      setAllowedAttempts(1);
       setInstructions('');
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
@@ -598,7 +598,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setDueAt('');
     setUnlockAt('');
     setLockAt('');
-    setAllowedAttempts(-1);
+    setAllowedAttempts(1);
     setInstructions('');
     setPromptMode('text');
     setSelectedDecks([]);
@@ -622,7 +622,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     try {
       setLastFunction('PUT /api/prompt/config');
       await promptApi.putPromptConfig(
-        { minutes: 5, prompts: [], accessCode: '', assignmentName: '', moduleId: '', pointsPossible: 10, instructions: '', dueAt: '', unlockAt: '', lockAt: '', allowedAttempts: -1, promptMode: 'text' },
+        { minutes: 5, prompts: [], accessCode: '', assignmentName: '', moduleId: '', pointsPossible: 10, instructions: '', dueAt: '', unlockAt: '', lockAt: '', allowedAttempts: 1, promptMode: 'text' },
         assignmentId
       );
       setLastApiResult('PUT /api/prompt/config', 200, true);
@@ -920,7 +920,18 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                       {assignmentGroupSelector}
                       <div className="prompter-settings-field">
                         <label className="prompter-settings-label">Points Possible:</label>
-                        <input type="number" step={0.5} min={0} value={pointsPossible} onChange={(e) => setPointsPossible(Number(e.target.value) || 0)} className="prompter-settings-input prompter-settings-input-narrow" />
+                        <input
+                          type="number"
+                          step={1}
+                          min={0}
+                          value={pointsPossible}
+                          onChange={(e) => {
+                            const raw = e.target.value.trim();
+                            const n = Number(raw);
+                            setPointsPossible(Number.isFinite(n) ? Math.max(0, Math.round(n)) : 0);
+                          }}
+                          className="prompter-settings-input prompter-settings-input-narrow"
+                        />
                       </div>
                       <div className="prompter-settings-field">
                         <label className="prompter-settings-label">Due Date (optional):</label>
@@ -938,21 +949,21 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                         <label className="prompter-settings-label">Allowed Attempts:</label>
                         <input
                           type="number"
-                          min={-1}
+                          min={1}
                           value={allowedAttempts}
                           onChange={(e) => {
                             const raw = e.target.value.trim();
                             if (raw === '') {
-                              setAllowedAttempts(-1);
+                              setAllowedAttempts(1);
                               return;
                             }
                             const n = Number(raw);
-                            setAllowedAttempts(Number.isFinite(n) ? n : -1);
+                            setAllowedAttempts(Number.isFinite(n) ? Math.max(1, Math.round(n)) : 1);
                           }}
                           className="prompter-settings-input prompter-settings-input-narrow"
-                          title="-1 = unlimited"
+                          title="Minimum 1 attempt"
                         />
-                        <span className="prompter-hint">(-1 = unlimited)</span>
+                        <span className="prompter-hint">(Minimum 1)</span>
                       </div>
                       <div className="prompter-settings-field">
                         <label className="prompter-settings-label">Instructions (optional):</label>

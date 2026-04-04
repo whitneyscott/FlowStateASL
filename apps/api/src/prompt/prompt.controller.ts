@@ -64,6 +64,21 @@ export class PromptController {
     return ctx;
   }
 
+  private validatePutConfigDto(dto: PutPromptConfigDto): void {
+    if (dto.pointsPossible !== undefined) {
+      const v = Number(dto.pointsPossible);
+      if (!Number.isFinite(v) || !Number.isInteger(v) || v < 0) {
+        throw new BadRequestException('pointsPossible must be a non-negative integer');
+      }
+    }
+    if (dto.allowedAttempts !== undefined) {
+      const v = Number(dto.allowedAttempts);
+      if (!Number.isFinite(v) || !Number.isInteger(v) || v < 1) {
+        throw new BadRequestException('allowedAttempts must be an integer greater than or equal to 1');
+      }
+    }
+  }
+
   @Get('config')
   async getConfig(@Req() req: Request, @Res() res: Response) {
     const ctx = this.getCtxWithAssignment(req);
@@ -81,6 +96,7 @@ export class PromptController {
   @Put('config')
   async putConfig(@Req() req: Request, @Res() res: Response, @Body() dto: PutPromptConfigDto) {
     const ctx = this.getCtxWithAssignment(req);
+    this.validatePutConfigDto(dto);
     const { appendLtiLog } = await import('../common/last-error.store');
     appendLtiLog('prompt', 'sync-to-canvas: putConfig received', {
       assignmentId: ctx.assignmentId,

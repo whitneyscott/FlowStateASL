@@ -407,11 +407,13 @@ export class PromptService {
           ...(config ?? { minutes: 5, prompts: [], accessCode: '' }),
           ...(assignment.name ? { assignmentName: String(assignment.name) } : {}),
           ...(assignment.assignment_group_id != null ? { assignmentGroupId: String(assignment.assignment_group_id) } : {}),
-          ...(assignment.points_possible != null ? { pointsPossible: Number(assignment.points_possible) } : {}),
+          ...(assignment.points_possible != null
+            ? { pointsPossible: Math.max(0, Math.round(Number(assignment.points_possible) || 0)) }
+            : {}),
           ...(assignment.allowed_attempts != null
             ? { allowedAttempts: Number(assignment.allowed_attempts) }
             : config?.allowedAttempts == null
-              ? { allowedAttempts: -1 }
+              ? { allowedAttempts: 1 }
               : {}),
         };
         if (!hydrated.promptMode) hydrated.promptMode = 'text';
@@ -498,7 +500,9 @@ export class PromptService {
       ...(dto.assignmentName !== undefined && { assignmentName: dto.assignmentName }),
       ...(effectiveGroupId !== undefined && { assignmentGroupId: effectiveGroupId }),
       ...(dto.moduleId !== undefined && { moduleId: dto.moduleId }),
-      ...(dto.pointsPossible !== undefined && { pointsPossible: dto.pointsPossible }),
+      ...(dto.pointsPossible !== undefined && {
+        pointsPossible: Math.max(0, Math.round(Number(dto.pointsPossible) || 0)),
+      }),
       ...(dto.rubricId !== undefined && { rubricId: dto.rubricId }),
       ...(dto.instructions !== undefined && { instructions: dto.instructions }),
       ...(dto.dueAt !== undefined && { dueAt: dto.dueAt }),
@@ -650,16 +654,19 @@ export class PromptService {
     const rubricId = merged.rubricId?.trim();
     const assignmentName = (merged.assignmentName ?? '').trim() || undefined;
     const instructions = merged.instructions ?? '';
-    const pointsPossible = merged.pointsPossible ?? 100;
+    const pointsPossible = Math.max(0, Math.round(Number(merged.pointsPossible ?? 100) || 100));
     const rawDueAt = merged.dueAt?.trim() || undefined;
     const rawUnlockAt = merged.unlockAt?.trim() || undefined;
     const rawLockAt = merged.lockAt?.trim() || undefined;
     const dueAt = toCanvasIso8601(rawDueAt);
     const unlockAt = toCanvasIso8601(rawUnlockAt);
     const lockAt = toCanvasIso8601(rawLockAt);
-    const allowedAttempts = merged.allowedAttempts ?? -1;
+    const allowedAttemptsRaw = merged.allowedAttempts ?? 1;
+    const allowedAttempts = Number.isFinite(Number(allowedAttemptsRaw))
+      ? Math.max(1, Math.round(Number(allowedAttemptsRaw)))
+      : 1;
     const hasAssignmentUpdates =
-      agId || assignmentName || instructions !== '' || pointsPossible !== 100 || dueAt || unlockAt || lockAt || allowedAttempts !== -1;
+      agId || assignmentName || instructions !== '' || pointsPossible !== 100 || dueAt || unlockAt || lockAt || allowedAttempts !== 1;
 
     if (rawDueAt || dueAt) {
       appendLtiLog('prompt', 'update-due-at', {
@@ -676,30 +683,50 @@ export class PromptService {
     if (hasAssignmentUpdates || rubricId) {
       try {
         if (hasAssignmentUpdates) {
-          const attemptsForCanvas =
-            process.env.NODE_ENV !== 'production' ? -1 : allowedAttempts;
-          if (process.env.NODE_ENV !== 'production' && allowedAttempts !== -1) {
-            appendLtiLog('prompt', 'putConfig: dev override — forcing allowedAttempts to -1 so you can resubmit', {
+          try {
+            await this.canvas.updateAssignment(
+              ctx.courseId,
               assignmentId,
-              requestedAttempts: allowedAttempts,
-            });
+              {
+                ...(agId && { assignmentGroupId: agId }),
+                ...(assignmentName && { name: assignmentName }),
+                description: instructions,
+                pointsPossible,
+                ...(dueAt && { dueAt }),
+                ...(unlockAt && { unlockAt }),
+                ...(lockAt && { lockAt }),
+                allowedAttempts,
+              },
+              domainOverride,
+              token,
+            );
+          } catch (attemptErr) {
+            const msg = String(attemptErr);
+            if (msg.toLowerCase().includes('allowed_attempts') && msg.toLowerCase().includes('greater than 0')) {
+              appendLtiLog('prompt', 'putConfig: allowed_attempts rejected, retrying with fallback=1', {
+                assignmentId,
+                attemptedAllowedAttempts: allowedAttempts,
+              });
+              await this.canvas.updateAssignment(
+                ctx.courseId,
+                assignmentId,
+                {
+                  ...(agId && { assignmentGroupId: agId }),
+                  ...(assignmentName && { name: assignmentName }),
+                  description: instructions,
+                  pointsPossible,
+                  ...(dueAt && { dueAt }),
+                  ...(unlockAt && { unlockAt }),
+                  ...(lockAt && { lockAt }),
+                  allowedAttempts: 1,
+                },
+                domainOverride,
+                token,
+              );
+            } else {
+              throw attemptErr;
+            }
           }
-          await this.canvas.updateAssignment(
-            ctx.courseId,
-            assignmentId,
-            {
-              ...(agId && { assignmentGroupId: agId }),
-              ...(assignmentName && { name: assignmentName }),
-              description: instructions,
-              pointsPossible,
-              ...(dueAt && { dueAt }),
-              ...(unlockAt && { unlockAt }),
-              ...(lockAt && { lockAt }),
-              allowedAttempts: attemptsForCanvas,
-            },
-            domainOverride,
-            token,
-          );
         }
         if (rubricId) {
           await this.canvas.associateRubricWithAssignment(
