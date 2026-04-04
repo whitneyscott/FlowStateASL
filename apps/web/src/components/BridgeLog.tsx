@@ -14,14 +14,9 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
   const { lastFunctionCalled, lastApiResult } = useDebug();
   const { isDeveloperMode } = useAppMode();
   const [searchParams] = useSearchParams();
-  const teacherRole =
-    !!context &&
-    /instructor|administrator|faculty|teacher|staff|contentdeveloper|teachingassistant|ta/i.test(
-      context.roles || '',
-    );
-  /** Local Vite dev only: ?debug=1 still expands tools without changing stored mode */
-  const legacyDebugParam = import.meta.env.DEV && searchParams.get('debug') === '1';
-  const developerUi = teacherRole && (isDeveloperMode || legacyDebugParam);
+  /** Allow forcing Bridge Log with ?debug=1 in any environment. */
+  const debugParamEnabled = searchParams.get('debug') === '1';
+  const developerUi = isDeveloperMode || debugParamEnabled;
   const [lastServerError, setLastServerError] = useState<{ endpoint: string; message: string } | null>(null);
   const [ltiLog, setLtiLog] = useState<string[]>([]);
   const [lines, setLines] = useState<string[]>(['Initializing...']);
@@ -176,21 +171,11 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
       newLines.push('(No viewer/grading activity yet)');
     }
 
-    const agOrSubmitRelated =
-      lastFunctionCalled?.includes('assignment-groups') ||
-      lastFunctionCalled?.includes('create-assignment') ||
-      lastFunctionCalled?.includes('submit') ||
-      lastFunctionCalled?.includes('upload-video') ||
-      lastFunctionCalled?.includes('sync') ||
-      lastFunctionCalled?.includes('submit-deep-link') ||
-      lastFunctionCalled?.includes('submissions') ||
-      lastFunctionCalled?.includes('configured-assignments') ||
-      (lastFunctionCalled?.includes('config') && lastApiResult?.endpoint?.includes('config'));
-    if (agOrSubmitRelated && lastFunctionCalled) {
+    if (lastFunctionCalled) {
       newLines.push('');
       newLines.push(`Last function: ${lastFunctionCalled}`);
     }
-    if (agOrSubmitRelated && lastApiResult) {
+    if (lastApiResult) {
       newLines.push(`Last API: ${lastApiResult.endpoint} → ${lastApiResult.status} ${lastApiResult.ok ? 'OK' : 'FAILED'}`);
     }
     if (
