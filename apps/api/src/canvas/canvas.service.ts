@@ -792,6 +792,200 @@ export class CanvasService {
     return { created: true, itemId: created?.id };
   }
 
+  /** List module items (positions, types) for LTI + assignment sync. */
+  async listModuleItems(
+    courseId: string,
+    moduleId: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<
+    Array<{
+      id: number;
+      position: number;
+      type: string;
+      title?: string;
+      content_id?: number;
+      external_url?: string;
+    }>
+  > {
+    const base = this.getBaseUrl(domainOverride);
+    const listUrl = `${base}/api/v1/courses/${courseId}/modules/${moduleId}/items?per_page=100`;
+    const listRes = await fetch(listUrl, { headers: this.getAuthHeaders(tokenOverride) });
+    if (!listRes.ok) {
+      const text = await listRes.text();
+      throw new Error(`Canvas list module items failed: ${listRes.status} ${text}`);
+    }
+    const raw = (await listRes.json()) as Array<{
+      id?: number;
+      position?: number;
+      type?: string;
+      title?: string;
+      content_id?: number;
+      external_url?: string;
+    }>;
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .filter((i) => i.id != null && i.position != null && i.type)
+      .map((i) => ({
+        id: i.id!,
+        position: i.position!,
+        type: String(i.type),
+        title: i.title,
+        content_id: i.content_id,
+        external_url: i.external_url,
+      }));
+  }
+
+  /**
+   * Course Context External Tool id for the Prompter LTI app (module item content_id).
+   * Prefer env CANVAS_PROMPTER_EXTERNAL_TOOL_ID / LTI_PROMPTER_EXTERNAL_TOOL_ID when set;
+   * else match GET .../external_tools by client_id === LTI_PROMPTER_CLIENT_ID.
+   */
+  async resolvePrompterContextExternalToolId(
+    courseId: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<string | null> {
+    const base = this.getBaseUrl(domainOverride);
+    const envId =
+      (this.config.get<string>('CANVAS_PROMPTER_EXTERNAL_TOOL_ID') ??
+        this.config.get<string>('LTI_PROMPTER_EXTERNAL_TOOL_ID') ??
+        '')
+        .trim() || null;
+    if (envId && /^\d+$/.test(envId)) {
+      appendLtiLog('canvas', 'resolvePrompterContextExternalToolId: using env external tool id', { id: envId });
+      return envId;
+    }
+
+    const clientId = (
+      this.config.get<string>('LTI_PROMPTER_CLIENT_ID') ??
+      process.env.LTI_PROMPTER_CLIENT_ID ??
+      ''
+    )
+      .trim();
+    if (!clientId) {
+      appendLtiLog('canvas', 'resolvePrompterContextExternalToolId: no LTI_PROMPTER_CLIENT_ID', {});
+      return null;
+    }
+
+    const listUrl = `${base}/api/v1/courses/${courseId}/external_tools?per_page=100&include_parents=true`;
+    const listRes = await fetch(listUrl, { headers: this.getAuthHeaders(tokenOverride) });
+    if (!listRes.ok) {
+      const text = await listRes.text();
+      appendLtiLog('canvas', 'resolvePrompterContextExternalToolId: list external_tools failed', {
+        status: listRes.status,
+        text: text.slice(0, 200),
+      });
+      return null;
+    }
+    const tools = (await listRes.json()) as Array<{ id?: number; client_id?: string | number }>;
+    if (!Array.isArray(tools)) return null;
+    const match = tools.find((t) => String(t.client_id ?? '') === clientId);
+    if (match?.id != null) {
+      appendLtiLog('canvas', 'resolvePrompterContextExternalToolId: matched by client_id', {
+        id: match.id,
+        clientIdPreview: `${clientId.slice(0, 6)}…`,
+      });
+      return String(match.id);
+    }
+    appendLtiLog('canvas', 'resolvePrompterContextExternalToolId: no tool matches LTI_PROMPTER_CLIENT_ID', {
+      clientIdPreview: `${clientId.slice(0, 6)}…`,
+      toolCount: tools.length,
+    });
+    return null;
+  }
+
+  /**
+   * Ensure a module contains an ExternalTool row for the Prompter, linked to this assignment (assignment_id in launch URL).
+   * Inserts immediately before the assignment row when possible so students see Prompter then submission assignment.
+   */
+  async syncPrompterLtiModuleItem(
+    courseId: string,
+    moduleId: string,
+    assignmentId: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+    options?: { linkTitle?: string },
+  ): Promise<{ created: boolean; skippedReason?: string; itemId?: number }> {
+    const toolIdStr = await this.resolvePrompterContextExternalToolId(courseId, domainOverride, tokenOverride);
+    if (!toolIdStr) {
+      return {
+        created: false,
+        skippedReason:
+          'Prompter external tool not found: install ASL Express – Prompt Manager in the course and/or set CANVAS_PROMPTER_EXTERNAL_TOOL_ID or LTI_PROMPTER_CLIENT_ID',
+      };
+    }
+    const toolIdNum = parseInt(toolIdStr, 10);
+    if (Number.isNaN(toolIdNum)) {
+      return { created: false, skippedReason: 'Invalid external tool id' };
+    }
+
+    const items = await this.listModuleItems(courseId, moduleId, domainOverride, tokenOverride);
+    const aid = parseInt(assignmentId, 10);
+    const assignmentItem = items.find((i) => i.type === 'Assignment' && i.content_id === aid);
+
+    const base = this.getBaseUrl(domainOverride);
+    const externalUrl = `${base}/courses/${courseId}/external_tools/${toolIdStr}?assignment_id=${encodeURIComponent(assignmentId)}`;
+
+    const urlMatchesAssignment = (url: string | undefined): boolean => {
+      if (!url) return false;
+      try {
+        const u = new URL(url, base);
+        const q = u.searchParams.get('assignment_id');
+        return q === assignmentId;
+      } catch {
+        return url.includes(`assignment_id=${assignmentId}`) || url.includes(`assignment_id=${encodeURIComponent(assignmentId)}`);
+      }
+    };
+
+    const existing = items.find(
+      (i) => i.type === 'ExternalTool' && i.content_id === toolIdNum && urlMatchesAssignment(i.external_url),
+    );
+    if (existing) {
+      appendLtiLog('canvas', 'syncPrompterLtiModuleItem: already present', {
+        moduleItemId: existing.id,
+        assignmentId,
+      });
+      return { created: false, skippedReason: 'already_linked', itemId: existing.id };
+    }
+
+    const position = assignmentItem?.position ?? (items.length ? Math.max(...items.map((i) => i.position)) + 1 : 1);
+    const title =
+      (options?.linkTitle ?? '').trim() ||
+      'ASL Express – Open Prompter (record here)';
+
+    const url = `${base}/api/v1/courses/${courseId}/modules/${moduleId}/items`;
+    const body = {
+      module_item: {
+        type: 'ExternalTool',
+        content_id: toolIdNum,
+        external_url: externalUrl,
+        position,
+        title,
+        new_tab: true,
+      },
+    };
+    appendLtiLog('canvas', 'syncPrompterLtiModuleItem: POST ExternalTool module item', {
+      position,
+      assignmentId,
+      toolId: toolIdStr,
+      title,
+    });
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: this.getAuthHeaders(tokenOverride),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      appendLtiLog('canvas', 'syncPrompterLtiModuleItem FAIL', { status: res.status, text: text.slice(0, 400) });
+      throw new Error(`Canvas add ExternalTool module item failed: ${res.status} ${text}`);
+    }
+    const created = (await res.json()) as { id?: number };
+    appendLtiLog('canvas', 'syncPrompterLtiModuleItem OK', { itemId: created?.id });
+    return { created: true, itemId: created?.id };
+  }
+
   /** Create a course module. Position is 1-based; pass 1 for first, or modules.length+1 for end. */
   async createModule(
     courseId: string,

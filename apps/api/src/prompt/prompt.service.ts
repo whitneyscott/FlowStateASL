@@ -555,19 +555,37 @@ export class PromptService {
     const moduleId = merged.moduleId?.trim();
     if (moduleId) {
       try {
-        const result = await this.canvas.addAssignmentToModule(
+        await this.canvas.addAssignmentToModule(
           ctx.courseId,
           moduleId,
           assignmentId,
           domainOverride,
           token,
         );
-        if (result.created) {
-        } else {
+        const nameTrim = (merged.assignmentName ?? '').trim();
+        const linkTitle = nameTrim ? `${nameTrim} — Prompter` : 'ASL Express – Open Prompter (record here)';
+        const ltiSync = await this.canvas.syncPrompterLtiModuleItem(
+          ctx.courseId,
+          moduleId,
+          assignmentId,
+          domainOverride,
+          token,
+          { linkTitle },
+        );
+        if (ltiSync.skippedReason && ltiSync.skippedReason !== 'already_linked') {
+          appendLtiLog('prompt', 'putConfig: Prompter LTI module item skipped', {
+            reason: ltiSync.skippedReason,
+            moduleId,
+            assignmentId,
+          });
         }
       } catch (modErr) {
+        appendLtiLog('prompt', 'putConfig: module assignment/LTI sync failed', {
+          error: String(modErr),
+          moduleId,
+          assignmentId,
+        });
       }
-    } else {
     }
 
     // Update assignment in Canvas (name, description/instructions, points, dates, group, etc. — matches PHP)

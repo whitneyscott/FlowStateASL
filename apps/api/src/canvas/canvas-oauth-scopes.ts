@@ -33,6 +33,7 @@ export const DEFAULT_CANVAS_OAUTH_SCOPES = [
   'url:PUT|/api/v1/courses/:course_id/modules/:id',
   'url:GET|/api/v1/courses/:course_id/modules/:module_id/items',
   'url:POST|/api/v1/courses/:course_id/modules/:module_id/items',
+  'url:GET|/api/v1/courses/:course_id/external_tools',
   'url:GET|/api/v1/courses/:course_id/quizzes',
   'url:POST|/api/v1/courses/:course_id/quizzes',
 ].join(' ');

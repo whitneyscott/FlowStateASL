@@ -204,7 +204,14 @@ export class Lti13LaunchService {
     const canvasUserId = canvasUserIdRaw || undefined;
     const resourceLinkId = resolveLtiContextValue((resourceLink.id ?? '').toString());
     const resourceLinkTitle = resourceLink.title;
-    const assignmentId = resolveLtiContextValue((custom.assignment_id ?? '').toString());
+    const assignmentId = resolveLtiContextValue(
+      (
+        custom.assignment_id ??
+        custom.canvas_assignment_id ??
+        custom.custom_canvas_assignment_id ??
+        ''
+      ).toString(),
+    );
     const moduleId = resolveLtiContextValue((custom.module_id ?? '').toString());
     const rolesStr = Array.isArray(roles) ? roles.join(',') : String(roles);
     const customToolType = (custom.tool_type ?? '').toString().trim();

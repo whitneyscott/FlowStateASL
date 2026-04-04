@@ -40,6 +40,8 @@ Every new Prompter API step MUST emit to the Bridge Debug Log via `appendLtiLog`
 
 **Do this:** Put **two** things in the module for students: **LTI Prompter** (record) + **submission assignment** (due date / graded hand-in / correct context for `homework_submission` deep link where you use it). One tool-only link is fragile because launch context differs (resource vs `LtiDeepLinkingRequest`, assignment id from nav — see [LESSONS_LEARNED.md](LESSONS_LEARNED.md)).
 
+**Automation (Nest):** When a teacher saves Prompt Manager config with a **Module** selected, the API adds the **assignment** to the module (existing) and **`syncPrompterLtiModuleItem`** adds an **ExternalTool** row whose launch URL includes `assignment_id=…` so the Prompter opens in assignment context. Tool id is resolved via **`LTI_PROMPTER_CLIENT_ID`** + `GET .../external_tools?include_parents=true`, or optional **`CANVAS_PROMPTER_EXTERNAL_TOOL_ID`** in `.env`. Teachers may need to **re-authorize Canvas OAuth** so the token includes `url:GET|/api/v1/courses/:course_id/external_tools`.
+
 **Naming:** Clear titles + short assignment instructions beat clever Canvas locks.
 
 **Enforcement (pragmatic — good enough vs GoReact-style lock-in):**
