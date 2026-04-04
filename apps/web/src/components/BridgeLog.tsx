@@ -309,14 +309,14 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
                   return;
                 }
               }
-              window.location.reload();
+              window.dispatchEvent(new CustomEvent('aslexpress:canvas-token-cleared'));
             } catch (e) {
               window.alert(e instanceof Error ? e.message : 'Request failed');
             } finally {
               setClearingAuth(false);
             }
           }}
-          title="Resets OAuth/manual Canvas token from session; reloads. LTI context stays — use Connect Canvas or manual token again."
+          title="Resets OAuth/manual Canvas token from session and prompts for re-entry."
           style={{
             background: '#553300',
             border: '1px solid #ffaa00',
@@ -330,7 +330,7 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
             opacity: clearingAuth ? 0.7 : 1,
           }}
         >
-          {clearingAuth ? 'Clearing…' : 'Clear Canvas token & reload'}
+          {clearingAuth ? 'Clearing…' : 'Clear Canvas token'}
         </button>
         <button
           type="button"

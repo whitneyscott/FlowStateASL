@@ -239,6 +239,18 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   }, [teacher, hasLti, loadAssignments]);
 
   useEffect(() => {
+    const onCanvasTokenCleared = () => {
+      setShowManualTokenModal(true);
+      setError(null);
+      setLastApiError('manual-token', 401, 'Canvas token cleared. Enter a new token to continue.');
+    };
+    window.addEventListener('aslexpress:canvas-token-cleared', onCanvasTokenCleared as EventListener);
+    return () => {
+      window.removeEventListener('aslexpress:canvas-token-cleared', onCanvasTokenCleared as EventListener);
+    };
+  }, [setLastApiError]);
+
+  useEffect(() => {
     if (assignmentId) setConfigAssignValue(assignmentId);
     else setConfigAssignValue(assignmentActionMode === 'create' ? '__new__' : '');
   }, [assignmentId, assignmentActionMode]);

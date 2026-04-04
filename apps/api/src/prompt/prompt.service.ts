@@ -712,6 +712,36 @@ export class PromptService {
           moduleId,
           reason: assignmentSync.created ? 'assignment_module_item_created' : 'assignment_module_item_already_present',
         });
+        try {
+          const cleanup = await this.canvas.prunePrompterExternalToolModuleItems(
+            ctx.courseId,
+            moduleId,
+            assignmentId,
+            domainOverride,
+            token,
+          );
+          this.placementMarker({
+            placementAttemptId,
+            ltiVersion,
+            path: 'assignment_anchor',
+            marker: 'externalToolCleanup',
+            outcome: 'ok',
+            assignmentId,
+            moduleId,
+            reason: `checked=${cleanup.checked};deleted=${cleanup.deleted};kept=${cleanup.keptItemId ?? 'none'};moduleItemId=${assignmentSync.itemId ?? 'none'}${cleanup.skippedReason ? `;skip=${cleanup.skippedReason}` : ''}`,
+          });
+        } catch (cleanupErr) {
+          this.placementMarker({
+            placementAttemptId,
+            ltiVersion,
+            path: 'assignment_anchor',
+            marker: 'externalToolCleanup',
+            outcome: 'warn',
+            assignmentId,
+            moduleId,
+            reason: String(cleanupErr),
+          });
+        }
 
         if (assignAnchorSpike) {
           this.placementMarker({

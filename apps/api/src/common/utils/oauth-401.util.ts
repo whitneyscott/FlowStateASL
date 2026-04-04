@@ -13,11 +13,11 @@ export function getOAuth401Body(req: { session?: Session }): {
 } {
   const ltiLaunchType = (req.session as { ltiLaunchType?: '1.1' | '1.3' })?.ltiLaunchType;
 
-  if (ltiLaunchType === '1.1') {
+  if (ltiLaunchType !== '1.3') {
     return {
       error: 'Canvas token expired',
       needsManualToken: true,
-      message: 'Enter your Canvas API token to continue (LTI 1.1 does not support OAuth).',
+      message: 'Enter your Canvas API token to continue.',
     };
   }
 

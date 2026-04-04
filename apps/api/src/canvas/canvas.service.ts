@@ -901,6 +901,95 @@ export class CanvasService {
       }));
   }
 
+  async deleteModuleItem(
+    courseId: string,
+    moduleId: string,
+    itemId: number | string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<void> {
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/modules/${moduleId}/items/${itemId}`;
+    const res = await fetch(url, {
+      method: 'DELETE',
+      headers: this.getAuthHeaders(tokenOverride),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Canvas delete module item failed: ${res.status} ${text}`);
+    }
+  }
+
+  async prunePrompterExternalToolModuleItems(
+    courseId: string,
+    moduleId: string,
+    assignmentId: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<{
+    checked: number;
+    deleted: number;
+    keptItemId?: number;
+    skippedReason?: string;
+  }> {
+    const toolIdStr = await this.resolvePrompterContextExternalToolId(courseId, domainOverride, tokenOverride);
+    if (!toolIdStr) {
+      return { checked: 0, deleted: 0, skippedReason: 'prompter_tool_not_resolved' };
+    }
+    const toolIdNum = parseInt(toolIdStr, 10);
+    if (Number.isNaN(toolIdNum)) {
+      return { checked: 0, deleted: 0, skippedReason: 'invalid_prompter_tool_id' };
+    }
+
+    const items = await this.listModuleItems(courseId, moduleId, domainOverride, tokenOverride);
+    const candidates = items.filter((i) => i.type === 'ExternalTool' && i.content_id === toolIdNum);
+    if (candidates.length === 0) {
+      return { checked: 0, deleted: 0, skippedReason: 'no_prompter_module_items' };
+    }
+
+    const matchesAssignmentId = (value: string | undefined): boolean => {
+      if (!value) return false;
+      try {
+        const u = new URL(value, this.getBaseUrl(domainOverride));
+        return u.searchParams.get('assignment_id') === assignmentId;
+      } catch {
+        return value.includes(`assignment_id=${assignmentId}`) || value.includes(`assignment_id=${encodeURIComponent(assignmentId)}`);
+      }
+    };
+
+    let keptItemId: number | undefined;
+    let deleted = 0;
+    for (const item of candidates) {
+      const sessionless = await this.getSessionlessLaunchForModuleItem(
+        courseId,
+        item.id,
+        domainOverride,
+        tokenOverride,
+      );
+      const sessionlessUrl = String(sessionless?.url ?? '').trim();
+      const sessionlessHealthy = !!sessionlessUrl && !sessionless?.error;
+      const assignmentMatch = matchesAssignmentId(item.external_url);
+      const keep = !keptItemId && sessionlessHealthy && assignmentMatch;
+      if (keep) {
+        keptItemId = item.id;
+        continue;
+      }
+      await this.deleteModuleItem(courseId, moduleId, item.id, domainOverride, tokenOverride);
+      deleted += 1;
+    }
+
+    appendLtiLog('canvas', 'prunePrompterExternalToolModuleItems', {
+      courseId,
+      moduleId,
+      assignmentId,
+      checked: candidates.length,
+      deleted,
+      keptItemId: keptItemId ?? null,
+      externalToolId: toolIdNum,
+    });
+    return { checked: candidates.length, deleted, ...(keptItemId ? { keptItemId } : {}) };
+  }
+
   /** Read one module item with content details (best effort for launch-id diagnostics). */
   async getModuleItemDetails(
     courseId: string,

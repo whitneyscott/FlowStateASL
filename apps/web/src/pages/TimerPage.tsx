@@ -219,6 +219,18 @@ export default function TimerPage({ context }: TimerPageProps) {
   }, [loadConfig]);
 
   useEffect(() => {
+    const onCanvasTokenCleared = () => {
+      setShowManualTokenModal(true);
+      setSubmitError(null);
+      setLastApiError('manual-token', 401, 'Canvas token cleared. Enter a new token to continue.');
+    };
+    window.addEventListener('aslexpress:canvas-token-cleared', onCanvasTokenCleared as EventListener);
+    return () => {
+      window.removeEventListener('aslexpress:canvas-token-cleared', onCanvasTokenCleared as EventListener);
+    };
+  }, [setLastApiError]);
+
+  useEffect(() => {
     if (phase !== 'warmup' || secondsLeft <= 0) return;
     const t = setInterval(() => setSecondsLeft((s) => s - 1), 1000);
     return () => clearInterval(t);
