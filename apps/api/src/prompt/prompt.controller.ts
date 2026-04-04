@@ -81,15 +81,25 @@ export class PromptController {
   async putConfig(@Req() req: Request, @Res() res: Response, @Body() dto: PutPromptConfigDto) {
     const ctx = this.getCtxWithAssignment(req);
     const { appendLtiLog } = await import('../common/last-error.store');
-    appendLtiLog('prompt', 'putConfig received', {
+    appendLtiLog('prompt', 'sync-to-canvas: putConfig received', {
       assignmentId: ctx.assignmentId,
+      moduleId: dto.moduleId ?? '(none)',
       assignmentGroupId: dto.assignmentGroupId,
       newGroupName: dto.newGroupName ? '(present)' : '(absent)',
     });
     try {
       await this.prompt.putConfig(ctx, dto);
+      appendLtiLog('prompt', 'sync-to-canvas: putConfig success', {
+        assignmentId: ctx.assignmentId,
+        moduleId: dto.moduleId ?? '(none)',
+      });
       return res.status(204).send();
     } catch (err) {
+      appendLtiLog('prompt', 'sync-to-canvas: putConfig failed', {
+        assignmentId: ctx.assignmentId,
+        moduleId: dto.moduleId ?? '(none)',
+        error: String(err),
+      });
       if (err instanceof CanvasTokenExpiredError) {
         return res.status(401).json(getOAuth401Body(req));
       }
@@ -516,8 +526,16 @@ export class PromptController {
         assignmentGroupId: body?.assignmentGroupId,
         newGroupName: body?.newGroupName,
       });
+      appendLtiLog('prompt', 'create-assignment success', {
+        name,
+        assignmentId: result.assignmentId,
+      });
       return res.status(HttpStatus.CREATED).json(result);
     } catch (err) {
+      appendLtiLog('prompt', 'create-assignment failed', {
+        name,
+        error: String(err),
+      });
       if (err instanceof CanvasTokenExpiredError) {
         return res.status(401).json(getOAuth401Body(req));
       }

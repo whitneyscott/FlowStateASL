@@ -85,7 +85,12 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
         line.toLowerCase().includes('create-assignment') ||
         line.toLowerCase().includes('createassignment') ||
         line.toLowerCase().includes('create-group') ||
-        line.toLowerCase().includes('update-due-at')
+        line.toLowerCase().includes('update-due-at') ||
+        line.toLowerCase().includes('sync-to-canvas') ||
+        line.toLowerCase().includes('putconfig') ||
+        line.toLowerCase().includes('module assignment/lti sync') ||
+        line.toLowerCase().includes('prompter lti module item') ||
+        line.toLowerCase().includes('externaltool')
     );
     if (agLines.length > 0) {
       newLines.push(...agLines);
@@ -148,6 +153,7 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
       lastFunctionCalled?.includes('create-assignment') ||
       lastFunctionCalled?.includes('submit') ||
       lastFunctionCalled?.includes('upload-video') ||
+      lastFunctionCalled?.includes('sync') ||
       lastFunctionCalled?.includes('submit-deep-link') ||
       lastFunctionCalled?.includes('submissions') ||
       lastFunctionCalled?.includes('configured-assignments') ||

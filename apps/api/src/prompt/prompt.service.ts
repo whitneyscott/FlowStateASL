@@ -554,14 +554,24 @@ export class PromptService {
 
     const moduleId = merged.moduleId?.trim();
     if (moduleId) {
+      appendLtiLog('prompt', 'putConfig: module sync start', {
+        moduleId,
+        assignmentId,
+      });
       try {
-        await this.canvas.addAssignmentToModule(
+        const assignmentSync = await this.canvas.addAssignmentToModule(
           ctx.courseId,
           moduleId,
           assignmentId,
           domainOverride,
           token,
         );
+        appendLtiLog('prompt', 'putConfig: assignment module item sync result', {
+          moduleId,
+          assignmentId,
+          created: assignmentSync.created,
+          itemId: assignmentSync.itemId ?? null,
+        });
         const nameTrim = (merged.assignmentName ?? '').trim();
         const linkTitle = nameTrim ? `${nameTrim} — Prompter` : 'ASL Express – Open Prompter (record here)';
         const ltiSync = await this.canvas.syncPrompterLtiModuleItem(
@@ -572,12 +582,15 @@ export class PromptService {
           token,
           { linkTitle },
         );
+        appendLtiLog('prompt', 'putConfig: prompter LTI module item sync result', {
+          moduleId,
+          assignmentId,
+          created: ltiSync.created,
+          itemId: ltiSync.itemId ?? null,
+          skippedReason: ltiSync.skippedReason ?? null,
+        });
         if (ltiSync.skippedReason && ltiSync.skippedReason !== 'already_linked') {
-          appendLtiLog('prompt', 'putConfig: Prompter LTI module item skipped', {
-            reason: ltiSync.skippedReason,
-            moduleId,
-            assignmentId,
-          });
+          throw new Error(`Prompter LTI module item sync skipped: ${ltiSync.skippedReason}`);
         }
       } catch (modErr) {
         appendLtiLog('prompt', 'putConfig: module assignment/LTI sync failed', {
@@ -585,6 +598,7 @@ export class PromptService {
           moduleId,
           assignmentId,
         });
+        throw modErr;
       }
     }
 

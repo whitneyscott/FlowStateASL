@@ -847,6 +847,7 @@ export class CanvasService {
     tokenOverride?: string | null,
   ): Promise<string | null> {
     const base = this.getBaseUrl(domainOverride);
+    appendLtiLog('canvas', 'resolvePrompterContextExternalToolId: start', { courseId });
     const envId =
       (this.config.get<string>('CANVAS_PROMPTER_EXTERNAL_TOOL_ID') ??
         this.config.get<string>('LTI_PROMPTER_EXTERNAL_TOOL_ID') ??
@@ -878,8 +879,29 @@ export class CanvasService {
       });
       return null;
     }
-    const tools = (await listRes.json()) as Array<{ id?: number; client_id?: string | number }>;
+    const tools = (await listRes.json()) as Array<{
+      id?: number;
+      client_id?: string | number;
+      name?: string;
+      text?: string;
+      tool_id?: string;
+      domain?: string;
+      url?: string;
+      target_link_uri?: string;
+      homework_submission?: unknown;
+      link_selection?: unknown;
+      course_navigation?: unknown;
+    }>;
     if (!Array.isArray(tools)) return null;
+    appendLtiLog('canvas', 'resolvePrompterContextExternalToolId: fetched tools', {
+      toolCount: tools.length,
+      sample: tools.slice(0, 3).map((t) => ({
+        id: t.id,
+        client_id: t.client_id,
+        name: t.name ?? t.text ?? null,
+        tool_id: t.tool_id ?? null,
+      })),
+    });
     const match = tools.find((t) => String(t.client_id ?? '') === clientId);
     if (match?.id != null) {
       appendLtiLog('canvas', 'resolvePrompterContextExternalToolId: matched by client_id', {
@@ -887,6 +909,20 @@ export class CanvasService {
         clientIdPreview: `${clientId.slice(0, 6)}…`,
       });
       return String(match.id);
+    }
+    const configuredName = (this.config.get<string>('CANVAS_PROMPTER_TOOL_NAME') ?? 'Prompt Manager').trim().toLowerCase();
+    const fallbackByName = tools.find((t) => {
+      const name = `${t.name ?? ''} ${t.text ?? ''} ${t.tool_id ?? ''}`.toLowerCase();
+      const prompterLike = name.includes('prompter') || name.includes(configuredName);
+      const hasRelevantPlacement = !!(t.homework_submission || t.link_selection || t.course_navigation);
+      return prompterLike && hasRelevantPlacement;
+    });
+    if (fallbackByName?.id != null) {
+      appendLtiLog('canvas', 'resolvePrompterContextExternalToolId: fallback match by name/placement', {
+        id: fallbackByName.id,
+        name: fallbackByName.name ?? fallbackByName.text ?? '(unnamed)',
+      });
+      return String(fallbackByName.id);
     }
     appendLtiLog('canvas', 'resolvePrompterContextExternalToolId: no tool matches LTI_PROMPTER_CLIENT_ID', {
       clientIdPreview: `${clientId.slice(0, 6)}…`,
