@@ -1016,6 +1016,38 @@ export class CanvasService {
       });
       return String(winner.id);
     }
+    const launchPathCandidates = ranked.filter((r) =>
+      r.reason.includes('launchPathMatch'),
+    );
+    if (launchPathCandidates.length === 1) {
+      const only = launchPathCandidates[0];
+      appendLtiLog('canvas', 'resolvePrompterContextExternalToolId: fallback selected single launchPathMatch', {
+        id: only.id,
+        score: only.score,
+        reason: only.reason,
+        name: only.name,
+      });
+      return String(only.id);
+    }
+    if (ranked.length === 1 && ranked[0].score > 0) {
+      const only = ranked[0];
+      appendLtiLog('canvas', 'resolvePrompterContextExternalToolId: fallback selected sole candidate', {
+        id: only.id,
+        score: only.score,
+        reason: only.reason,
+        name: only.name,
+      });
+      return String(only.id);
+    }
+    if (winner && winner.score >= 20) {
+      appendLtiLog('canvas', 'resolvePrompterContextExternalToolId: fallback selected best candidate (low confidence)', {
+        id: winner.id,
+        score: winner.score,
+        reason: winner.reason,
+        name: winner.name,
+      });
+      return String(winner.id);
+    }
     appendLtiLog('canvas', 'resolvePrompterContextExternalToolId: no confident match', {
       topScore: winner?.score ?? null,
       toolCount: tools.length,
@@ -1042,7 +1074,7 @@ export class CanvasService {
       return {
         created: false,
         skippedReason:
-          'Prompter external tool not found: install ASL Express – Prompt Manager in the course and/or set CANVAS_PROMPTER_EXTERNAL_TOOL_ID or LTI_PROMPTER_CLIENT_ID',
+          'Prompter external tool not found (resolver returned no candidate). Check Bridge Log lines for resolvePrompterContextExternalToolId ranked candidates, ensure OAuth scope allows GET /courses/:course_id/external_tools, and verify tool launch URL targets /api/lti/launch.',
       };
     }
     const toolIdNum = parseInt(toolIdStr, 10);
