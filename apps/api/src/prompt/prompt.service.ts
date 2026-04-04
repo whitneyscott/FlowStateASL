@@ -753,7 +753,7 @@ export class PromptService {
             token,
             {
               linkTitle,
-              payloadVariant: 'content_id_plus_external_url',
+              payloadVariant: 'content_id_only',
             },
           );
           this.placementMarker({
