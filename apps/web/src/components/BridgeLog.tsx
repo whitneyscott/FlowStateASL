@@ -90,7 +90,9 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
         line.toLowerCase().includes('putconfig') ||
         line.toLowerCase().includes('module assignment/lti sync') ||
         line.toLowerCase().includes('prompter lti module item') ||
-        line.toLowerCase().includes('externaltool')
+        line.toLowerCase().includes('externaltool') ||
+        line.toLowerCase().includes('resolvepromptercontextexternaltoolid') ||
+        line.toLowerCase().includes('lti context ids resolved')
     );
     if (agLines.length > 0) {
       newLines.push(...agLines);

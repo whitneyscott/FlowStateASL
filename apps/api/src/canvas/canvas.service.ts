@@ -858,16 +858,19 @@ export class CanvasService {
       return envId;
     }
 
-    const clientId = (
+    const prompterClientId = (
       this.config.get<string>('LTI_PROMPTER_CLIENT_ID') ??
       process.env.LTI_PROMPTER_CLIENT_ID ??
       ''
     )
       .trim();
-    if (!clientId) {
-      appendLtiLog('canvas', 'resolvePrompterContextExternalToolId: no LTI_PROMPTER_CLIENT_ID', {});
-      return null;
-    }
+    const defaultClientId = (
+      this.config.get<string>('LTI_CLIENT_ID') ??
+      process.env.LTI_CLIENT_ID ??
+      ''
+    )
+      .trim();
+    const clientCandidates = [prompterClientId, defaultClientId].filter(Boolean);
 
     const listUrl = `${base}/api/v1/courses/${courseId}/external_tools?per_page=100&include_parents=true`;
     const listRes = await fetch(listUrl, { headers: this.getAuthHeaders(tokenOverride) });
@@ -902,31 +905,121 @@ export class CanvasService {
         tool_id: t.tool_id ?? null,
       })),
     });
-    const match = tools.find((t) => String(t.client_id ?? '') === clientId);
-    if (match?.id != null) {
-      appendLtiLog('canvas', 'resolvePrompterContextExternalToolId: matched by client_id', {
-        id: match.id,
-        clientIdPreview: `${clientId.slice(0, 6)}…`,
-      });
-      return String(match.id);
-    }
     const configuredName = (this.config.get<string>('CANVAS_PROMPTER_TOOL_NAME') ?? 'Prompt Manager').trim().toLowerCase();
-    const fallbackByName = tools.find((t) => {
-      const name = `${t.name ?? ''} ${t.text ?? ''} ${t.tool_id ?? ''}`.toLowerCase();
-      const prompterLike = name.includes('prompter') || name.includes(configuredName);
+    const expectedLaunchPath = '/api/lti/launch';
+    const expectedHost = (() => {
+      try {
+        const v = (this.config.get<string>('LTI_REDIRECT_URI') ?? '').trim();
+        if (!v) return '';
+        return new URL(v).hostname.toLowerCase();
+      } catch {
+        return '';
+      }
+    })();
+
+    type RankedTool = {
+      id: number;
+      score: number;
+      reason: string[];
+      name: string;
+      clientId: string;
+      toolId: string;
+      launchUrl: string;
+      domain: string;
+    };
+
+    const ranked: RankedTool[] = [];
+    for (const t of tools) {
+      if (t.id == null) continue;
+      const id = Number(t.id);
+      const name = `${t.name ?? t.text ?? ''}`.trim();
+      const toolId = `${t.tool_id ?? ''}`.trim();
+      const clientId = `${t.client_id ?? ''}`.trim();
+      const launchUrl = `${t.target_link_uri ?? t.url ?? ''}`.trim();
+      const domain = `${t.domain ?? ''}`.trim();
+      const blob = `${name} ${toolId}`.toLowerCase();
       const hasRelevantPlacement = !!(t.homework_submission || t.link_selection || t.course_navigation);
-      return prompterLike && hasRelevantPlacement;
-    });
-    if (fallbackByName?.id != null) {
-      appendLtiLog('canvas', 'resolvePrompterContextExternalToolId: fallback match by name/placement', {
-        id: fallbackByName.id,
-        name: fallbackByName.name ?? fallbackByName.text ?? '(unnamed)',
+
+      let score = 0;
+      const reason: string[] = [];
+
+      if (hasRelevantPlacement) {
+        score += 10;
+        reason.push('relevantPlacement');
+      }
+      if (blob.includes('prompter') || blob.includes(configuredName)) {
+        score += 25;
+        reason.push('namePrompterLike');
+      }
+      if (toolId.toLowerCase().includes('prompter')) {
+        score += 20;
+        reason.push('toolIdPrompterLike');
+      }
+      if (launchUrl && launchUrl.includes(expectedLaunchPath)) {
+        score += 35;
+        reason.push('launchPathMatch');
+      }
+      if (expectedHost) {
+        try {
+          const u = launchUrl ? new URL(launchUrl) : null;
+          const launchHost = u?.hostname?.toLowerCase() ?? '';
+          if (launchHost && launchHost === expectedHost) {
+            score += 20;
+            reason.push('launchHostMatch');
+          }
+        } catch {
+          // ignore invalid launch URL
+        }
+        if (domain && domain.toLowerCase() === expectedHost) {
+          score += 12;
+          reason.push('domainMatch');
+        }
+      }
+      if (clientCandidates.length > 0 && clientCandidates.includes(clientId)) {
+        score += clientId === prompterClientId ? 90 : 60;
+        reason.push(clientId === prompterClientId ? 'prompterClientIdMatch' : 'defaultClientIdMatch');
+      }
+
+      ranked.push({
+        id,
+        score,
+        reason,
+        name: name || '(unnamed)',
+        clientId,
+        toolId,
+        launchUrl,
+        domain,
       });
-      return String(fallbackByName.id);
     }
-    appendLtiLog('canvas', 'resolvePrompterContextExternalToolId: no tool matches LTI_PROMPTER_CLIENT_ID', {
-      clientIdPreview: `${clientId.slice(0, 6)}…`,
+
+    ranked.sort((a, b) => b.score - a.score);
+    appendLtiLog('canvas', 'resolvePrompterContextExternalToolId: ranked candidates', {
+      top: ranked.slice(0, 5).map((r) => ({
+        id: r.id,
+        score: r.score,
+        reason: r.reason,
+        name: r.name,
+        clientId: r.clientId || null,
+        toolId: r.toolId || null,
+      })),
+      clientCandidates: clientCandidates.map((id) => `${id.slice(0, 6)}…`),
+      expectedHost: expectedHost || null,
+    });
+
+    const winner = ranked[0];
+    if (winner && winner.score >= 35) {
+      appendLtiLog('canvas', 'resolvePrompterContextExternalToolId: selected tool', {
+        id: winner.id,
+        score: winner.score,
+        reason: winner.reason,
+        name: winner.name,
+      });
+      return String(winner.id);
+    }
+    appendLtiLog('canvas', 'resolvePrompterContextExternalToolId: no confident match', {
+      topScore: winner?.score ?? null,
       toolCount: tools.length,
+      hint: 'Set CANVAS_PROMPTER_EXTERNAL_TOOL_ID as override, or ensure course has Prompter tool with expected launch URL/placements.',
     });
     return null;
   }
@@ -943,6 +1036,7 @@ export class CanvasService {
     tokenOverride?: string | null,
     options?: { linkTitle?: string },
   ): Promise<{ created: boolean; skippedReason?: string; itemId?: number }> {
+    appendLtiLog('canvas', 'syncPrompterLtiModuleItem: start', { courseId, moduleId, assignmentId });
     const toolIdStr = await this.resolvePrompterContextExternalToolId(courseId, domainOverride, tokenOverride);
     if (!toolIdStr) {
       return {
@@ -979,6 +1073,7 @@ export class CanvasService {
     );
     if (existing) {
       appendLtiLog('canvas', 'syncPrompterLtiModuleItem: already present', {
+        externalToolId: toolIdNum,
         moduleItemId: existing.id,
         assignmentId,
       });
@@ -1004,7 +1099,9 @@ export class CanvasService {
     appendLtiLog('canvas', 'syncPrompterLtiModuleItem: POST ExternalTool module item', {
       position,
       assignmentId,
-      toolId: toolIdStr,
+      externalToolId: toolIdStr,
+      assignmentModuleItemId: assignmentItem?.id ?? null,
+      externalUrl,
       title,
     });
     const res = await fetch(url, {
@@ -1018,7 +1115,12 @@ export class CanvasService {
       throw new Error(`Canvas add ExternalTool module item failed: ${res.status} ${text}`);
     }
     const created = (await res.json()) as { id?: number };
-    appendLtiLog('canvas', 'syncPrompterLtiModuleItem OK', { itemId: created?.id });
+    appendLtiLog('canvas', 'syncPrompterLtiModuleItem OK', {
+      externalToolId: toolIdStr,
+      moduleItemId: created?.id,
+      assignmentModuleItemId: assignmentItem?.id ?? null,
+      assignmentId,
+    });
     return { created: true, itemId: created?.id };
   }
 

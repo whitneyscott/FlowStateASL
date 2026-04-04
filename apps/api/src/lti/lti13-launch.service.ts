@@ -216,6 +216,14 @@ export class Lti13LaunchService {
     const rolesStr = Array.isArray(roles) ? roles.join(',') : String(roles);
     const customToolType = (custom.tool_type ?? '').toString().trim();
     const toolType = CUSTOM_TOOL_TYPE_MAP[customToolType] ?? 'flashcards';
+    appendLtiLog('launch', 'LTI context ids resolved', {
+      courseId,
+      assignmentId: assignmentId || '(none)',
+      moduleId: moduleId || '(none)',
+      resourceLinkId: resourceLinkId || '(none)',
+      toolType,
+      customToolType: customToolType || '(absent)',
+    });
     const submissionToken = (custom.submission_token ?? '').toString().trim() || undefined;
     const submissionTitle =
       (custom.sprout_video_title ?? '').toString().trim() ||
