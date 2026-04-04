@@ -742,6 +742,44 @@ export class PromptService {
             reason: String(cleanupErr),
           });
         }
+        try {
+          const nameTrim = (merged.assignmentName ?? '').trim();
+          const linkTitle = nameTrim ? `${nameTrim} — Prompter` : 'ASL Express – Open Prompter (record here)';
+          const ensuredTool = await this.canvas.syncPrompterLtiModuleItem(
+            ctx.courseId,
+            moduleId,
+            assignmentId,
+            domainOverride,
+            token,
+            {
+              linkTitle,
+              payloadVariant: 'content_id_plus_external_url',
+            },
+          );
+          this.placementMarker({
+            placementAttemptId,
+            ltiVersion,
+            path: 'assignment_anchor',
+            marker: 'externalToolEnsure',
+            outcome: 'ok',
+            assignmentId,
+            moduleId,
+            reason: ensuredTool.created
+              ? `external_tool_module_item_created;moduleItemId=${ensuredTool.itemId ?? 'none'}`
+              : `external_tool_module_item_present;moduleItemId=${ensuredTool.itemId ?? 'none'};state=${ensuredTool.skippedReason ?? 'ok'}`,
+          });
+        } catch (toolEnsureErr) {
+          this.placementMarker({
+            placementAttemptId,
+            ltiVersion,
+            path: 'assignment_anchor',
+            marker: 'externalToolEnsure',
+            outcome: 'warn',
+            assignmentId,
+            moduleId,
+            reason: String(toolEnsureErr),
+          });
+        }
 
         if (assignAnchorSpike) {
           this.placementMarker({
