@@ -10,6 +10,10 @@
   box-sizing: border-box;
 }
 
+.manual-token-overlay--prompter {
+  background: rgba(15, 23, 42, 0.55);
+}
+
 .manual-token-modal {
   background: #1c1917;
   border: 1px solid #57534e;
@@ -18,6 +22,67 @@
   max-width: 440px;
   width: 100%;
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+}
+
+.manual-token-modal--prompter {
+  background: #ffffff;
+  border: 1px solid #d9e2ec;
+  box-shadow: 0 16px 48px rgba(15, 23, 42, 0.2);
+}
+
+.manual-token-modal--prompter h3 {
+  color: #1f2937;
+}
+
+.manual-token-modal--prompter .manual-token-message {
+  color: #334155;
+}
+
+.manual-token-modal--prompter .manual-token-hint {
+  color: #475569;
+}
+
+.manual-token-modal--prompter .manual-token-label {
+  color: #1f2937;
+}
+
+.manual-token-modal--prompter .manual-token-input {
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  color: #111827;
+}
+
+.manual-token-modal--prompter .manual-token-input:focus {
+  border-color: #008ee2;
+}
+
+.manual-token-modal--prompter .manual-token-show-label {
+  color: #334155;
+}
+
+.manual-token-modal--prompter .manual-token-submit {
+  background: #008ee2;
+}
+
+.manual-token-modal--prompter .manual-token-submit:hover:not(:disabled) {
+  background: #0074ba;
+}
+
+.manual-token-modal--prompter .manual-token-dismiss {
+  border-color: #cbd5e1;
+  color: #334155;
+}
+
+.manual-token-modal--prompter .manual-token-dismiss:hover:not(:disabled) {
+  background: #f8fafc;
+}
+
+.manual-token-modal--prompter .manual-token-success-title {
+  color: #166534;
+}
+
+.manual-token-modal--prompter .manual-token-success-detail {
+  color: #334155;
 }
 
 .manual-token-modal h3 {

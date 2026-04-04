@@ -327,9 +327,16 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
                 headers: { 'Content-Type': 'application/json' },
               });
               if (!res.ok) {
-                const t = await res.text();
-                window.alert(`Could not reset Canvas token: ${res.status} ${t.slice(0, 200)}`);
-                return;
+                // Fallback for dev when oauth reset endpoint rejects due missing LTI context.
+                const debugReset = await fetch('/api/debug/clear-canvas-auth', {
+                  method: 'POST',
+                  credentials: 'include',
+                });
+                if (!debugReset.ok) {
+                  const t = await res.text();
+                  window.alert(`Could not reset Canvas token: ${res.status} ${t.slice(0, 200)}`);
+                  return;
+                }
               }
               window.location.reload();
             } catch (e) {

@@ -439,9 +439,13 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       await loadModules();
       setModuleId(String(created.id));
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setError(msg);
-      setLastApiError('POST /api/prompt/modules', 0, msg);
+      if (e instanceof promptApi.NeedsManualTokenError) {
+        setShowManualTokenModal(true);
+      } else {
+        const msg = e instanceof Error ? e.message : String(e);
+        setError(msg);
+        setLastApiError('POST /api/prompt/modules', 0, msg);
+      }
     } finally {
       setCreatingModule(false);
     }
@@ -519,9 +523,13 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       setShowSettings(true);
       setConfigAssignValue(newId);
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setError(msg);
-      setLastApiError('POST /api/prompt/create-assignment', 0, msg);
+      if (e instanceof promptApi.NeedsManualTokenError) {
+        setShowManualTokenModal(true);
+      } else {
+        const msg = e instanceof Error ? e.message : String(e);
+        setError(msg);
+        setLastApiError('POST /api/prompt/create-assignment', 0, msg);
+      }
     } finally {
       setCreatingAssignment(false);
     }
@@ -796,11 +804,11 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
               )}
             </div>
             {hasLti && (
-              <div className="prompter-settings-card" style={{ marginBottom: 16 }}>
+              <div className="prompter-settings-card prompter-settings-card-compact">
                 <h2 className="prompter-settings-card-title">Assignments</h2>
                   <div className="prompter-settings-section">
                     <label className="prompter-settings-label">Action</label>
-                    <div className="prompter-settings-actions-row" style={{ marginBottom: 10 }}>
+                    <div className="prompter-settings-actions-row prompter-settings-actions-row-mb-sm">
                       <button
                         type="button"
                         className={assignmentActionMode === 'edit' ? 'prompter-btn-ready' : 'prompter-btn-secondary'}
@@ -832,11 +840,10 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                           {assignmentActionMode === 'grade' ? 'Select assignment for grading' : 'Select an assignment to edit'}
                         </label>
                         <select
-                          className="prompter-settings-input"
+                          className="prompter-settings-input prompter-settings-input-max-480"
                           value={assignmentActionMode === 'grade' && configAssignValue === '__new__' ? '' : configAssignValue}
                           onChange={handleConfigAssignSelect}
                           disabled={loadingAssignments}
-                          style={{ maxWidth: 480 }}
                         >
                           <option value="">
                             {loadingAssignments
@@ -854,7 +861,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                       </>
                     )}
                     {assignmentActionMode === 'edit' && configAssignValue !== '__new__' && !!configAssignValue && (
-                      <div className="prompter-settings-actions-row" style={{ marginTop: 10 }}>
+                      <div className="prompter-settings-actions-row prompter-settings-actions-row-mt-sm">
                         <button
                           type="button"
                           onClick={handleDeleteConfiguredAssignment}
@@ -867,7 +874,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                     )}
                   </div>
                   {assignmentActionMode === 'create' && (
-                    <div className="prompter-create-module-form" style={{ marginTop: 12 }}>
+                    <div className="prompter-create-module-form">
                       <label className="prompter-settings-label">New assignment name</label>
                       <input
                         type="text"
@@ -876,10 +883,10 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                         placeholder="e.g. ASL Warm-Up Submission"
                         className="prompter-settings-input"
                       />
-                      <div className="prompter-settings-field" style={{ marginTop: 8 }}>
+                      <div className="prompter-settings-field prompter-settings-field-mt-sm">
                         {assignmentGroupSelector}
                       </div>
-                      <div className="prompter-settings-actions-row" style={{ marginTop: 12 }}>
+                      <div className="prompter-settings-actions-row prompter-settings-actions-row-mt-md">
                         <button
                           type="button"
                           onClick={handleCreateNewAssignment}
@@ -1204,6 +1211,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       {showManualTokenModal && (
         <ManualTokenModal
           message="LTI 1.1 does not support OAuth. Enter your Canvas API token to configure assignments."
+          variant="prompter"
           onSuccess={() => {
             setShowManualTokenModal(false);
             setDeckPickerRefreshKey((k) => k + 1);

@@ -5,9 +5,10 @@ interface ManualTokenModalProps {
   message?: string;
   onSuccess: () => void;
   onDismiss?: () => void;
+  variant?: 'default' | 'prompter';
 }
 
-export function ManualTokenModal({ message, onSuccess, onDismiss }: ManualTokenModalProps) {
+export function ManualTokenModal({ message, onSuccess, onDismiss, variant = 'default' }: ManualTokenModalProps) {
   const fieldId = useId();
   const [token, setToken] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -50,9 +51,12 @@ export function ManualTokenModal({ message, onSuccess, onDismiss }: ManualTokenM
   };
 
   return (
-    <div className="manual-token-overlay" role="presentation">
+    <div
+      className={`manual-token-overlay ${variant === 'prompter' ? 'manual-token-overlay--prompter' : ''}`}
+      role="presentation"
+    >
       <div
-        className="manual-token-modal"
+        className={`manual-token-modal ${variant === 'prompter' ? 'manual-token-modal--prompter' : ''}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="manual-token-title"

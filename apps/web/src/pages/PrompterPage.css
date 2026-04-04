@@ -330,6 +330,18 @@
   align-items: center;
 }
 
+.prompter-settings-actions-row-mb-sm {
+  margin-bottom: 10px;
+}
+
+.prompter-settings-actions-row-mt-sm {
+  margin-top: 10px;
+}
+
+.prompter-settings-actions-row-mt-md {
+  margin-top: 12px;
+}
+
 .prompter-prompt-item-row {
   display: flex;
   gap: 8px;
@@ -531,6 +543,10 @@
   border-top: 4px solid var(--prompter-canvas-blue);
 }
 
+.prompter-settings-card-compact {
+  margin-bottom: 16px;
+}
+
 .prompter-settings-card-title {
   font-size: 1.1rem;
   font-weight: 600;
@@ -589,8 +605,16 @@
   margin-top: 10px;
 }
 
+.prompter-settings-field-mt-sm {
+  margin-top: 8px;
+}
+
 .prompter-settings-field .prompter-settings-input {
   margin-top: 4px;
+}
+
+.prompter-settings-input-max-480 {
+  max-width: 480px;
 }
 
 .prompter-required {
