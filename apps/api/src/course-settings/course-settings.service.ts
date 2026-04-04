@@ -573,6 +573,20 @@ export class CourseSettingsService {
   }
 
   /**
+   * For LTI-backed student flows (Prompter config read, submit, upload): prefer the user's
+   * Canvas OAuth token when present; otherwise use static CANVAS_API_TOKEN / CANVAS_ACCESS_TOKEN
+   * so students without OAuth can still use the REST path (with as_user_id on the server).
+   * Do not use for teacher-only writes (putConfig, create assignment) — those require OAuth.
+   */
+  getCanvasTokenForLtiBackedOps(oauthToken?: string | null): string | null {
+    const o = oauthToken?.trim() || null;
+    if (o) return o;
+    const staticToken =
+      (this.config.get<string>('CANVAS_API_TOKEN') ?? this.config.get<string>('CANVAS_ACCESS_TOKEN'))?.trim() || null;
+    return staticToken ?? null;
+  }
+
+  /**
    * Token for file upload operations (e.g. Prompter video). Mirrors PHP: prefer static
    * CANVAS_API_TOKEN / CANVAS_ACCESS_TOKEN when set; fallback to OAuth. Static token has
    * permission to initiate upload and attach files on behalf of students.

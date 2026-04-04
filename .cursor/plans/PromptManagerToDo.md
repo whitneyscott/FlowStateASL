@@ -1,5 +1,10 @@
 # Prompt Manager To-Do
 
+## Context (Apr 2026 — what we were sorting out)
+
+- **Unifying Flashcards + Prompt Manager** at the **platform** level (one LTI stack, `toolType`, shared launch/session/API shell) is largely in place; the two tools stay **different student experiences** (flashcard flow vs timer/recording flow).
+- **Where discussion got stuck** was **Prompt Manager student submission + Canvas**: how video/text actually reaches the assignment (deep link vs REST + token), **wrong launch context** when students use the wrong link, and **module layout** (two items: tool + assignment)—**not** building a single combined student UI for both tools.
+
 ## Scope Rules
 
 - Preserve current Prompt Manager UX and visual style from `ASLexpressPromptManager/dev2/*`.
@@ -30,6 +35,22 @@ Every new Prompter API step MUST emit to the Bridge Debug Log via `appendLtiLog`
 ---
 
 ## Remaining / Future
+
+### Course module placement (decided — keep it simple)
+
+**Do this:** Put **two** things in the module for students: **LTI Prompter** (record) + **submission assignment** (due date / graded hand-in / correct context for `homework_submission` deep link where you use it). One tool-only link is fragile because launch context differs (resource vs `LtiDeepLinkingRequest`, assignment id from nav — see [LESSONS_LEARNED.md](LESSONS_LEARNED.md)).
+
+**Naming:** Clear titles + short assignment instructions beat clever Canvas locks.
+
+**Enforcement (pragmatic — good enough vs GoReact-style lock-in):**
+
+- Do **not** count on **module requirements** across all schools/teachers.
+- **Prefer** a documented teacher setup: submission path matches **LTI / homework_submission** (or your supported pattern) so “random native upload” isn’t the happy path.
+- **Fallback:** grading policy + viewer: submissions missing your expected prompt/ledger shape → incomplete or manual review (already directionally supported by API payload).
+
+### Parking lot (technical)
+
+- **Done (Nest):** `getCanvasTokenForLtiBackedOps` (OAuth first, else `CANVAS_API_TOKEN` / `CANVAS_ACCESS_TOKEN`); Prompter `getConfig` / submit / upload / viewer reads use it; **teacher-only** `putConfig` and create-assignment/module/group still require session OAuth only. Video upload uses Canvas `.../submissions/{userId}/files` init (PHP parity). `writeSubmissionBody` uses `as_user_id` when the token holder is not the student, with auth-style retry flip.
 
 ### Teacher Config Enhancements
 

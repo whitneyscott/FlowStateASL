@@ -187,6 +187,58 @@ export class CanvasService {
     };
   }
 
+  /**
+   * Initiate file upload for a specific user's assignment submission (PHP upload_handler.php path).
+   * POST .../courses/:courseId/assignments/:assignmentId/submissions/:userId/files
+   * Use with a service token + student Canvas user id; avoids uploading to the token holder's personal files.
+   */
+  async initiateSubmissionFileUploadForUser(
+    courseId: string,
+    assignmentId: string,
+    userId: string,
+    filename: string,
+    size: number,
+    contentType: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<{ uploadUrl: string; uploadParams: Record<string, string> }> {
+    appendLtiLog('canvas', 'initiateSubmissionFileUploadForUser', {
+      assignmentId,
+      userId,
+      filename,
+      size,
+      contentType,
+    });
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${encodeURIComponent(userId)}/files`;
+    const form = new FormData();
+    form.append('name', filename);
+    form.append('size', String(size));
+    form.append('content_type', contentType);
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { Authorization: this.getAuthHeaders(tokenOverride).Authorization },
+      body: form,
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      appendLtiLog('canvas', 'initiateSubmissionFileUploadForUser FAIL', { status: res.status, text: text.slice(0, 200) });
+      throw new Error(`Canvas initiate submission file upload failed: ${res.status} ${text}`);
+    }
+    const data = (await res.json()) as {
+      upload_url?: string;
+      upload_params?: Record<string, string>;
+    };
+    if (!data.upload_url || !data.upload_params) {
+      throw new Error('Canvas did not return upload_url and upload_params');
+    }
+    appendLtiLog('canvas', 'initiateSubmissionFileUploadForUser OK');
+    return {
+      uploadUrl: data.upload_url,
+      uploadParams: data.upload_params,
+    };
+  }
+
   async uploadFileToCanvas(
     uploadUrl: string,
     uploadParams: Record<string, string>,
@@ -1036,8 +1088,9 @@ export class CanvasService {
   }
 
   /**
-   * Write submission body for an assignment. Uses Canvas OAuth token from tokenOverride.
-   * Callers (e.g. SubmissionService) pass token from session/CourseSettingsService.getEffectiveCanvasToken.
+   * Write submission body for an assignment. Uses tokenOverride (OAuth or service token).
+   * When the token holder is not the submitting student, uses as_user_id (service account / PHP parity).
+   * Callers pass token from session or CourseSettingsService.getCanvasTokenForLtiBackedOps.
    * Tools that need to merge with existing must call getSubmission first, then writeSubmissionBody with the final body.
    */
   async writeSubmissionBody(
@@ -1048,23 +1101,44 @@ export class CanvasService {
   ): Promise<void> {
     const token = tokenOverride?.trim() || null;
     if (!token) {
-      throw new Error('Canvas OAuth access token required for writeSubmissionBody (pass from session/getEffectiveCanvasToken)');
+      throw new Error(
+        'Canvas access token required for writeSubmissionBody (OAuth session or CANVAS_API_TOKEN / CANVAS_ACCESS_TOKEN)',
+      );
     }
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
+    const studentCanvasId = ((ctx.canvasUserId ?? '').trim() || ctx.userId).trim();
+    const tokenUserId = await this.getCurrentCanvasUserId(domainOverride, token);
+    const preferActAs = tokenUserId ? String(tokenUserId) !== String(studentCanvasId) : true;
     appendLtiLog('canvas', 'writeSubmissionBody (Step 10)', {
       assignmentId,
       bodyLength: bodyContent?.length ?? 0,
-      userId: ctx.userId,
+      studentCanvasId,
+      tokenUserId: tokenUserId ?? '(unknown)',
+      preferActAs,
       tokenPreview: token ? `${token.slice(0, 4)}...${token.slice(-4)}` : 'MISSING',
     });
-    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
-    await this.createSubmissionWithBody(
-      ctx.courseId,
-      assignmentId,
-      ctx.userId,
-      bodyContent,
-      domainOverride,
-      token,
-    );
+    const postBody = (actAsUser: boolean) =>
+      this.createSubmissionWithBody(
+        ctx.courseId,
+        assignmentId,
+        studentCanvasId,
+        bodyContent,
+        domainOverride,
+        token,
+        actAsUser,
+      );
+    try {
+      await postBody(preferActAs);
+    } catch (firstErr) {
+      const msg = String(firstErr);
+      const authLike = /401|403|invalid as_user_id/i.test(msg);
+      if (!authLike) throw firstErr;
+      appendLtiLog('canvas', 'writeSubmissionBody: retry with flipped actAsUser', {
+        preferActAs,
+        error: msg.slice(0, 120),
+      });
+      await postBody(!preferActAs);
+    }
   }
 
   async putSubmissionBody(
