@@ -63,6 +63,8 @@ export interface DeckConfig {
 export interface VideoPromptConfig {
   selectedDecks: DeckConfig[];
   totalCards: number;
+  storedPromptBanks?: Array<Array<{ title: string; videoId?: string; duration: number }>>;
+  staticFallbackPrompts?: string[];
 }
 
 export interface PromptConfig {

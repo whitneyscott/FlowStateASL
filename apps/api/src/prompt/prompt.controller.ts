@@ -420,7 +420,7 @@ export class PromptController {
     @Req() req: Request,
     @Body() body: { selectedDecks?: Array<{ id?: string; title?: string }>; totalCards?: number },
   ) {
-    this.getCtxWithAssignment(req);
+    const ctx = this.getCtxWithAssignment(req);
     const selectedDecks = (body.selectedDecks ?? []).map(d => ({
       id: (d.id ?? '').trim(),
       title: (d.title ?? '').trim(),
@@ -428,13 +428,27 @@ export class PromptController {
     const requestedTotal = Number(body.totalCards);
     const totalCards =
       Number.isFinite(requestedTotal) && requestedTotal > 0 ? Math.floor(requestedTotal) : 10;
+    appendLtiLog('prompt-decks', 'buildDeckPrompts request', {
+      assignmentId: ctx.assignmentId ?? '(none)',
+      resourceLinkId: ctx.resourceLinkId ?? '(none)',
+      selectedDeckCount: selectedDecks.length,
+      totalCards,
+    });
 
     if (selectedDecks.length === 0) {
+      appendLtiLog('prompt-decks', 'buildDeckPrompts short-circuit: no valid decks selected', {
+        assignmentId: ctx.assignmentId ?? '(none)',
+      });
       return { prompts: [], warning: 'No valid decks selected' };
     }
 
     try {
       const result = await this.prompt.buildDeckPromptList(selectedDecks, totalCards);
+      appendLtiLog('prompt-decks', 'buildDeckPrompts result', {
+        assignmentId: ctx.assignmentId ?? '(none)',
+        promptCount: result.prompts?.length ?? 0,
+        warning: result.warning ?? '(none)',
+      });
       return result;
     } catch (err) {
       appendLtiLog('prompt-decks', 'buildDeckPrompts failed', { error: String(err) });

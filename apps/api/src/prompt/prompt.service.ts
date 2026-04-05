@@ -518,11 +518,32 @@ export class PromptService {
     if (config?.promptMode === 'decks') {
       const rawTotal = Number(config.videoPromptConfig?.totalCards);
       const totalCards = Number.isFinite(rawTotal) && rawTotal > 0 ? Math.floor(rawTotal) : 10;
+      const existingBanks = Array.isArray(config.videoPromptConfig?.storedPromptBanks)
+        ? config.videoPromptConfig?.storedPromptBanks
+        : [];
+      const normalizedBanks = existingBanks
+        .map((bank) =>
+          Array.isArray(bank)
+            ? bank
+                .map((p) => ({
+                  title: String(p?.title ?? '').trim(),
+                  ...(String(p?.videoId ?? '').trim() ? { videoId: String(p?.videoId).trim() } : {}),
+                  duration: Number.isFinite(Number(p?.duration)) && Number(p?.duration) > 0 ? Number(p?.duration) : 3,
+                }))
+                .filter((p) => p.title)
+            : [],
+        )
+        .filter((bank) => bank.length > 0);
+      const existingStatic = Array.isArray(config.videoPromptConfig?.staticFallbackPrompts)
+        ? config.videoPromptConfig?.staticFallbackPrompts.map((s) => String(s ?? '').trim()).filter(Boolean)
+        : [];
       config = {
         ...config,
         videoPromptConfig: {
           selectedDecks: config.videoPromptConfig?.selectedDecks ?? [],
           totalCards,
+          ...(normalizedBanks.length > 0 ? { storedPromptBanks: normalizedBanks } : {}),
+          ...(existingStatic.length > 0 ? { staticFallbackPrompts: existingStatic } : {}),
         },
       };
     }
@@ -624,6 +645,7 @@ export class PromptService {
     const normalizedDeckTotal =
       Number.isFinite(rawDeckTotal) && rawDeckTotal > 0 ? Math.floor(rawDeckTotal) : 10;
     const base: PromptConfigJson = existing ?? { minutes: 5, prompts: [], accessCode: '' };
+    const existingDeckConfig = base.videoPromptConfig;
     const merged: PromptConfigJson = {
       ...base,
       ...(dto.minutes != null && { minutes: dto.minutes }),
@@ -653,10 +675,54 @@ export class PromptService {
               })),
               // Guard against legacy/invalid values that caused empty prompt lists.
               totalCards: normalizedDeckTotal,
+              ...(Array.isArray(dto.videoPromptConfig.storedPromptBanks)
+                ? { storedPromptBanks: dto.videoPromptConfig.storedPromptBanks as Array<Array<{ title: string; videoId?: string; duration: number }>> }
+                : Array.isArray(existingDeckConfig?.storedPromptBanks)
+                  ? { storedPromptBanks: existingDeckConfig.storedPromptBanks }
+                  : {}),
+              ...(Array.isArray(dto.videoPromptConfig.staticFallbackPrompts)
+                ? {
+                    staticFallbackPrompts: dto.videoPromptConfig.staticFallbackPrompts
+                      .map((s) => String(s ?? '').trim())
+                      .filter(Boolean),
+                  }
+                : Array.isArray(existingDeckConfig?.staticFallbackPrompts)
+                  ? { staticFallbackPrompts: existingDeckConfig.staticFallbackPrompts }
+                  : {}),
             }
           : undefined,
       }),
     };
+
+    if (merged.promptMode === 'decks' && merged.videoPromptConfig?.selectedDecks?.length) {
+      const selectedDecks = merged.videoPromptConfig.selectedDecks;
+      const totalCards = merged.videoPromptConfig.totalCards ?? normalizedDeckTotal;
+      appendLtiLog('prompt-decks', 'putConfig: generating stored prompt banks', {
+        assignmentId,
+        deckCount: selectedDecks.length,
+        totalCards,
+      });
+      try {
+        const banks = await this.generateStoredDeckPromptBanks(selectedDecks, totalCards, 3);
+        const staticFallbackPrompts = (banks[0] ?? []).map((p) => p.title).filter(Boolean);
+        merged.videoPromptConfig = {
+          ...merged.videoPromptConfig,
+          storedPromptBanks: banks,
+          staticFallbackPrompts,
+        };
+        appendLtiLog('prompt-decks', 'putConfig: stored prompt banks generated', {
+          assignmentId,
+          bankCount: banks.length,
+          firstBankPromptCount: banks[0]?.length ?? 0,
+          staticFallbackCount: staticFallbackPrompts.length,
+        });
+      } catch (bankErr) {
+        appendLtiLog('prompt-decks', 'putConfig: stored prompt bank generation failed (non-fatal)', {
+          assignmentId,
+          error: String(bankErr),
+        });
+      }
+    }
 
     const assignmentTitle = (merged.assignmentName ?? '').trim() || `Assignment ${assignmentId}`;
     try {
@@ -1168,6 +1234,10 @@ export class PromptService {
     prompts: Array<{ title: string; videoId?: string; duration: number }>;
     warning?: string;
   }> {
+    appendLtiLog('prompt-decks', 'buildDeckPromptList start', {
+      selectedDeckCount: selectedDecks?.length ?? 0,
+      totalCards,
+    });
     if (!selectedDecks || selectedDecks.length === 0) {
       return { prompts: [], warning: 'No decks selected' };
     }
@@ -1261,7 +1331,30 @@ export class PromptService {
       duration: 1.5 + (durations.get(s.videoId!) ?? 3),
     }));
 
+    appendLtiLog('prompt-decks', 'buildDeckPromptList result', {
+      selectedDeckCount: selectedDecks.length,
+      totalRequested: totalToSelect,
+      promptCount: prompts.length,
+      warning: warning ?? '(none)',
+    });
+
     return { prompts, warning };
+  }
+
+  private async generateStoredDeckPromptBanks(
+    selectedDecks: Array<{ id: string; title: string }>,
+    totalCards: number,
+    bankCount: number,
+  ): Promise<Array<Array<{ title: string; videoId?: string; duration: number }>>> {
+    const targetBanks = Math.max(1, Math.floor(bankCount));
+    const banks: Array<Array<{ title: string; videoId?: string; duration: number }>> = [];
+    for (let i = 0; i < targetBanks; i++) {
+      const built = await this.buildDeckPromptList(selectedDecks, totalCards);
+      if (Array.isArray(built.prompts) && built.prompts.length > 0) {
+        banks.push(built.prompts);
+      }
+    }
+    return banks;
   }
 
   async verifyAccess(

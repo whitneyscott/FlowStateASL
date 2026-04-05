@@ -1,6 +1,14 @@
 export interface VideoPromptConfig {
   selectedDecks: Array<{ id: string; title: string }>;
   totalCards: number;
+  /**
+   * Pre-generated randomized prompt banks (live generation fallback).
+   */
+  storedPromptBanks?: Array<Array<{ title: string; videoId?: string; duration: number }>>;
+  /**
+   * Final fallback when both live generation and stored banks fail.
+   */
+  staticFallbackPrompts?: string[];
 }
 
 export interface PromptConfigJson {
@@ -46,5 +54,7 @@ export class PutPromptConfigDto {
   videoPromptConfig?: {
     selectedDecks?: Array<{ id?: string; title?: string }>;
     totalCards?: number;
+    storedPromptBanks?: Array<Array<{ title?: string; videoId?: string; duration?: number }>>;
+    staticFallbackPrompts?: string[];
   };
 }

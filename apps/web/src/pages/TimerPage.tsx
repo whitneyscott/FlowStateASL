@@ -55,6 +55,18 @@ export default function TimerPage({ context }: TimerPageProps) {
   const autoFinishFiredRef = useRef(false);
   const [showManualTokenModal, setShowManualTokenModal] = useState(false);
   const assignmentId = resolveLtiContextValue(context?.assignmentId);
+  const urlAssignmentId = new URLSearchParams(window.location.search).get('assignmentId')?.trim() ?? '';
+  const effectiveAssignmentId = assignmentId || urlAssignmentId || null;
+
+  const appendDeckDebugLog = useCallback((message: string, extra?: Record<string, unknown>) => {
+    const line = extra ? `${message} ${JSON.stringify(extra)}` : message;
+    fetch('/api/debug/lti-log', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tag: 'prompt-decks', message: `[client] ${line}` }),
+    }).catch(() => {});
+  }, []);
 
   const doSubmit = useCallback(
     async (promptSnapshot: string, blob: Blob | null) => {
@@ -70,8 +82,13 @@ export default function TimerPage({ context }: TimerPageProps) {
       let lastEndpoint = 'POST /api/prompt/save-prompt';
       try {
         console.log('[TimerPage:doSubmit] Step 1: savePrompt');
+        appendDeckDebugLog('doSubmit: start', {
+          effectiveAssignmentId: effectiveAssignmentId ?? '(none)',
+          hasBlob: !!blob,
+          promptLength: promptSnapshot?.length ?? 0,
+        });
         setLastFunction('POST /api/prompt/save-prompt');
-        await promptApi.savePrompt(promptSnapshot, assignmentId);
+        await promptApi.savePrompt(promptSnapshot, effectiveAssignmentId);
         setLastApiResult('POST /api/prompt/save-prompt', 200, true);
         console.log('[TimerPage:doSubmit] savePrompt OK');
 
@@ -79,7 +96,7 @@ export default function TimerPage({ context }: TimerPageProps) {
           lastEndpoint = 'POST /api/prompt/submit-deep-link';
           console.log('[TimerPage:doSubmit] Step 2a: submitDeepLink (isDeepLink=true)', { blobSize: blob.size });
           setLastFunction('POST /api/prompt/submit-deep-link');
-          const result = await promptApi.submitDeepLink(blob, `asl_submission_${Date.now()}.webm`, assignmentId);
+          const result = await promptApi.submitDeepLink(blob, `asl_submission_${Date.now()}.webm`, effectiveAssignmentId);
           setLastApiResult('POST /api/prompt/submit-deep-link', 200, true);
           let html: string;
           if (typeof result === 'object' && result?.dev) {
@@ -109,7 +126,7 @@ export default function TimerPage({ context }: TimerPageProps) {
           lastEndpoint = 'POST /api/prompt/submit';
           console.log('[TimerPage:doSubmit] Step 2b: submitPrompt (body to Canvas)');
           setLastFunction('POST /api/prompt/submit');
-          await promptApi.submitPrompt(promptSnapshot, assignmentId);
+          await promptApi.submitPrompt(promptSnapshot, effectiveAssignmentId);
           setLastApiResult('POST /api/prompt/submit', 200, true);
           console.log('[TimerPage:doSubmit] submitPrompt OK');
         }
@@ -117,7 +134,7 @@ export default function TimerPage({ context }: TimerPageProps) {
           lastEndpoint = 'POST /api/prompt/upload-video';
           console.log('[TimerPage:doSubmit] Step 3: uploadVideo', { blobSize: blob.size });
           setLastFunction('POST /api/prompt/upload-video');
-          const result = await promptApi.uploadVideo(blob, `asl_submission_${Date.now()}.webm`, assignmentId);
+          const result = await promptApi.uploadVideo(blob, `asl_submission_${Date.now()}.webm`, effectiveAssignmentId);
           setLastApiResult('POST /api/prompt/upload-video', 200, true);
           console.log('[TimerPage:doSubmit] uploadVideo OK', result);
         }
@@ -125,11 +142,23 @@ export default function TimerPage({ context }: TimerPageProps) {
         console.log('[TimerPage:doSubmit] DONE');
       } catch (e) {
         console.error('[TimerPage:doSubmit] FAILED', { lastEndpoint, error: e });
+        appendDeckDebugLog('doSubmit: failed', {
+          endpoint: lastEndpoint,
+          error: String(e),
+          effectiveAssignmentId: effectiveAssignmentId ?? '(none)',
+        });
         setSubmitError(e instanceof Error ? e.message : 'Submit failed');
         setLastApiError(lastEndpoint, 0, String(e));
       }
     },
-    [context?.messageType, setLastFunction, setLastApiResult, setLastApiError, assignmentId]
+    [
+      context?.messageType,
+      setLastFunction,
+      setLastApiResult,
+      setLastApiError,
+      effectiveAssignmentId,
+      appendDeckDebugLog,
+    ]
   );
 
   useEffect(() => {
@@ -184,32 +213,85 @@ export default function TimerPage({ context }: TimerPageProps) {
     setLoading(true);
     try {
       setLastFunction('GET /api/prompt/config');
-      const urlAssignmentId = new URLSearchParams(window.location.search).get('assignmentId')?.trim() ?? '';
-      const effectiveAssignmentId = assignmentId || urlAssignmentId || null;
       const data = await promptApi.getPromptConfig(effectiveAssignmentId);
       setLastApiResult('GET /api/prompt/config', 200, true);
       setConfig(data ?? null);
+      appendDeckDebugLog('loadConfig: received config', {
+        effectiveAssignmentId: effectiveAssignmentId ?? '(none)',
+        promptMode: data?.promptMode ?? '(none)',
+        hasVideoPromptConfig: !!data?.videoPromptConfig,
+      });
       
       // If deck mode, fetch the prompt list
       if (data?.promptMode === 'decks' && data?.videoPromptConfig?.selectedDecks && data.videoPromptConfig.selectedDecks.length > 0) {
+        const rawTotal = Number(data.videoPromptConfig.totalCards);
+        const totalCards = Number.isFinite(rawTotal) && rawTotal > 0 ? Math.floor(rawTotal) : 10;
+        appendDeckDebugLog('deck flow: live build start', {
+          effectiveAssignmentId: effectiveAssignmentId ?? '(none)',
+          selectedDeckCount: data.videoPromptConfig.selectedDecks.length,
+          totalCards,
+        });
         try {
-          const rawTotal = Number(data.videoPromptConfig.totalCards);
-          const totalCards = Number.isFinite(rawTotal) && rawTotal > 0 ? Math.floor(rawTotal) : 10;
           setLastFunction('POST /api/prompt/build-deck-prompts');
           const result = await promptApi.buildDeckPrompts(
             data.videoPromptConfig.selectedDecks,
             totalCards,
             effectiveAssignmentId
           );
-          setLastApiResult('POST /api/prompt/build-deck-prompts', 200, true);
-          setDeckPrompts(result.prompts || []);
+          const livePrompts = Array.isArray(result.prompts) ? result.prompts : [];
+          if (livePrompts.length > 0) {
+            setLastApiResult('POST /api/prompt/build-deck-prompts', 200, true);
+            setDeckPrompts(livePrompts);
+            appendDeckDebugLog('deck flow: source selected', {
+              source: 'live',
+              count: livePrompts.length,
+              preview: livePrompts.slice(0, 3).map((p) => p.title),
+            });
+          } else {
+            throw new Error(result.warning || 'live build returned zero prompts');
+          }
         } catch (e) {
           console.error('Failed to build deck prompts:', e);
-          setLastApiError('POST /api/prompt/build-deck-prompts', 0, String(e));
-          setDeckPrompts([]);
+          appendDeckDebugLog('deck flow: live build failed', { error: String(e) });
+          const storedBanks = data.videoPromptConfig?.storedPromptBanks ?? [];
+          const nonEmptyBanks = storedBanks.filter((bank) => Array.isArray(bank) && bank.length > 0);
+          if (nonEmptyBanks.length > 0) {
+            const idx = Math.floor(Math.random() * nonEmptyBanks.length);
+            const chosenBank = nonEmptyBanks[idx];
+            setDeckPrompts(chosenBank);
+            appendDeckDebugLog('deck flow: source selected', {
+              source: 'bank',
+              bankIndex: idx,
+              bankCount: nonEmptyBanks.length,
+              count: chosenBank.length,
+              preview: chosenBank.slice(0, 3).map((p) => p.title),
+            });
+          } else {
+            const staticTitles = (data.videoPromptConfig?.staticFallbackPrompts ?? []).filter(Boolean);
+            if (staticTitles.length > 0) {
+              setDeckPrompts(staticTitles.map((title) => ({ title, duration: 3 })));
+              appendDeckDebugLog('deck flow: source selected', {
+                source: 'static',
+                count: staticTitles.length,
+                preview: staticTitles.slice(0, 3),
+              });
+            } else {
+              setDeckPrompts([]);
+              setLastApiError('POST /api/prompt/build-deck-prompts', 0, String(e));
+              appendDeckDebugLog('deck flow: no prompts available', {
+                source: 'none',
+                error: String(e),
+              });
+            }
+          }
         }
       } else {
         setDeckPrompts([]);
+        appendDeckDebugLog('deck flow: skipped', {
+          reason: 'prompt_mode_not_decks_or_no_selected_decks',
+          promptMode: data?.promptMode ?? '(none)',
+          selectedDeckCount: data?.videoPromptConfig?.selectedDecks?.length ?? 0,
+        });
       }
       
       if (!data?.accessCode?.trim()) {
@@ -220,11 +302,22 @@ export default function TimerPage({ context }: TimerPageProps) {
       if (e instanceof promptApi.NeedsManualTokenError) {
         setShowManualTokenModal(true);
       }
+      appendDeckDebugLog('loadConfig: failed', {
+        effectiveAssignmentId: effectiveAssignmentId ?? '(none)',
+        error: String(e),
+      });
       setConfig(null);
     } finally {
       setLoading(false);
     }
-  }, [context?.courseId, assignmentId, setLastFunction, setLastApiResult, setLastApiError]);
+  }, [
+    context?.courseId,
+    effectiveAssignmentId,
+    setLastFunction,
+    setLastApiResult,
+    setLastApiError,
+    appendDeckDebugLog,
+  ]);
 
   useEffect(() => {
     loadConfig();
@@ -257,8 +350,6 @@ export default function TimerPage({ context }: TimerPageProps) {
     setAccessError(null);
     try {
       setLastFunction('POST /api/prompt/verify-access');
-      const urlAssignmentId = new URLSearchParams(window.location.search).get('assignmentId')?.trim() ?? '';
-      const effectiveAssignmentId = assignmentId || urlAssignmentId || null;
       const res = await promptApi.verifyAccess(accessCode, simpleFingerprint(), effectiveAssignmentId);
       setLastApiResult('POST /api/prompt/verify-access', 200, true);
       if (res.blocked) {

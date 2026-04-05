@@ -16,7 +16,8 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
   const [searchParams] = useSearchParams();
   /** Allow forcing Bridge Log with ?debug=1 in any environment. */
   const debugParamEnabled = searchParams.get('debug') === '1';
-  const developerUi = isDeveloperMode || debugParamEnabled;
+  const forcePrompterDebug = context?.toolType === 'prompter';
+  const developerUi = isDeveloperMode || debugParamEnabled || forcePrompterDebug;
   const [lastServerError, setLastServerError] = useState<{ endpoint: string; message: string } | null>(null);
   const [ltiLog, setLtiLog] = useState<string[]>([]);
   const [lines, setLines] = useState<string[]>(['Initializing...']);
@@ -98,6 +99,17 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
         lc.includes('post /api/lti/launch/flashcards received')
       ) && !isSettingsBlobNoise(line);
     };
+    const isDeckFlowLine = (line: string): boolean => {
+      const lc = lineLc(line);
+      return (
+        lc.includes('[prompt-decks]') ||
+        lc.includes('build-deck-prompts') ||
+        lc.includes('deck flow') ||
+        lc.includes('stored prompt banks') ||
+        lc.includes('source selected') ||
+        lc.includes('no prompts available')
+      ) && !isSettingsBlobNoise(line);
+    };
 
     // Assignment Group & Create Assignment section
     newLines.push('--- Assignment Group & Create Assignment ---');
@@ -135,6 +147,16 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
       newLines.push(...launchDiagnosticsLines);
     } else {
       newLines.push('(No launch diagnostics yet)');
+    }
+
+    // Deck prompt retrieval/build/fallback flow
+    newLines.push('');
+    newLines.push('--- Deck Prompt Flow (load/build/fallback) ---');
+    const deckFlowLines = ltiLog.filter(isDeckFlowLine);
+    if (deckFlowLines.length > 0) {
+      newLines.push(...deckFlowLines);
+    } else {
+      newLines.push('(No deck prompt flow lines yet)');
     }
 
     // Video submission flow (Finish & Submit / timer expiry → Canvas)
