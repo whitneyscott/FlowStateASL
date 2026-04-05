@@ -22,6 +22,8 @@ import type { LtiContext } from '../common/interfaces/lti-context.interface';
 import { canvasApiBaseFromLtiContext } from '../common/utils/canvas-base-url.util';
 import type { PromptConfigJson, PutPromptConfigDto } from './dto/prompt-config.dto';
 import { randomUUID } from 'crypto';
+import { spawnSync } from 'node:child_process';
+import { getLtiToken } from '../lti/lti-token.store';
 
 const PROMPT_MANAGER_SETTINGS_ASSIGNMENT_TITLE = 'Prompt Manager Settings';
 const PROMPT_MANAGER_SETTINGS_ANNOUNCEMENT_TITLE = 'ASL Express Prompt Manager Settings';
@@ -480,6 +482,121 @@ export class PromptService {
       resourceLinkId: rid,
       assignmentId: aid,
     });
+  }
+
+  private async saveResourceLinkMappingViaProgrammaticLaunch(
+    courseId: string,
+    moduleItemId: number,
+    assignmentId: string,
+    domainOverride: string | undefined,
+    token: string,
+  ): Promise<void> {
+    try {
+      const canvasApiBase =
+        (domainOverride?.trim() || this.config.get<string>('CANVAS_API_BASE_URL')?.trim() || 'http://localhost');
+      const canvasBase = canvasApiBase.replace(/\/api\/v1\/?$/i, '');
+      appendLtiLog('prompt-decks', 'programmatic launch: resolved canvasBase', {
+        canvasApiBase,
+        canvasBase,
+        assignmentId,
+        moduleItemId,
+      });
+      const child = spawnSync(
+        'node',
+        [
+          'scripts/validate-lti-module-click.mjs',
+          `--apiBase=http://localhost:3000`,
+          `--canvasBase=${canvasBase}`,
+          `--courseId=${courseId}`,
+          `--moduleItemId=${moduleItemId}`,
+        ],
+        { cwd: process.cwd(), encoding: 'utf8', timeout: 30000 },
+      );
+
+      const stdout = String(child.stdout ?? '');
+      const stderr = String(child.stderr ?? '');
+      const stdoutPreview = stdout.slice(0, 800);
+      const stderrPreview = stderr.slice(0, 800);
+      if (child.status !== 0) {
+        appendLtiLog('prompt-decks', 'resourceLink mapping skipped: no resourceLinkId from programmatic launch', {
+          reason: 'validator_nonzero_exit',
+          exitStatus: child.status ?? null,
+          signal: child.signal ?? null,
+          stdoutPreview,
+          stderrPreview,
+          assignmentId,
+          moduleItemId,
+        });
+        return;
+      }
+
+      const m = stdout.match(/PROMPTER_OPENED finalUrl=(\S+)/);
+      const finalUrl = m?.[1]?.trim() ?? '';
+      if (!finalUrl) {
+        appendLtiLog('prompt-decks', 'resourceLink mapping skipped: no resourceLinkId from programmatic launch', {
+          reason: 'missing_PROMPTER_OPENED_finalUrl',
+          stdoutPreview,
+          stderrPreview,
+          assignmentId,
+          moduleItemId,
+        });
+        return;
+      }
+
+      let ltiToken = '';
+      try {
+        ltiToken = new URL(finalUrl).searchParams.get('lti_token')?.trim() ?? '';
+      } catch {
+        appendLtiLog('prompt-decks', 'resourceLink mapping skipped: no resourceLinkId from programmatic launch', {
+          reason: 'invalid_final_url',
+          finalUrlPreview: finalUrl.slice(0, 300),
+          assignmentId,
+          moduleItemId,
+        });
+        return;
+      }
+      if (!ltiToken) {
+        appendLtiLog('prompt-decks', 'resourceLink mapping skipped: no resourceLinkId from programmatic launch', {
+          reason: 'missing_lti_token',
+          finalUrlPreview: finalUrl.slice(0, 300),
+          assignmentId,
+          moduleItemId,
+        });
+        return;
+      }
+
+      const tokenCtx = getLtiToken(ltiToken);
+      const resourceLinkId = (tokenCtx?.resourceLinkId ?? '').trim();
+      if (!resourceLinkId) {
+        appendLtiLog('prompt-decks', 'resourceLink mapping skipped: no resourceLinkId from programmatic launch', {
+          reason: 'token_ctx_missing_resourceLinkId',
+          hasTokenCtx: !!tokenCtx,
+          assignmentId,
+          moduleItemId,
+        });
+        return;
+      }
+
+      await this.rememberResourceLinkAssignmentMapping(
+        courseId,
+        resourceLinkId,
+        assignmentId,
+        domainOverride,
+        token,
+      );
+      appendLtiLog('prompt-decks', 'resourceLink mapping saved via programmatic launch', {
+        resourceLinkId,
+        assignmentId,
+        moduleItemId,
+      });
+    } catch (err) {
+      appendLtiLog('prompt-decks', 'resourceLink mapping skipped: no resourceLinkId from programmatic launch', {
+        reason: 'exception',
+        error: String(err),
+        assignmentId,
+        moduleItemId,
+      });
+    }
   }
 
   private extractAssignmentIdFromLisResult(ctx: LtiContext): string | null {
@@ -1184,6 +1301,20 @@ export class PromptService {
               });
             }
           }
+          if (ensuredTool.itemId) {
+            await this.saveResourceLinkMappingViaProgrammaticLaunch(
+              ctx.courseId,
+              ensuredTool.itemId,
+              assignmentId,
+              domainOverride,
+              token,
+            );
+          } else {
+            appendLtiLog('prompt-decks', 'resourceLink mapping skipped: no resourceLinkId from programmatic launch', {
+              reason: 'missing_moduleItemId_after_externalToolEnsure',
+              assignmentId,
+            });
+          }
           this.placementMarker({
             placementAttemptId,
             ltiVersion,
@@ -1326,6 +1457,20 @@ export class PromptService {
                 error: String(mapErr),
               });
             }
+          }
+          if (ltiSync.itemId) {
+            await this.saveResourceLinkMappingViaProgrammaticLaunch(
+              ctx.courseId,
+              ltiSync.itemId,
+              assignmentId,
+              domainOverride,
+              token,
+            );
+          } else {
+            appendLtiLog('prompt-decks', 'resourceLink mapping skipped: no resourceLinkId from programmatic launch', {
+              reason: 'missing_moduleItemId_after_templateClone11',
+              assignmentId,
+            });
           }
           if (ltiSync.skippedReason && ltiSync.skippedReason !== 'already_linked') {
             throw new Error(`Prompter LTI module item sync skipped: ${ltiSync.skippedReason}`);

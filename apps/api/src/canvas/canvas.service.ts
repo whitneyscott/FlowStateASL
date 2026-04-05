@@ -1671,7 +1671,7 @@ export class CanvasService {
     const resourceLinks = created?.id
       ? await this.findResourceLinksForModuleItem(courseId, created.id, domainOverride, tokenOverride)
       : [];
-    appendLtiLog('canvas', 'syncPrompterLtiModuleItem: resourceLinks raw', {
+    appendLtiLog('prompt-decks', 'syncPrompterLtiModuleItem: resourceLinks raw', {
       moduleItemId: created?.id,
       resourceLinksCount: resourceLinks.length,
       resourceLinks: resourceLinks.map((r) => ({

@@ -15,8 +15,8 @@
  *   node scripts/validate-lti-module-click.mjs
  *   node scripts/validate-lti-module-click.mjs --moduleItemId=785
  */
-import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -25,6 +25,8 @@ const defaults = {
   canvasBase: 'http://localhost',
   frontendBase: 'http://localhost:4200',
   courseId: '1',
+  settingsAssignmentTitle: 'Prompt Manager Settings',
+  settingsAnnouncementTitle: 'ASL Express Prompt Manager Settings',
   moduleName: 'ASL Click Validation Lab',
   assignmentName: `Click Validation ${new Date().toISOString().slice(0, 19)}`,
   canvasEmail: 'whitneyscottasl@gmail.com',
@@ -51,7 +53,29 @@ function run(command, args, options = {}) {
 }
 
 function runCurl(args) {
-  return run('curl.exe', args);
+  const result = spawnSync('curl.exe', ['--no-fail', ...args], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    maxBuffer: 25 * 1024 * 1024,
+  });
+  if (result.error) throw result.error;
+  const stdout = String(result.stdout ?? '');
+  const stderr = String(result.stderr ?? '');
+  if (result.status !== 0 && !stdout.trim()) {
+    throw new Error(`curl failed (status=${result.status ?? 'unknown'}): ${stderr.trim() || '(no stderr)'}`);
+  }
+  return stdout || stderr;
+}
+
+function buildSafeFormBody(matches) {
+  const params = [];
+  for (const m of matches) {
+    const name = String(m[1] ?? '').trim();
+    const value = String(m[2] ?? '');
+    if (!name) continue;
+    params.push(`${encodeURIComponent(name)}=${encodeURIComponent(value)}`);
+  }
+  return params.join('&');
 }
 
 function ensureLocalCanvasToken(email, password) {
@@ -159,6 +183,7 @@ function canvasLogin(canvasBase, email, password, cookieFile) {
 
 function clickAndReplay(canvasBase, courseId, moduleItemId, cookieFile, frontendBase) {
   const clickUrl = `${canvasBase}/courses/${courseId}/modules/items/${moduleItemId}`;
+  console.log(`[clickAndReplay] Step 1: GET module item URL ${clickUrl}`);
   const firstPage = runCurl([
     '-s',
     '-L',
@@ -170,9 +195,13 @@ function clickAndReplay(canvasBase, courseId, moduleItemId, cookieFile, frontend
     '\nEFFECTIVE_URL=%{url_effective}\nHTTP_CODE=%{http_code}\n',
     clickUrl,
   ]);
+  const firstEffectiveUrl = extractMetric(firstPage, 'EFFECTIVE_URL');
+  const firstHttpCode = extractMetric(firstPage, 'HTTP_CODE');
+  console.log(`[clickAndReplay] Step 1 result: http=${firstHttpCode || '(none)'} effectiveUrl=${firstEffectiveUrl || '(none)'} title="${extractTitle(firstPage) || 'unknown'}"`);
 
   const formActionMatch = firstPage.match(/<form[^>]*action="([^"]+)"/i);
   if (!formActionMatch) {
+    console.log('[clickAndReplay] Step 2: no launch form detected on first page');
     const err = extractError(firstPage);
     return {
       opened: false,
@@ -183,6 +212,7 @@ function clickAndReplay(canvasBase, courseId, moduleItemId, cookieFile, frontend
 
   const formAction = formActionMatch[1];
   const hiddenInputs = [...firstPage.matchAll(/<input[^>]*name="([^"]+)"[^>]*value="([^"]*)"/gi)];
+  console.log(`[clickAndReplay] Step 2: found launch form action=${formAction} hiddenInputs=${hiddenInputs.length}`);
   const postArgs = [
     '-s',
     '-L',
@@ -193,15 +223,18 @@ function clickAndReplay(canvasBase, courseId, moduleItemId, cookieFile, frontend
     '-w',
     '\nEFFECTIVE_URL=%{url_effective}\nHTTP_CODE=%{http_code}\n',
     formAction,
+    '--data-raw',
+    buildSafeFormBody(hiddenInputs),
   ];
-  for (const m of hiddenInputs) {
-    postArgs.push('--data-urlencode', `${m[1]}=${m[2]}`);
-  }
 
+  console.log('[clickAndReplay] Step 3: POST launch form');
   let launchPage = runCurl(postArgs);
+  console.log(`[clickAndReplay] Step 3 result: http=${extractMetric(launchPage, 'HTTP_CODE') || '(none)'} effectiveUrl=${extractMetric(launchPage, 'EFFECTIVE_URL') || '(none)'}`);
+  console.log('[clickAndReplay] Step 4: follow auto-submit forms');
   launchPage = followAutoSubmitForms(launchPage, cookieFile, frontendBase);
   const finalUrl = extractMetric(launchPage, 'EFFECTIVE_URL');
   const opened = finalUrl.startsWith(`${frontendBase}/prompter`) || finalUrl.startsWith(`${frontendBase}/config`);
+  console.log(`[clickAndReplay] Step 4 result: opened=${opened} http=${extractMetric(launchPage, 'HTTP_CODE') || '(none)'} effectiveUrl=${finalUrl || '(none)'}`);
   const err = extractError(launchPage);
   const title = extractTitle(launchPage);
   if (!opened && /\/api\/lti\/authorize/i.test(finalUrl)) {
@@ -233,20 +266,31 @@ function clickAndReplay(canvasBase, courseId, moduleItemId, cookieFile, frontend
 function followAutoSubmitForms(page, cookieFile, frontendBase) {
   let current = page;
   for (let i = 0; i < 4; i += 1) {
+    console.log(`[followAutoSubmitForms] iteration=${i + 1} begin effectiveUrl=${extractMetric(current, 'EFFECTIVE_URL') || '(none)'} http=${extractMetric(current, 'HTTP_CODE') || '(none)'}`);
     const actionMatch = current.match(/<form[^>]*action="([^"]+)"/i);
-    if (!actionMatch) return current;
+    if (!actionMatch) {
+      console.log(`[followAutoSubmitForms] iteration=${i + 1} stop: no form found`);
+      return current;
+    }
     const methodMatch = current.match(/<form[^>]*method="([^"]+)"/i);
     const method = (methodMatch ? methodMatch[1] : 'get').toLowerCase();
     let action = actionMatch[1];
     const baseUrl = extractMetric(current, 'EFFECTIVE_URL');
-    if (!baseUrl) return current;
+    if (!baseUrl) {
+      console.log(`[followAutoSubmitForms] iteration=${i + 1} stop: no EFFECTIVE_URL metric`);
+      return current;
+    }
     const base = new URL(baseUrl);
     if (!/^https?:\/\//i.test(action)) {
       action = action.startsWith('/') ? `${base.protocol}//${base.host}${action}` : `${base.protocol}//${base.host}/${action}`;
     }
 
     const inputs = [...current.matchAll(/<input[^>]*name="([^"]+)"[^>]*value="([^"]*)"/gi)];
-    if (inputs.length === 0) return current;
+    if (inputs.length === 0) {
+      console.log(`[followAutoSubmitForms] iteration=${i + 1} stop: form had no hidden inputs`);
+      return current;
+    }
+    console.log(`[followAutoSubmitForms] iteration=${i + 1} posting form method=${method} action=${action} hiddenInputs=${inputs.length}`);
 
     if (method === 'get') {
       const u = new URL(action);
@@ -273,18 +317,20 @@ function followAutoSubmitForms(page, cookieFile, frontendBase) {
         '-w',
         '\nEFFECTIVE_URL=%{url_effective}\nHTTP_CODE=%{http_code}\n',
         action,
+        '--data-raw',
+        buildSafeFormBody(inputs),
       ];
-      for (const m of inputs) {
-        args.push('--data-urlencode', `${m[1]}=${m[2]}`);
-      }
       current = runCurl(args);
     }
 
     const moved = extractMetric(current, 'EFFECTIVE_URL');
+    console.log(`[followAutoSubmitForms] iteration=${i + 1} result effectiveUrl=${moved || '(none)'} http=${extractMetric(current, 'HTTP_CODE') || '(none)'}`);
     if (moved.startsWith(`${frontendBase}/prompter`) || moved.startsWith(`${frontendBase}/config`)) {
+      console.log(`[followAutoSubmitForms] iteration=${i + 1} stop: reached frontend URL`);
       return current;
     }
   }
+  console.log('[followAutoSubmitForms] stop: reached max iterations (4)');
   return current;
 }
 
@@ -313,16 +359,373 @@ function extractTitle(html) {
   return m ? m[1].replace(/\s+/g, ' ').trim() : '';
 }
 
-function main() {
-  const args = parseArgs();
-  const cfg = {
-    ...defaults,
-    ...args,
+function deriveCanvasBase(args) {
+  const raw =
+    String(args.domainOverride ?? '').trim() ||
+    String(args.canvasApiBase ?? '').trim() ||
+    String(args.canvasBase ?? '').trim() ||
+    String(process.env.CANVAS_API_BASE_URL ?? '').trim() ||
+    defaults.canvasBase;
+  const canvasApiBase = raw.replace(/\/+$/, '');
+  const canvasBase = canvasApiBase.replace(/\/api\/v1\/?$/i, '').replace(/\/+$/, '');
+  return { canvasApiBase, canvasBase };
+}
+
+function extractJsonBlob(raw) {
+  const text = String(raw ?? '').trim();
+  if (!text) return null;
+  const candidates = [text];
+  const first = text.indexOf('{');
+  const last = text.lastIndexOf('}');
+  if (first >= 0 && last > first) candidates.push(text.slice(first, last + 1));
+  for (const c of candidates) {
+    try {
+      const parsed = JSON.parse(c);
+      if (parsed && typeof parsed === 'object') return parsed;
+    } catch {
+      // try next candidate
+    }
+  }
+  return null;
+}
+
+function getLtiLogLines(apiBase) {
+  const raw = runCurl(['-s', `${apiBase}/api/debug/lti-log`]);
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed?.lines) ? parsed.lines.map((x) => String(x)) : [];
+  } catch {
+    return [];
+  }
+}
+
+function clearLtiLog(apiBase) {
+  runCurl(['-s', `${apiBase}/api/debug/lti-log?clear=1`]);
+}
+
+function listTeacherCourses(canvasBase, token) {
+  const raw = runCurl([
+    '-s',
+    '-H',
+    `Authorization: Bearer ${token}`,
+    `${canvasBase}/api/v1/courses?enrollment_type=teacher&state[]=available&per_page=100`,
+  ]);
+  const parsed = JSON.parse(raw);
+  return Array.isArray(parsed) ? parsed : [];
+}
+
+function findSettingsAnnouncement(courseId, canvasBase, token, title) {
+  const raw = runCurl([
+    '-s',
+    '-H',
+    `Authorization: Bearer ${token}`,
+    `${canvasBase}/api/v1/courses/${courseId}/discussion_topics?only_announcements=true&per_page=100`,
+  ]);
+  const rows = JSON.parse(raw);
+  if (!Array.isArray(rows)) return null;
+  return rows.find((r) => String(r?.title ?? '').trim() === title) ?? null;
+}
+
+function listAssignments(courseId, canvasBase, token) {
+  const raw = runCurl([
+    '-s',
+    '-H',
+    `Authorization: Bearer ${token}`,
+    `${canvasBase}/api/v1/courses/${courseId}/assignments?per_page=100`,
+  ]);
+  const parsed = JSON.parse(raw);
+  return Array.isArray(parsed) ? parsed : [];
+}
+
+function findAssignmentByTitle(courseId, canvasBase, token, title) {
+  const rows = listAssignments(courseId, canvasBase, token);
+  return rows.find((r) => String(r?.name ?? '').trim() === title) ?? null;
+}
+
+function readSettingsBlobFromAssignmentDescription(courseId, canvasBase, token) {
+  const settings = findAssignmentByTitle(courseId, canvasBase, token, defaults.settingsAssignmentTitle);
+  if (!settings) return null;
+  const description = String(settings?.description ?? '').trim();
+  if (!description) return null;
+  return extractJsonBlob(description);
+}
+
+function readSettingsBlobFromAnnouncement(courseId, canvasBase, token) {
+  const ann = findSettingsAnnouncement(
+    courseId,
+    canvasBase,
+    token,
+    defaults.settingsAnnouncementTitle,
+  );
+  return extractJsonBlob(ann?.message ?? '');
+}
+
+function selectDeckConfigFromBlob(blob) {
+  const configs = blob?.configs && typeof blob.configs === 'object' ? blob.configs : {};
+  const entries = Object.entries(configs);
+  const deck = entries.find(([, cfg]) => String(cfg?.promptMode ?? 'text') === 'decks');
+  if (!deck) return null;
+  const [assignmentId, cfg] = deck;
+  return {
+    assignmentId: String(assignmentId).trim(),
+    config: cfg ?? {},
   };
+}
 
-  console.log('LTI_CLICK_VALIDATOR start');
-  ensureApiUp(cfg.apiBase);
+function discoverDeckAssignmentTarget(canvasBase, token, args) {
+  const preferredCourseId = String(args.courseId ?? '').trim();
+  if (preferredCourseId) {
+    const blob =
+      readSettingsBlobFromAssignmentDescription(preferredCourseId, canvasBase, token) ??
+      readSettingsBlobFromAnnouncement(preferredCourseId, canvasBase, token);
+    const picked = blob ? selectDeckConfigFromBlob(blob) : null;
+    if (!picked?.assignmentId) {
+      throw new Error(`No deck assignment found in settings announcement for course ${preferredCourseId}.`);
+    }
+    return {
+      courseId: preferredCourseId,
+      assignmentId: picked.assignmentId,
+      moduleId: String(picked.config?.moduleId ?? '').trim(),
+      config: picked.config,
+    };
+  }
 
+  const courses = listTeacherCourses(canvasBase, token);
+  const orderedCourses = preferredCourseId
+    ? [
+        ...courses.filter((c) => String(c?.id ?? '').trim() === preferredCourseId),
+        ...courses.filter((c) => String(c?.id ?? '').trim() !== preferredCourseId),
+      ]
+    : courses;
+  for (const c of orderedCourses) {
+    const courseId = String(c?.id ?? '').trim();
+    if (!courseId) continue;
+    let blob = null;
+    try {
+      blob =
+        readSettingsBlobFromAssignmentDescription(courseId, canvasBase, token) ??
+        readSettingsBlobFromAnnouncement(courseId, canvasBase, token);
+    } catch {
+      continue;
+    }
+    if (!blob) continue;
+    const picked = selectDeckConfigFromBlob(blob);
+    if (!picked?.assignmentId) continue;
+    return {
+      courseId,
+      assignmentId: picked.assignmentId,
+      moduleId: String(picked.config?.moduleId ?? '').trim(),
+      config: picked.config,
+    };
+  }
+  throw new Error('Could not discover a deck assignment from Prompt Manager settings announcements.');
+}
+
+function bootstrapTeacherApiSession(apiBase, canvasApiBase, token, target, cookieFile) {
+  const assignmentId = String(target?.assignmentId ?? '').trim();
+  const moduleId = String(target?.moduleId ?? '').trim();
+  runCurl([
+    '-s',
+    '-i',
+    '-c',
+    cookieFile,
+    '-b',
+    cookieFile,
+    '-X',
+    'POST',
+    `${apiBase}/api/lti/launch/prompter`,
+    '--data-urlencode',
+    `custom_canvas_course_id=${target.courseId}`,
+    '--data-urlencode',
+    `custom_canvas_assignment_id=${assignmentId}`,
+    '--data-urlencode',
+    `custom_canvas_module_id=${moduleId}`,
+    '--data-urlencode',
+    'custom_canvas_user_id=1',
+    '--data-urlencode',
+    'resource_link_id=validator-programmatic-launch',
+    '--data-urlencode',
+    'roles=Instructor',
+    '--data-urlencode',
+    `custom_canvas_api_base_url=${canvasApiBase}`,
+  ]);
+  const oauthRaw = runCurl([
+    '-s',
+    '-b',
+    cookieFile,
+    '-c',
+    cookieFile,
+    '-X',
+    'POST',
+    `${apiBase}/api/oauth/canvas/token`,
+    '-H',
+    'Content-Type: application/json',
+    '--data-raw',
+    JSON.stringify({ token }),
+    '-w',
+    '\nHTTP_CODE=%{http_code}\n',
+  ]);
+  const code = extractMetric(oauthRaw, 'HTTP_CODE');
+  if (code !== '200' && code !== '201') {
+    throw new Error(`Failed to store API token in session (oauth/token status=${code || 'unknown'})`);
+  }
+}
+
+function createAutocheckModule(apiBase, cookieFile) {
+  const raw = runCurl([
+    '-s',
+    '-b',
+    cookieFile,
+    '-c',
+    cookieFile,
+    '-X',
+    'POST',
+    `${apiBase}/api/prompt/modules`,
+    '-H',
+    'Content-Type: application/json',
+    '--data-raw',
+    JSON.stringify({ name: `Autocheck Module ${new Date().toISOString().slice(0, 19)}` }),
+    '-w',
+    '\nHTTP_CODE=%{http_code}\n',
+  ]);
+  const code = extractMetric(raw, 'HTTP_CODE');
+  if (code !== '201') {
+    throw new Error(`create module failed (status=${code || 'unknown'}): ${raw.slice(0, 400)}`);
+  }
+  const body = raw.split(/\r?\nHTTP_CODE=/)[0];
+  const parsed = JSON.parse(body);
+  const id = String(parsed?.id ?? '').trim();
+  if (!id) throw new Error(`create module missing id: ${body.slice(0, 200)}`);
+  return id;
+}
+
+function createAutocheckAssignment(apiBase, cookieFile) {
+  const raw = runCurl([
+    '-s',
+    '-b',
+    cookieFile,
+    '-c',
+    cookieFile,
+    '-X',
+    'POST',
+    `${apiBase}/api/prompt/create-assignment`,
+    '-H',
+    'Content-Type: application/json',
+    '--data-raw',
+    JSON.stringify({ name: `Autocheck Assignment ${new Date().toISOString().slice(0, 19)}` }),
+    '-w',
+    '\nHTTP_CODE=%{http_code}\n',
+  ]);
+  const code = extractMetric(raw, 'HTTP_CODE');
+  if (code !== '201') {
+    throw new Error(`create assignment failed (status=${code || 'unknown'}): ${raw.slice(0, 400)}`);
+  }
+  const body = raw.split(/\r?\nHTTP_CODE=/)[0];
+  const parsed = JSON.parse(body);
+  const id = String(parsed?.assignmentId ?? '').trim();
+  if (!id) throw new Error(`create assignment missing assignmentId: ${body.slice(0, 200)}`);
+  return id;
+}
+
+function bootstrapAutocheckTarget(apiBase, courseId, cookieFile) {
+  const moduleId = createAutocheckModule(apiBase, cookieFile);
+  const assignmentId = createAutocheckAssignment(apiBase, cookieFile);
+  const config = {
+    assignmentName: `Autocheck Assignment`,
+    minutes: 5,
+    prompts: [],
+    promptMode: 'text',
+    moduleId,
+  };
+  return { courseId, assignmentId, moduleId, config };
+}
+
+function ensureTargetModuleForSave(apiBase, target, cookieFile) {
+  const current = String(target?.moduleId ?? '').trim();
+  if (current) return current;
+  const created = createAutocheckModule(apiBase, cookieFile);
+  target.moduleId = created;
+  target.config = {
+    ...(target.config ?? {}),
+    moduleId: created,
+  };
+  console.log(`TARGET_MODULE_CREATED moduleId=${created}`);
+  return created;
+}
+
+function buildPutConfigBody(config) {
+  const out = {};
+  const copy = [
+    'minutes',
+    'prompts',
+    'accessCode',
+    'assignmentName',
+    'assignmentGroupId',
+    'promptMode',
+    'pointsPossible',
+    'allowedAttempts',
+    'moduleId',
+    'videoPromptConfig',
+    'instructions',
+    'dueAt',
+    'unlockAt',
+    'lockAt',
+    'rubricId',
+  ];
+  for (const k of copy) {
+    if (config?.[k] !== undefined) out[k] = config[k];
+  }
+  const attemptsRaw = Number(out.allowedAttempts);
+  out.allowedAttempts = Number.isFinite(attemptsRaw) && attemptsRaw >= 1
+    ? Math.floor(attemptsRaw)
+    : 1;
+  const pointsRaw = Number(out.pointsPossible);
+  out.pointsPossible = Number.isFinite(pointsRaw) && pointsRaw >= 0
+    ? Math.floor(pointsRaw)
+    : 100;
+  return out;
+}
+
+function runTeacherSave(apiBase, target, cookieFile) {
+  const body = JSON.stringify(buildPutConfigBody(target.config));
+  const putRaw = runCurl([
+    '-s',
+    '-b',
+    cookieFile,
+    '-c',
+    cookieFile,
+    '-X',
+    'PUT',
+    `${apiBase}/api/prompt/config?assignmentId=${encodeURIComponent(target.assignmentId)}`,
+    '-H',
+    'Content-Type: application/json',
+    '--data-raw',
+    body,
+    '-w',
+    '\nHTTP_CODE=%{http_code}\n',
+  ]);
+  const code = extractMetric(putRaw, 'HTTP_CODE');
+  if (code !== '204') {
+    throw new Error(`Teacher save failed (status=${code || 'unknown'}): ${putRaw.slice(0, 400)}`);
+  }
+}
+
+function resolveMappingOutcome(apiBase) {
+  const lines = getLtiLogLines(apiBase);
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i];
+    if (!line.includes('[prompt-decks]')) continue;
+    if (line.includes('resourceLink mapping saved via programmatic launch')) {
+      return { outcome: 'MAPPING_SAVED', line };
+    }
+    if (line.includes('resourceLink mapping skipped: no resourceLinkId from programmatic launch')) {
+      return { outcome: 'MAPPING_SKIPPED', line };
+    }
+  }
+  return { outcome: 'MAPPING_ERROR', line: '' };
+}
+
+function runClickMode(cfg, args) {
   const tokenInfo = ensureLocalCanvasToken(cfg.canvasEmail, cfg.canvasPassword);
   const masked = `${tokenInfo.token.slice(0, 6)}...${tokenInfo.token.slice(-6)}`;
   console.log(`TOKEN_CREATED user=${tokenInfo.login} token=${masked}`);
@@ -367,9 +770,82 @@ function main() {
   process.exit(2);
 }
 
+function runFullAutocheck(cfg, args) {
+  const { canvasApiBase, canvasBase } = deriveCanvasBase(args);
+  console.log(`CANVAS_BASE_RESOLVED canvasApiBase=${canvasApiBase} canvasBase=${canvasBase}`);
+  const tokenInfo = ensureLocalCanvasToken(cfg.canvasEmail, cfg.canvasPassword);
+  const masked = `${tokenInfo.token.slice(0, 6)}...${tokenInfo.token.slice(-6)}`;
+  console.log(`TOKEN_CREATED user=${tokenInfo.login} token=${masked}`);
+
+  const tmp = mkdtempSync(join(tmpdir(), 'lti-autocheck-'));
+  const canvasCookieFile = join(tmp, 'canvas.cookies.txt');
+  const cookieFile = join(tmp, 'api.cookies.txt');
+  writeFileSync(canvasCookieFile, '', 'utf8');
+  writeFileSync(cookieFile, '', 'utf8');
+
+  canvasLogin(canvasBase, tokenInfo.login, cfg.canvasPassword, canvasCookieFile);
+  console.log('CANVAS_LOGIN_OK');
+
+  clearLtiLog(cfg.apiBase);
+  let target;
+  try {
+    target = discoverDeckAssignmentTarget(canvasBase, tokenInfo.token, args);
+    console.log(`TARGET_DISCOVERED courseId=${target.courseId} assignmentId=${target.assignmentId} moduleId=${target.moduleId || '(none)'}`);
+  } catch (discoverErr) {
+    const fallbackCourseId = String(args.courseId ?? '').trim() || String(cfg.courseId ?? '').trim();
+    if (!fallbackCourseId) throw discoverErr;
+    console.log(`TARGET_DISCOVERY_FAILED ${String(discoverErr)}`);
+    console.log(`TARGET_BOOTSTRAP_START courseId=${fallbackCourseId}`);
+    bootstrapTeacherApiSession(
+      cfg.apiBase,
+      canvasApiBase,
+      tokenInfo.token,
+      { courseId: fallbackCourseId, assignmentId: '', moduleId: '' },
+      cookieFile,
+    );
+    target = bootstrapAutocheckTarget(cfg.apiBase, fallbackCourseId, cookieFile);
+    console.log(`TARGET_BOOTSTRAPPED courseId=${target.courseId} assignmentId=${target.assignmentId} moduleId=${target.moduleId}`);
+  }
+
+  bootstrapTeacherApiSession(cfg.apiBase, canvasApiBase, tokenInfo.token, target, cookieFile);
+  console.log('API_TEACHER_SESSION_OK');
+
+  ensureTargetModuleForSave(cfg.apiBase, target, cookieFile);
+
+  runTeacherSave(cfg.apiBase, target, cookieFile);
+  console.log('TEACHER_SAVE_OK');
+
+  const mapping = resolveMappingOutcome(cfg.apiBase);
+  if (mapping.line) {
+    console.log(`MAPPING_LOG ${mapping.line}`);
+  }
+  console.log(mapping.outcome);
+  process.exit(mapping.outcome === 'MAPPING_ERROR' ? 1 : 0);
+}
+
+function main() {
+  const args = parseArgs();
+  const derived = deriveCanvasBase(args);
+  const cfg = {
+    ...defaults,
+    ...args,
+    canvasBase: derived.canvasBase || defaults.canvasBase,
+  };
+
+  console.log('LTI_CLICK_VALIDATOR start');
+  ensureApiUp(cfg.apiBase);
+  const hasExplicitModuleTarget = String(args.moduleItemId ?? '').trim().length > 0;
+  if (hasExplicitModuleTarget) {
+    runClickMode(cfg, args);
+    return;
+  }
+  runFullAutocheck(cfg, args);
+}
+
 try {
   main();
 } catch (err) {
   console.error(`VALIDATOR_FAILED ${(err && err.message) ? err.message : String(err)}`);
+  console.log('MAPPING_ERROR');
   process.exit(1);
 }
