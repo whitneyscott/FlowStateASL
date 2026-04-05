@@ -68,6 +68,8 @@ export default function TimerPage({ context }: TimerPageProps) {
   const submitOnStopRef = useRef(false);
   const pendingPromptRef = useRef('');
   const autoFinishFiredRef = useRef(false);
+  /** Prevents double-handling when per-card timer hits 0 (React strict / re-renders). */
+  const deckZeroHandledForIndexRef = useRef<number>(-1);
   const [showManualTokenModal, setShowManualTokenModal] = useState(false);
   const assignmentId = resolveLtiContextValue(context?.assignmentId);
   const params = new URLSearchParams(window.location.search);
@@ -400,26 +402,63 @@ export default function TimerPage({ context }: TimerPageProps) {
   }, []);
 
   const finishAndSubmit = useCallback(() => {
-    pendingPromptRef.current = displayPrompts[promptIndex] ?? displayPrompts[0] ?? '';
+    // One continuous video for the whole deck: snapshot lists every prompt (newline-separated).
+    pendingPromptRef.current =
+      deckMode && displayPrompts.length > 0
+        ? displayPrompts.join('\n\n')
+        : (displayPrompts[promptIndex] ?? displayPrompts[0] ?? '');
     submitOnStopRef.current = true;
     stopRecording();
-  }, [displayPrompts, promptIndex, stopRecording]);
+  }, [deckMode, displayPrompts, promptIndex, stopRecording]);
 
   useEffect(() => {
     if (phase === 'record') {
-      const sec = deckMode ? recordSecondsForDeckCard(deckPrompts[promptIndex]) : minutes * 60;
-      setRecordSecondsLeft(sec);
       autoFinishFiredRef.current = false;
+      deckZeroHandledForIndexRef.current = -1;
     }
+  }, [phase]);
+
+  useEffect(() => {
+    if (phase !== 'record') return;
+    const sec = deckMode ? recordSecondsForDeckCard(deckPrompts[promptIndex]) : minutes * 60;
+    setRecordSecondsLeft(sec);
   }, [phase, minutes, deckMode, deckPrompts, promptIndex]);
 
   useEffect(() => {
-    if (phase !== 'record' || recordSecondsLeft > 0) return;
-    if (autoFinishFiredRef.current || !recording) return;
+    if (phase !== 'record' || recordSecondsLeft !== 0 || !recording) return;
+    // Same index + zero: ignore duplicate effect runs (e.g. React Strict Mode).
+    if (deckZeroHandledForIndexRef.current === promptIndex) return;
+    deckZeroHandledForIndexRef.current = promptIndex;
+
+    if (deckMode && promptIndex < deckPrompts.length - 1) {
+      const next = promptIndex + 1;
+      appendDeckDebugLog('deck flow: advance card (continuous recording)', {
+        fromIndex: promptIndex,
+        toIndex: next,
+        totalCards: deckPrompts.length,
+      });
+      setPromptIndex(next);
+      // Avoid a frame where index advanced but seconds stayed 0 (would re-trigger this effect).
+      setRecordSecondsLeft(recordSecondsForDeckCard(deckPrompts[next]));
+      return;
+    }
+
+    if (!deckMode) {
+      if (autoFinishFiredRef.current) return;
+      autoFinishFiredRef.current = true;
+    }
     console.log('[TimerPage] Timer expired (recordSecondsLeft=0), calling finishAndSubmit');
-    autoFinishFiredRef.current = true;
     finishAndSubmit();
-  }, [phase, recordSecondsLeft, recording, finishAndSubmit]);
+  }, [
+    phase,
+    recordSecondsLeft,
+    recording,
+    deckMode,
+    promptIndex,
+    deckPrompts.length,
+    finishAndSubmit,
+    appendDeckDebugLog,
+  ]);
 
   useEffect(() => {
     if (phase !== 'record' || recordSecondsLeft <= 0) return;
@@ -427,6 +466,7 @@ export default function TimerPage({ context }: TimerPageProps) {
     return () => clearInterval(t);
   }, [phase, recordSecondsLeft]);
 
+  // One MediaRecorder for the entire record phase; do not restart when the deck card index changes.
   useEffect(() => {
     if (phase !== 'record' || !streamRef.current || recorderRef.current) return;
     const stream = streamRef.current;
@@ -445,7 +485,7 @@ export default function TimerPage({ context }: TimerPageProps) {
       setRecordedBlob(blob);
       if (submitOnStopRef.current) {
         submitOnStopRef.current = false;
-        const promptSnapshot = pendingPromptRef.current || (displayPrompts[promptIndex] ?? displayPrompts[0] ?? '');
+        const promptSnapshot = pendingPromptRef.current.trim();
         console.log('[TimerPage:recorder.onstop] Calling doSubmit...');
         doSubmit(promptSnapshot, blob);
       }
@@ -453,7 +493,7 @@ export default function TimerPage({ context }: TimerPageProps) {
     recorder.start();
     recorderRef.current = recorder;
     setRecording(true);
-  }, [phase, prompts, promptIndex, doSubmit]);
+  }, [phase, doSubmit]);
 
   if (!context) {
     return (
@@ -593,7 +633,8 @@ export default function TimerPage({ context }: TimerPageProps) {
           </div>
           {deckMode && (
             <p className="prompter-info-message prompter-deck-progress-hint">
-              Card {Math.min(promptIndex + 1, deckPrompts.length)} of {deckPrompts.length} — one prompt at a time
+              Card {Math.min(promptIndex + 1, deckPrompts.length)} of {deckPrompts.length} — one continuous recording for
+              all prompts
             </p>
           )}
           <div className="prompter-record-layout">
@@ -606,7 +647,7 @@ export default function TimerPage({ context }: TimerPageProps) {
               </div>
               {recording && (
                 <button type="button" onClick={finishAndSubmit} className="prompter-btn-danger">
-                  Finish & Submit to Canvas
+                  {deckMode ? 'Finish deck & submit to Canvas' : 'Finish & Submit to Canvas'}
                 </button>
               )}
             </div>
