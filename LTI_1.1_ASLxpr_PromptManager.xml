@@ -30,6 +30,8 @@
     <blti:custom>
         <lticm:property name="course_id">$Canvas.course.id</lticm:property>
         <lticm:property name="assignment_id">$Canvas.assignment.id</lticm:property>
+        <lticm:property name="canvas_user_id">$Canvas.user.id</lticm:property>
+        <lticm:property name="module_id">$Canvas.module.id</lticm:property>
         <lticm:property name="roles">$Canvas.membership.roles</lticm:property>
         <lticm:property name="lis_result_sourcedid">$Canvas.rlis.result_sourcedid</lticm:property>
         <lticm:property name="lis_outcome_service_url">$Canvas.rlis.result_serviceurl</lticm:property>
