@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
@@ -26,6 +26,44 @@ function parseTimestampedFeedback(comments: Array<{ id: number; comment: string 
   }
   out.sort((a, b) => a.time - b.time);
   return out;
+}
+
+/** Deck submissions: real boundaries from the student recorder (seconds from recording start). */
+interface DeckTimelineEntry {
+  title: string;
+  startSec: number;
+}
+
+function parseDeckTimelineFromBody(body: string | undefined): DeckTimelineEntry[] {
+  if (!body?.trim()) return [];
+  try {
+    const parsed = JSON.parse(body) as { deckTimeline?: unknown };
+    const raw = parsed.deckTimeline;
+    if (!Array.isArray(raw) || raw.length === 0) return [];
+    const out: DeckTimelineEntry[] = [];
+    for (const item of raw) {
+      if (!item || typeof item !== 'object') continue;
+      const o = item as { title?: unknown; startSec?: unknown };
+      const title = String(o.title ?? '');
+      const startSec = Number(o.startSec);
+      if (!Number.isFinite(startSec)) continue;
+      out.push({ title, startSec });
+    }
+    out.sort((a, b) => a.startSec - b.startSec);
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+function activeDeckPromptAt(t: number, segments: DeckTimelineEntry[]): DeckTimelineEntry | null {
+  if (segments.length === 0) return null;
+  for (let i = 0; i < segments.length; i++) {
+    const start = segments[i].startSec;
+    const nextStart = i + 1 < segments.length ? segments[i + 1].startSec : Infinity;
+    if (t >= start && t < nextStart) return segments[i];
+  }
+  return null;
 }
 
 /** Build SproutVideo embed HTML the same way as FlashcardsPage (iframe with sproutvideo-player class). */
@@ -398,6 +436,14 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     }
   }, []);
 
+  const handleDeckTimelineClick = useCallback((startSec: number) => {
+    const v = videoRef.current;
+    if (v) {
+      v.currentTime = startSec;
+      v.play().catch(() => {});
+    }
+  }, []);
+
   const handleEditComment = useCallback(
     async (entry: FeedbackEntry) => {
       const newText = window.prompt('Edit comment:', entry.text);
@@ -500,6 +546,18 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     const sec = Math.floor(s % 60);
     return `${m}:${sec < 10 ? '0' : ''}${sec}`;
   };
+
+  const deckTimeline = useMemo(() => parseDeckTimelineFromBody(current?.body), [current?.body]);
+  const activeDeckPrompt = useMemo(
+    () => activeDeckPromptAt(currentTime, deckTimeline),
+    [currentTime, deckTimeline],
+  );
+  const activeDeckIndex = useMemo(() => {
+    if (!activeDeckPrompt) return -1;
+    return deckTimeline.findIndex(
+      (s) => s.startSec === activeDeckPrompt.startSec && s.title === activeDeckPrompt.title,
+    );
+  }, [activeDeckPrompt, deckTimeline]);
 
   useEffect(() => {
     const layout = document.getElementById('viewer-layout');
@@ -841,6 +899,15 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
               <p className="prompter-viewer-no-video">No video</p>
             )}
           </div>
+          {activeDeckPrompt && deckTimeline.length > 0 && (
+            <div className="prompter-viewer-now-playing prompter-viewer-now-playing-below">
+              <span>
+                <strong>{formatTime(Math.floor(activeDeckPrompt.startSec))}</strong>
+                {' — '}
+              </span>
+              <span dangerouslySetInnerHTML={{ __html: activeDeckPrompt.title || '—' }} />
+            </div>
+          )}
           {activeFeedback.length > 0 && (
             <div className="prompter-viewer-now-playing prompter-viewer-now-playing-below">
               {activeFeedback.map((f) => (
@@ -868,6 +935,33 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
           className="prompter-viewer-sidebar prompter-viewer-sidebar-right"
           id="viewer-sidebar-right"
         >
+          {deckTimeline.length > 0 && (
+            <>
+              <div className="prompter-viewer-feedback-title">Prompt cards</div>
+              <ul className="prompter-viewer-feedback-list">
+                {deckTimeline.map((seg, i) => (
+                  <li
+                    key={`deck-${i}-${seg.startSec}`}
+                    role="button"
+                    tabIndex={0}
+                    className={i === activeDeckIndex ? 'active' : ''}
+                    onClick={() => handleDeckTimelineClick(seg.startSec)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleDeckTimelineClick(seg.startSec)}
+                  >
+                    <div className="prompter-viewer-feedback-item">
+                      <div className="prompter-viewer-feedback-content">
+                        <div className="prompter-viewer-feedback-time">{formatTime(Math.floor(seg.startSec))}</div>
+                        <div
+                          className="prompter-viewer-feedback-text"
+                          dangerouslySetInnerHTML={{ __html: seg.title || '—' }}
+                        />
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
           <div className="prompter-viewer-feedback-title">Feedback</div>
           <ul className="prompter-viewer-feedback-list">
             {feedbackEntries.length === 0 && (

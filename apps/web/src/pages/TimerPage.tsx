@@ -85,6 +85,9 @@ export default function TimerPage({ context }: TimerPageProps) {
   const chunksRef = useRef<Blob[]>([]);
   const submitOnStopRef = useRef(false);
   const pendingPromptRef = useRef('');
+  /** MediaRecorder `onstart` time; used to mark deck card boundaries in the real recording timeline. */
+  const recordStartPerfRef = useRef(0);
+  const deckBoundaryListRef = useRef<Array<{ title: string; startSec: number }>>([]);
   const autoFinishFiredRef = useRef(false);
   /** Prevents double-handling when per-card timer hits 0 (React strict / re-renders). */
   const deckZeroHandledForIndexRef = useRef<number>(-1);
@@ -109,11 +112,16 @@ export default function TimerPage({ context }: TimerPageProps) {
   }, []);
 
   const doSubmit = useCallback(
-    async (promptSnapshot: string, blob: Blob | null) => {
+    async (
+      promptSnapshot: string,
+      blob: Blob | null,
+      deckTimeline?: promptApi.DeckTimelineEntry[],
+    ) => {
       console.log('[TimerPage:doSubmit] ENTER', {
         hasBlob: !!blob,
         blobSize: blob?.size,
         promptLength: promptSnapshot?.length,
+        deckTimelineCount: deckTimeline?.length ?? 0,
         messageType: context?.messageType,
       });
       setSubmitError(null);
@@ -166,7 +174,7 @@ export default function TimerPage({ context }: TimerPageProps) {
           lastEndpoint = 'POST /api/prompt/submit';
           console.log('[TimerPage:doSubmit] Step 2b: submitPrompt (body to Canvas)');
           setLastFunction('POST /api/prompt/submit');
-          await promptApi.submitPrompt(promptSnapshot, effectiveAssignmentId);
+          await promptApi.submitPrompt(promptSnapshot, effectiveAssignmentId, deckTimeline);
           setLastApiResult('POST /api/prompt/submit', 200, true);
           console.log('[TimerPage:doSubmit] submitPrompt OK');
         }
@@ -490,6 +498,12 @@ export default function TimerPage({ context }: TimerPageProps) {
         toIndex: nextPrompt,
         totalCards: deckPrompts.length,
       });
+      const elapsed = (performance.now() - recordStartPerfRef.current) / 1000;
+      const title = deckPrompts[nextPrompt]?.title ?? '';
+      deckBoundaryListRef.current.push({
+        title,
+        startSec: Math.round(elapsed * 1000) / 1000,
+      });
       setPromptIndex(nextPrompt);
       // Avoid a frame where index advanced but seconds stayed 0 (would re-trigger this effect).
       setRecordSecondsLeft(recordSecondsForDeckCard(deckPrompts[nextPrompt]));
@@ -508,7 +522,7 @@ export default function TimerPage({ context }: TimerPageProps) {
     recording,
     deckMode,
     promptIndex,
-    deckPrompts.length,
+    deckPrompts,
     finishAndSubmit,
     appendDeckDebugLog,
   ]);
@@ -525,6 +539,13 @@ export default function TimerPage({ context }: TimerPageProps) {
     const stream = streamRef.current;
     chunksRef.current = [];
     const recorder = new MediaRecorder(stream);
+    recorder.onstart = () => {
+      recordStartPerfRef.current = performance.now();
+      deckBoundaryListRef.current = [];
+      if (deckPrompts.length > 0) {
+        deckBoundaryListRef.current.push({ title: deckPrompts[0]?.title ?? '', startSec: 0 });
+      }
+    };
     recorder.ondataavailable = (e) => {
       if (e.data.size) chunksRef.current.push(e.data);
     };
@@ -539,14 +560,18 @@ export default function TimerPage({ context }: TimerPageProps) {
       if (submitOnStopRef.current) {
         submitOnStopRef.current = false;
         const promptSnapshot = pendingPromptRef.current.trim();
+        const deckTimeline =
+          deckBoundaryListRef.current.length > 0
+            ? deckBoundaryListRef.current.map((e) => ({ title: e.title, startSec: e.startSec }))
+            : undefined;
         console.log('[TimerPage:recorder.onstop] Calling doSubmit...');
-        doSubmit(promptSnapshot, blob);
+        doSubmit(promptSnapshot, blob, deckTimeline);
       }
     };
     recorder.start();
     recorderRef.current = recorder;
     setRecording(true);
-  }, [phase, doSubmit]);
+  }, [phase, doSubmit, deckPrompts]);
 
   if (!context) {
     return (

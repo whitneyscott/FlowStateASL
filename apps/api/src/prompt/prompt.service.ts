@@ -1864,8 +1864,16 @@ export class PromptService {
     });
   }
 
-  async submit(ctx: LtiContext, promptSnapshotHtml: string): Promise<void> {
-    appendLtiLog('prompt-submit', 'submit ENTER', { assignmentId: ctx.assignmentId, bodyLength: promptSnapshotHtml?.length ?? 0 });
+  async submit(
+    ctx: LtiContext,
+    promptSnapshotHtml: string,
+    deckTimeline?: Array<{ title?: unknown; startSec?: unknown }>,
+  ): Promise<void> {
+    appendLtiLog('prompt-submit', 'submit ENTER', {
+      assignmentId: ctx.assignmentId,
+      bodyLength: promptSnapshotHtml?.length ?? 0,
+      deckTimelineIn: Array.isArray(deckTimeline) ? deckTimeline.length : 0,
+    });
     const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken, ctx);
     if (!token) {
       appendLtiLog('prompt-submit', 'submit FAIL: no token');
@@ -1875,10 +1883,30 @@ export class PromptService {
     }
     const assignmentId = await this.getPrompterAssignmentId(ctx);
     appendLtiLog('prompt-submit', 'submit: got assignmentId', { assignmentId });
-    const bodyString = JSON.stringify({
+    let sanitizedDeckTimeline: Array<{ title: string; startSec: number }> | undefined;
+    if (Array.isArray(deckTimeline) && deckTimeline.length > 0) {
+      const rows = deckTimeline
+        .map((e) => ({
+          title: String(e?.title ?? ''),
+          startSec: Number(e?.startSec),
+        }))
+        .filter((r) => Number.isFinite(r.startSec));
+      if (rows.length > 0) {
+        rows.sort((a, b) => a.startSec - b.startSec);
+        sanitizedDeckTimeline = rows.map((r) => ({
+          title: r.title,
+          startSec: Math.round(r.startSec * 1000) / 1000,
+        }));
+      }
+    }
+    const bodyPayload: Record<string, unknown> = {
       promptSnapshotHtml,
       submittedAt: new Date().toISOString(),
-    });
+    };
+    if (sanitizedDeckTimeline?.length) {
+      bodyPayload.deckTimeline = sanitizedDeckTimeline;
+    }
+    const bodyString = JSON.stringify(bodyPayload);
     const ctxWithToken: LtiContext = { ...ctx, canvasAccessToken: token };
     await this.canvas.writeSubmissionBody(ctxWithToken, assignmentId, bodyString, token);
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
@@ -1954,6 +1982,7 @@ export class PromptService {
 
     appendLtiLog('prompt-submit', 'submit DONE (Canvas body + quiz)', {
       assignmentId,
+      deckTimelineStored: sanitizedDeckTimeline?.length ?? 0,
     });
   }
 

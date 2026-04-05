@@ -150,9 +150,12 @@ export class PromptController {
   @HttpCode(HttpStatus.CREATED)
   async submit(@Req() req: Request, @Body() dto: SubmitPromptDto) {
     const { appendLtiLog } = await import('../common/last-error.store');
-    appendLtiLog('prompt', 'POST /submit received', { bodyLength: dto.promptSnapshotHtml?.length ?? 0 });
+    appendLtiLog('prompt', 'POST /submit received', {
+      bodyLength: dto.promptSnapshotHtml?.length ?? 0,
+      deckTimelineCount: dto.deckTimeline?.length ?? 0,
+    });
     const ctx = this.getCtxWithAssignment(req);
-    await this.prompt.submit(ctx, dto.promptSnapshotHtml);
+    await this.prompt.submit(ctx, dto.promptSnapshotHtml, dto.deckTimeline);
     return { status: 'success' };
   }
 

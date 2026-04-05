@@ -162,6 +162,12 @@ export async function verifyAccess(
   });
 }
 
+/** Deck submissions: prompt card boundaries in seconds from start of recording (actual MediaRecorder timeline). */
+export interface DeckTimelineEntry {
+  title: string;
+  startSec: number;
+}
+
 export async function savePrompt(promptText: string, assignmentId?: string | null): Promise<void> {
   const res = await fetch(withAssignmentId(base + '/save-prompt', assignmentId), apiInit({
     method: 'POST',
@@ -171,11 +177,19 @@ export async function savePrompt(promptText: string, assignmentId?: string | nul
   if (!res.ok) throw new Error(await getErrorMessage(res));
 }
 
-export async function submitPrompt(promptSnapshotHtml: string, assignmentId?: string | null): Promise<void> {
+export async function submitPrompt(
+  promptSnapshotHtml: string,
+  assignmentId?: string | null,
+  deckTimeline?: DeckTimelineEntry[],
+): Promise<void> {
+  const body: Record<string, unknown> = { promptSnapshotHtml };
+  if (deckTimeline?.length) {
+    body.deckTimeline = deckTimeline;
+  }
   const res = await fetch(withAssignmentId(base + '/submit', assignmentId), apiInit({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ promptSnapshotHtml }),
+    body: JSON.stringify(body),
   }));
   if (!res.ok) throw new Error(await getErrorMessage(res));
 }
