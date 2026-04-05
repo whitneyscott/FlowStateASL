@@ -1054,13 +1054,26 @@ export class CanvasService {
     tokenOverride?: string | null,
   ): Promise<Array<Record<string, unknown>>> {
     const base = this.getBaseUrl(domainOverride);
-    const url = `${base}/api/v1/courses/${courseId}/lti_resource_links?per_page=100`;
-    const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
-    if (!res.ok) return [];
-    const raw = (await res.json()) as Array<Record<string, unknown>>;
-    if (!Array.isArray(raw)) return [];
+    const collectAll = async (): Promise<Array<Record<string, unknown>>> => {
+      const out: Array<Record<string, unknown>> = [];
+      let nextUrl: string | null = `${base}/api/v1/courses/${courseId}/lti_resource_links?per_page=100`;
+      let pages = 0;
+      while (nextUrl && pages < 10) {
+        const res = await fetch(nextUrl, { headers: this.getAuthHeaders(tokenOverride) });
+        if (!res.ok) break;
+        const raw = (await res.json()) as Array<Record<string, unknown>>;
+        if (Array.isArray(raw) && raw.length > 0) out.push(...raw);
+        const linkHeader = res.headers.get('link') ?? '';
+        const nextMatch = linkHeader.match(/<([^>]+)>;\s*rel="next"/i);
+        nextUrl = nextMatch?.[1] ?? null;
+        pages += 1;
+      }
+      return out;
+    };
+    const all = await collectAll();
+    if (!Array.isArray(all) || all.length === 0) return [];
     const itemIdNum = Number(moduleItemId);
-    return raw.filter((entry) => {
+    return all.filter((entry) => {
       if (!entry || typeof entry !== 'object') return false;
       const associatedType = String(entry.associated_content_type ?? '');
       const associatedId = Number(entry.associated_content_id ?? NaN);
@@ -1082,18 +1095,31 @@ export class CanvasService {
     const rid = (resourceLinkId ?? '').trim();
     if (!rid) return {};
     const base = this.getBaseUrl(domainOverride);
-    const url = `${base}/api/v1/courses/${courseId}/lti_resource_links?per_page=100`;
-    const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
-    if (!res.ok) return {};
-    const raw = (await res.json()) as Array<Record<string, unknown>>;
-    if (!Array.isArray(raw) || raw.length === 0) return {};
+    const collectAll = async (): Promise<Array<Record<string, unknown>>> => {
+      const out: Array<Record<string, unknown>> = [];
+      let nextUrl: string | null = `${base}/api/v1/courses/${courseId}/lti_resource_links?per_page=100`;
+      let pages = 0;
+      while (nextUrl && pages < 10) {
+        const res = await fetch(nextUrl, { headers: this.getAuthHeaders(tokenOverride) });
+        if (!res.ok) break;
+        const raw = (await res.json()) as Array<Record<string, unknown>>;
+        if (Array.isArray(raw) && raw.length > 0) out.push(...raw);
+        const linkHeader = res.headers.get('link') ?? '';
+        const nextMatch = linkHeader.match(/<([^>]+)>;\s*rel="next"/i);
+        nextUrl = nextMatch?.[1] ?? null;
+        pages += 1;
+      }
+      return out;
+    };
+    const all = await collectAll();
+    if (!Array.isArray(all) || all.length === 0) return {};
 
     const same = (v: unknown): boolean => String(v ?? '').trim() === rid;
     const entry =
-      raw.find((e) => same(e.id)) ??
-      raw.find((e) => same(e.lookup_uuid)) ??
-      raw.find((e) => same(e.resource_link_uuid)) ??
-      raw.find((e) => same(e.resource_link_id));
+      all.find((e) => same(e.id)) ??
+      all.find((e) => same(e.lookup_uuid)) ??
+      all.find((e) => same(e.resource_link_uuid)) ??
+      all.find((e) => same(e.resource_link_id));
     if (!entry) return {};
 
     const matchedField: 'id' | 'lookup_uuid' | 'resource_link_uuid' | 'resource_link_id' =

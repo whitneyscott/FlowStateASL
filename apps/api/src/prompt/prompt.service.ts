@@ -665,6 +665,15 @@ export class PromptService {
     const blob = await this.readPromptManagerSettingsBlob(ctx.courseId, domainOverride, token);
     const resolved = await this.resolveAssignmentIdForContext(ctx, token, domainOverride, blob);
     const assignmentId = resolved.assignmentId ?? '';
+    if (assignmentId && resolved.source === 'resource_link_api') {
+      await this.rememberResourceLinkAssignmentMapping(
+        ctx.courseId,
+        ctx.resourceLinkId,
+        assignmentId,
+        domainOverride,
+        token,
+      );
+    }
     appendLtiLog('prompt', 'getConfig: assignment resolution', {
       source: resolved.source,
       assignmentId: assignmentId || '(none)',
