@@ -427,10 +427,28 @@ export class PromptService {
       domainOverride,
       token,
     );
+    appendLtiLog('prompt-decks', 'readPromptManagerSettingsBlob: findAssignmentByTitle', {
+      courseId,
+      settingsAssignmentId: settingsAssignmentId ?? null,
+    });
     if (settingsAssignmentId) {
       const assignment = await this.canvas.getAssignment(courseId, settingsAssignmentId, domainOverride, token);
+      appendLtiLog('prompt-decks', 'readPromptManagerSettingsBlob: getAssignment', {
+        courseId,
+        settingsAssignmentId,
+        found: !!assignment,
+        hasDescription: Boolean((assignment?.description ?? '').trim()),
+      });
       const raw = assignment?.description?.trim() ?? '';
       const blob = extractJsonBlob(raw);
+      const configCount =
+        blob?.configs && typeof blob.configs === 'object' ? Object.keys(blob.configs).length : 0;
+      appendLtiLog('prompt-decks', 'readPromptManagerSettingsBlob: extractJsonBlob', {
+        courseId,
+        source: 'assignment_description',
+        parsed: !!blob,
+        configCount,
+      });
       if (blob) return blob;
     }
     const ann = await this.canvas.findSettingsAnnouncementByTitle(
@@ -439,8 +457,22 @@ export class PromptService {
       token,
       domainOverride,
     );
+    appendLtiLog('prompt-decks', 'readPromptManagerSettingsBlob: announcement fallback', {
+      courseId,
+      announcementFound: !!ann,
+      hasMessage: Boolean((ann?.message ?? '').trim()),
+    });
     if (ann?.message) {
-      return extractJsonBlob(ann.message);
+      const annBlob = extractJsonBlob(ann.message);
+      const annConfigCount =
+        annBlob?.configs && typeof annBlob.configs === 'object' ? Object.keys(annBlob.configs).length : 0;
+      appendLtiLog('prompt-decks', 'readPromptManagerSettingsBlob: extractJsonBlob', {
+        courseId,
+        source: 'announcement',
+        parsed: !!annBlob,
+        configCount: annConfigCount,
+      });
+      return annBlob;
     }
     return null;
   }
