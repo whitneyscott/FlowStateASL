@@ -1,8 +1,12 @@
 export interface LtiContext {
   courseId: string;
   assignmentId: string;
+  /** LTI subject (`sub` in 1.3) — opaque; not valid for Canvas REST paths like /submissions/:user_id/files. */
   userId: string;
-  /** Canvas numeric user ID from custom user_id ($Canvas.user.id). Use for Canvas API submission GET. */
+  /**
+   * Numeric Canvas user id from JWT custom `user_id` when the tool declares e.g. user_id=$Canvas.user.id.
+   * If unset, API code must not fall back to `userId` for Canvas file/submission URLs — use OAuth /users/self or fix the tool config.
+   */
   canvasUserId?: string;
   resourceLinkId: string;
   moduleId: string;

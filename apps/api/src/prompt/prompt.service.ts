@@ -36,6 +36,11 @@ const PROMPT_LEDGER_ASSIGNMENT_TITLE = 'ASL Express Prompt Ledger';
 const DECK_DEFAULT_TOTAL_SECONDS_UNKNOWN = 4;
 const DECK_KNOWN_VIDEO_EXTRA_SECONDS = 1;
 
+/** Canvas submission and file-upload API paths require a numeric user id, not LTI `sub` (opaque). */
+function isCanvasNumericUserId(id: string): boolean {
+  return id.length > 0 && /^\d+$/.test(id);
+}
+
 interface PromptManagerSettingsBlob {
   v?: number;
   configs?: Record<string, PromptConfigJson>;
@@ -2000,11 +2005,45 @@ export class PromptService {
       );
     }
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
-    const studentUserId = ((ctx.canvasUserId ?? '').trim() || ctx.userId).trim();
+    const oauth = ctx.canvasAccessToken?.trim() || '';
+    const usingStudentOAuth = !!oauth && token === oauth;
+    const selfNumeric = usingStudentOAuth
+      ? await this.canvas.getCurrentCanvasUserId(domainOverride, token)
+      : null;
+    const customId = (ctx.canvasUserId ?? '').trim();
+    const ltiSub = (ctx.userId ?? '').trim();
+
+    let studentUserId: string | undefined;
+    let studentIdSource: string | undefined;
+    if (usingStudentOAuth && selfNumeric && isCanvasNumericUserId(selfNumeric)) {
+      studentUserId = selfNumeric;
+      studentIdSource = 'users/self';
+    } else if (isCanvasNumericUserId(customId)) {
+      studentUserId = customId;
+      studentIdSource = 'lti.custom.user_id';
+    } else if (isCanvasNumericUserId(ltiSub)) {
+      studentUserId = ltiSub;
+      studentIdSource = 'lti.sub';
+    }
+
+    if (!studentUserId) {
+      appendLtiLog('prompt-upload', 'uploadVideo FAIL: no numeric Canvas user id for submission file path', {
+        usingStudentOAuth,
+        selfNumeric: selfNumeric ?? '(none)',
+        canvasUserId: ctx.canvasUserId ?? '(none)',
+        ltiSub: ltiSub || '(none)',
+        hint: 'Add LTI 1.3 Custom Field user_id=$Canvas.user.id (→ custom.user_id), or use student Canvas OAuth so /api/v1/users/self resolves.',
+      });
+      throw new Error(
+        'Canvas file upload API requires a numeric Canvas user id in the URL. The launch is using an opaque LTI user id. Fix: add Custom Field user_id = $Canvas.user.id on the LTI tool (JWT custom.user_id), or complete Canvas OAuth as the student so we can read id from /api/v1/users/self.',
+      );
+    }
+
     const assignmentId = await this.getPrompterAssignmentId(ctx);
     appendLtiLog('prompt-upload', 'uploadVideo: initiateSubmissionFileUploadForUser', {
       assignmentId,
       studentUserId,
+      studentIdSource,
     });
     const { uploadUrl, uploadParams } = await this.canvas.initiateSubmissionFileUploadForUser(
       ctx.courseId,
