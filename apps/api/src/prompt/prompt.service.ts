@@ -2046,7 +2046,7 @@ export class PromptService {
       note:
         tokenHolderNumeric != null &&
         String(tokenHolderNumeric).trim() !== String(studentUserId).trim()
-          ? 'Token holder differs from target student id; using direct student submission endpoints (no as_user_id).'
+          ? 'Token holder differs from target student id; this flow requires as_user_id permission on submit.'
           : '(n/a)',
     });
 
@@ -2070,7 +2070,7 @@ export class PromptService {
     const { fileId } = await this.canvas.uploadFileToCanvas(uploadUrl, uploadParams, buffer, {
       tokenOverride: token,
     });
-    appendLtiLog('prompt-upload', 'uploadVideo: attachFileToSubmission (no as_user_id)', {
+    appendLtiLog('prompt-upload', 'uploadVideo: attachFileToSubmission (PHP parity)', {
       fileId,
       assignmentId,
       studentUserId,

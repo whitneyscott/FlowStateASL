@@ -314,8 +314,8 @@ export class CanvasService {
   }
 
   /**
-   * Submit an uploaded file using an online_upload submission payload.
-   * Uses POST /submissions with submission_type + file_ids (no as_user_id).
+   * Attach uploaded file to an existing student submission row (PHP parity).
+   * Uses PUT /submissions/:user_id with submission[file_ids].
    */
   async attachFileToSubmission(
     courseId: string,
@@ -327,15 +327,14 @@ export class CanvasService {
   ): Promise<void> {
     appendLtiLog('canvas', 'attachFileToSubmission', { courseId, assignmentId, userId, fileId });
     const base = this.getBaseUrl(domainOverride);
-    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions`;
+    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}`;
     const body = {
       submission: {
-        submission_type: 'online_upload',
         file_ids: [Number(fileId)],
       },
     };
     const res = await fetch(url, {
-      method: 'POST',
+      method: 'PUT',
       headers: this.getAuthHeaders(tokenOverride),
       body: JSON.stringify(body),
     });
@@ -343,7 +342,7 @@ export class CanvasService {
       const text = await res.text();
       appendLtiLog('canvas', 'attachFileToSubmission FAIL', {
         status: res.status,
-        requestPath: `/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions`,
+        requestPath: `/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}`,
         text: text.slice(0, 800),
       });
       throw new Error(`Canvas attach file to submission failed: ${res.status} ${text}`);
@@ -2303,19 +2302,20 @@ export class CanvasService {
       bodyLength: bodyContent?.length ?? 0,
       studentCanvasId,
       tokenUserId: tokenUserId ?? '(unknown)',
-      writeMode: 'targeted_put_submission_body',
+      writeMode: 'submit_with_as_user_id',
       submission_types: types ?? '(unknown)',
       tokenPreview: token ? `${token.slice(0, 4)}...${token.slice(-4)}` : 'MISSING',
     });
-    await this.putSubmissionBody(
+    await this.createSubmissionWithBody(
       ctx.courseId,
       assignmentId,
       studentCanvasId,
       bodyContent,
       domainOverride,
       token,
+      true,
     );
-    appendLtiLog('canvas', 'writeSubmissionBody: targeted PUT succeeded', {
+    appendLtiLog('canvas', 'writeSubmissionBody: as_user_id POST succeeded', {
       studentCanvasId,
       assignmentId,
     });
