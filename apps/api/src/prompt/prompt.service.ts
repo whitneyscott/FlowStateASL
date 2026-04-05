@@ -427,26 +427,26 @@ export class PromptService {
       domainOverride,
       token,
     );
-    appendLtiLog('prompt-decks', 'readPromptManagerSettingsBlob: findAssignmentByTitle', {
+    appendLtiLog('prompt-decks', 'readPromptManagerSettingsBlob: after findAssignmentByTitle', {
       courseId,
       settingsAssignmentId: settingsAssignmentId ?? null,
     });
     if (settingsAssignmentId) {
       const assignment = await this.canvas.getAssignment(courseId, settingsAssignmentId, domainOverride, token);
-      appendLtiLog('prompt-decks', 'readPromptManagerSettingsBlob: getAssignment', {
+      appendLtiLog('prompt-decks', 'readPromptManagerSettingsBlob: after getAssignment', {
         courseId,
         settingsAssignmentId,
-        found: !!assignment,
-        hasDescription: Boolean((assignment?.description ?? '').trim()),
+        assignmentFound: !!assignment,
+        descriptionNonEmpty: Boolean((assignment?.description ?? '').trim()),
       });
       const raw = assignment?.description?.trim() ?? '';
       const blob = extractJsonBlob(raw);
       const configCount =
         blob?.configs && typeof blob.configs === 'object' ? Object.keys(blob.configs).length : 0;
-      appendLtiLog('prompt-decks', 'readPromptManagerSettingsBlob: extractJsonBlob', {
+      appendLtiLog('prompt-decks', 'readPromptManagerSettingsBlob: after extractJsonBlob (assignment description)', {
         courseId,
         source: 'assignment_description',
-        parsed: !!blob,
+        blobParsed: !!blob,
         configCount,
       });
       if (blob) return blob;
@@ -457,7 +457,7 @@ export class PromptService {
       token,
       domainOverride,
     );
-    appendLtiLog('prompt-decks', 'readPromptManagerSettingsBlob: announcement fallback', {
+    appendLtiLog('prompt-decks', 'readPromptManagerSettingsBlob: after findSettingsAnnouncementByTitle', {
       courseId,
       announcementFound: !!ann,
       hasMessage: Boolean((ann?.message ?? '').trim()),
@@ -466,10 +466,10 @@ export class PromptService {
       const annBlob = extractJsonBlob(ann.message);
       const annConfigCount =
         annBlob?.configs && typeof annBlob.configs === 'object' ? Object.keys(annBlob.configs).length : 0;
-      appendLtiLog('prompt-decks', 'readPromptManagerSettingsBlob: extractJsonBlob', {
+      appendLtiLog('prompt-decks', 'readPromptManagerSettingsBlob: after extractJsonBlob (announcement)', {
         courseId,
         source: 'announcement',
-        parsed: !!annBlob,
+        blobParsed: !!annBlob,
         configCount: annConfigCount,
       });
       return annBlob;
