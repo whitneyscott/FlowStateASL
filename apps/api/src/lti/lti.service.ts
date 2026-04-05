@@ -79,11 +79,16 @@ export class LtiService {
       body.custom_assignment_id ??
       '',
     );
-    const userId =
-      body.custom_canvas_user_id ??
-      body.user_id ??
-      body.lis_person_sourcedid ??
-      '';
+    // Match LTI 1.3: userId = stable LTI principal; canvasUserId = numeric $Canvas.user.id when sent.
+    // If we only put custom_canvas_user_id into userId, uploads work — but when Canvas sends both
+    // user_id (opaque) and custom_canvas_user_id (numeric), we must keep both (upload reads canvasUserId).
+    const ltiPrincipal = (body.user_id ?? body.lis_person_sourcedid ?? '').toString().trim();
+    const customCanvasUserResolved = resolveLtiContextValue(body.custom_canvas_user_id);
+    const canvasUserId =
+      customCanvasUserResolved && /^\d+$/.test(customCanvasUserResolved)
+        ? customCanvasUserResolved
+        : undefined;
+    const userId = ltiPrincipal || customCanvasUserResolved || '';
     const resourceLinkId =
       (body.resource_link_id ?? body.custom_resource_link_id ?? body.custom_custom_resource_link_id ?? '').trim();
     const moduleId = resolveLtiContextValue(
@@ -108,6 +113,7 @@ export class LtiService {
       courseId,
       assignmentId,
       userId,
+      canvasUserId,
       resourceLinkId,
       moduleId,
       toolType: 'prompter',

@@ -16,14 +16,35 @@
             <lticm:property name="text">ASLxpr Prompter</lticm:property>
             <lticm:property name="visibility">admins,teachers</lticm:property>
             <lticm:property name="selection_directive">force_new</lticm:property>
+            <lticm:options name="custom_fields">
+                <lticm:property name="custom_canvas_user_id">$Canvas.user.id</lticm:property>
+                <lticm:property name="custom_module_id">$Canvas.module.id</lticm:property>
+                <lticm:property name="custom_canvas_assignment_id">$Canvas.assignment.id</lticm:property>
+                <lticm:property name="custom_canvas_api_base_url">$Canvas.api.baseUrl</lticm:property>
+                <lticm:property name="custom_canvas_domain">$Canvas.api.domain</lticm:property>
+            </lticm:options>
         </lticm:options>
         
         <lticm:options name="homework_submission">
             <lticm:property name="text">ASLxpr Assessment</lticm:property>
+            <lticm:options name="custom_fields">
+                <lticm:property name="custom_canvas_user_id">$Canvas.user.id</lticm:property>
+                <lticm:property name="custom_module_id">$Canvas.module.id</lticm:property>
+                <lticm:property name="custom_canvas_assignment_id">$Canvas.assignment.id</lticm:property>
+                <lticm:property name="custom_canvas_api_base_url">$Canvas.api.baseUrl</lticm:property>
+                <lticm:property name="custom_canvas_domain">$Canvas.api.domain</lticm:property>
+            </lticm:options>
         </lticm:options>
         
         <lticm:options name="deep_linking">
             <lticm:property name="text">ASLxpr Assessment</lticm:property>
+            <lticm:options name="custom_fields">
+                <lticm:property name="custom_canvas_user_id">$Canvas.user.id</lticm:property>
+                <lticm:property name="custom_module_id">$Canvas.module.id</lticm:property>
+                <lticm:property name="custom_canvas_assignment_id">$Canvas.assignment.id</lticm:property>
+                <lticm:property name="custom_canvas_api_base_url">$Canvas.api.baseUrl</lticm:property>
+                <lticm:property name="custom_canvas_domain">$Canvas.api.domain</lticm:property>
+            </lticm:options>
         </lticm:options>
     </blti:extensions>
     
