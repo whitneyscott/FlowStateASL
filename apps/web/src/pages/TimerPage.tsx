@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { NavLink } from 'react-router-dom';
 import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
 import * as promptApi from '../api/prompt.api';
@@ -6,6 +7,22 @@ import { ManualTokenModal } from '../components/ManualTokenModal';
 import { resolveLtiContextValue } from '../utils/lti-context';
 import { nextDeckIndexAfterAdvance } from '../utils/deck-advance';
 import './PrompterPage.css';
+
+const TEACHER_ROLE_PATTERNS = [
+  'instructor',
+  'administrator',
+  'faculty',
+  'teacher',
+  'staff',
+  'contentdeveloper',
+  'teachingassistant',
+  'ta',
+];
+
+function isPrompterTeacher(roles: string | undefined): boolean {
+  if (!roles || typeof roles !== 'string') return false;
+  return TEACHER_ROLE_PATTERNS.some((p) => roles.toLowerCase().includes(p));
+}
 
 interface TimerPageProps {
   context: LtiContext | null;
@@ -40,7 +57,9 @@ export default function TimerPage({ context }: TimerPageProps) {
   const { setLastFunction, setLastApiResult, setLastApiError } = useDebug();
   const [config, setConfig] = useState<promptApi.PromptConfig | null>(null);
   const [loading, setLoading] = useState(true);
-  const [phase, setPhase] = useState<'access' | 'warmup' | 'preflight' | 'record' | 'upload' | 'done'>('access');
+  const [phase, setPhase] = useState<
+    'access' | 'warmup' | 'getReady' | 'preflight' | 'record' | 'upload' | 'done'
+  >('access');
   const [accessCode, setAccessCode] = useState('');
   const [accessError, setAccessError] = useState<string | null>(null);
   const [blocked, setBlocked] = useState(false);
@@ -55,6 +74,10 @@ export default function TimerPage({ context }: TimerPageProps) {
   
   // Deck mode state
   const [deckPrompts, setDeckPrompts] = useState<DeckPromptItem[]>([]);
+  /** True when assignment is configured for deck prompts (used before deck list finishes loading). */
+  const [studentDeckFlow, setStudentDeckFlow] = useState(false);
+  /** 3 → 2 → 1 → record (deck flow only). */
+  const [getReadyTick, setGetReadyTick] = useState(3);
   
   const streamRef = useRef<MediaStream | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -73,6 +96,7 @@ export default function TimerPage({ context }: TimerPageProps) {
     params.get('assignment_id')?.trim() ??
     '';
   const effectiveAssignmentId = assignmentId || urlAssignmentId || null;
+  const teacherViewingTimer = context ? isPrompterTeacher(context.roles) : false;
 
   const appendDeckDebugLog = useCallback((message: string, extra?: Record<string, unknown>) => {
     const line = extra ? `${message} ${JSON.stringify(extra)}` : message;
@@ -238,7 +262,12 @@ export default function TimerPage({ context }: TimerPageProps) {
         promptMode: data?.promptMode ?? '(none)',
         hasVideoPromptConfig: !!data?.videoPromptConfig,
       });
-      
+
+      const isDeckAssignment =
+        data?.promptMode === 'decks' &&
+        (data.videoPromptConfig?.selectedDecks?.length ?? 0) > 0;
+      setStudentDeckFlow(!!isDeckAssignment);
+
       // If deck mode, fetch the prompt list
       if (data?.promptMode === 'decks' && data?.videoPromptConfig?.selectedDecks && data.videoPromptConfig.selectedDecks.length > 0) {
         const rawTotal = Number(data.videoPromptConfig.totalCards);
@@ -312,10 +341,14 @@ export default function TimerPage({ context }: TimerPageProps) {
           selectedDeckCount: data?.videoPromptConfig?.selectedDecks?.length ?? 0,
         });
       }
-      
+
       if (!data?.accessCode?.trim()) {
-        setPhase('warmup');
-        setSecondsLeft((data?.minutes ?? 5) * 60);
+        if (isDeckAssignment) {
+          setPhase('preflight');
+        } else {
+          setPhase('warmup');
+          setSecondsLeft((data?.minutes ?? 5) * 60);
+        }
       }
     } catch (e) {
       if (e instanceof promptApi.NeedsManualTokenError) {
@@ -326,6 +359,7 @@ export default function TimerPage({ context }: TimerPageProps) {
         error: String(e),
       });
       setConfig(null);
+      setStudentDeckFlow(false);
     } finally {
       setLoading(false);
     }
@@ -365,6 +399,16 @@ export default function TimerPage({ context }: TimerPageProps) {
     setPhase('preflight');
   }, [phase, secondsLeft]);
 
+  useEffect(() => {
+    if (phase !== 'getReady') return;
+    if (getReadyTick <= 0) {
+      setPhase('record');
+      return;
+    }
+    const id = window.setTimeout(() => setGetReadyTick((t) => t - 1), 1000);
+    return () => window.clearTimeout(id);
+  }, [phase, getReadyTick]);
+
   const handleVerifyAccess = async () => {
     setAccessError(null);
     try {
@@ -380,15 +424,29 @@ export default function TimerPage({ context }: TimerPageProps) {
         setAccessError('Invalid code.');
         return;
       }
-      setPhase('warmup');
-      setSecondsLeft(minutes * 60);
+      const deckAfterAccess =
+        config?.promptMode === 'decks' && (config.videoPromptConfig?.selectedDecks?.length ?? 0) > 0;
+      if (deckAfterAccess) {
+        setPhase('preflight');
+      } else {
+        setPhase('warmup');
+        setSecondsLeft(minutes * 60);
+      }
     } catch (e) {
       setAccessError(e instanceof Error ? e.message : 'Verify failed');
     }
   };
 
   const startPreflight = () => {
-    if (streamRef.current) setPhase('record');
+    if (!streamRef.current) return;
+    const useDeckCountdown = studentDeckFlow && deckPrompts.length > 0;
+    if (useDeckCountdown) {
+      setPromptIndex(0);
+      setGetReadyTick(3);
+      setPhase('getReady');
+    } else {
+      setPhase('record');
+    }
   };
 
   const stopRecording = useCallback(() => {
@@ -541,6 +599,22 @@ export default function TimerPage({ context }: TimerPageProps) {
     );
   }
 
+  if (teacherViewingTimer) {
+    return (
+      <div className="prompter-page">
+        <div className="prompter-card prompter-teacher-timer-placeholder">
+          <h1 className="prompter-settings-card-title">Student recording view</h1>
+          <p className="prompter-info-message">
+            Teachers set up prompts, deck mode, and warm-up under <strong>Config</strong>. The student timer and recorder are not shown here.
+          </p>
+          <NavLink to="/config" className="prompter-btn-ready prompter-btn-full prompter-btn-lg">
+            Open Prompt Manager (Config)
+          </NavLink>
+        </div>
+      </div>
+    );
+  }
+
   if (phase === 'access' && needsAccessCode) {
     return (
       <div className="prompter-page">
@@ -579,15 +653,23 @@ export default function TimerPage({ context }: TimerPageProps) {
     return (
       <div className="prompter-page">
         <div className="prompter-card">
-          {deckMode ? (
-            <div className="prompter-deck-prompt-shell prompter-deck-prompt-shell--warmup">
-              <div className="prompter-deck-prompt-display">{display}</div>
-            </div>
-          ) : (
-            <div className="prompter-prompt-column prompter-prompt-column-center">{display}</div>
-          )}
+          <div className="prompter-prompt-column prompter-prompt-column-center">{display}</div>
           <div className="prompter-timer-display">{m}:{s < 10 ? '0' : ''}{s}</div>
           <button type="button" onClick={() => setPhase('preflight')} className="prompter-btn-ready">Ready Early</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (phase === 'getReady') {
+    const showNum = Math.max(1, getReadyTick);
+    return (
+      <div className="prompter-page">
+        <div className="prompter-card prompter-get-ready-card">
+          <p className="prompter-get-ready-heading">Get Ready!</p>
+          <div className="prompter-get-ready-count" aria-live="polite">
+            {getReadyTick > 0 ? showNum : ''}
+          </div>
         </div>
       </div>
     );
@@ -612,9 +694,17 @@ export default function TimerPage({ context }: TimerPageProps) {
             type="button"
             onClick={startPreflight}
             className="prompter-btn-ready"
-            disabled={!preflightReady || !!preflightError}
+            disabled={
+              !preflightReady ||
+              !!preflightError ||
+              (studentDeckFlow && deckPrompts.length === 0)
+            }
           >
-            Everything Looks Good - Start
+            {studentDeckFlow && deckPrompts.length === 0
+              ? 'Loading prompts…'
+              : studentDeckFlow
+                ? 'Continue'
+                : 'Everything Looks Good - Start'}
           </button>
         </div>
       </div>

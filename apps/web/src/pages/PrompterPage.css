@@ -202,6 +202,37 @@
   }
 }
 
+.prompter-teacher-timer-placeholder {
+  max-width: 520px;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.prompter-get-ready-card {
+  min-height: 280px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 32px 24px;
+}
+
+.prompter-get-ready-heading {
+  margin: 0 0 24px;
+  font-size: clamp(1.5rem, 4vw, 2rem);
+  font-weight: 700;
+  color: #1a1a1a;
+}
+
+.prompter-get-ready-count {
+  font-size: clamp(4rem, 18vw, 7rem);
+  font-weight: 800;
+  line-height: 1;
+  color: var(--prompter-canvas-blue, #0374b5);
+  font-variant-numeric: tabular-nums;
+}
+
 .prompter-record-layout {
   display: flex;
   gap: 20px;

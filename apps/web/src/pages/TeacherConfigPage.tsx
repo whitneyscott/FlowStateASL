@@ -925,11 +925,20 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
             ) : showSettings && (
               <div className="prompter-settings-config-form">
                 <div className="prompter-settings-two-col">
-                  <div className="prompter-settings-col-assignment">
-                    <div className="prompter-settings-section">
-                      <label className="prompter-settings-label"><strong>Warm Up Minutes:</strong></label>
-                      <input type="number" min={1} max={60} step={0.1} value={minutes} onChange={(e) => setMinutes(Number(e.target.value) || 5)} className="prompter-settings-input prompter-settings-input-narrow" />
-                    </div>
+                    <div className="prompter-settings-col-assignment">
+                    {promptMode === 'text' ? (
+                      <div className="prompter-settings-section">
+                        <label className="prompter-settings-label"><strong>Warm Up Minutes:</strong></label>
+                        <input type="number" min={1} max={60} step={0.1} value={minutes} onChange={(e) => setMinutes(Number(e.target.value) || 5)} className="prompter-settings-input prompter-settings-input-narrow" />
+                        <p className="prompter-hint">Shown to students before recording (text prompt mode only).</p>
+                      </div>
+                    ) : (
+                      <div className="prompter-settings-section">
+                        <p className="prompter-hint">
+                          <strong>Deck mode:</strong> students skip the long warm-up. After camera setup they see a short &quot;Get Ready!&quot; 3-2-1 countdown, then recording starts with the first prompt. Timing per card comes from each Sprout video.
+                        </p>
+                      </div>
+                    )}
                     <div className="prompter-settings-section prompter-settings-assignment-block">
                       <label className="prompter-settings-label"><strong>Assignment Settings:</strong></label>
                       <div className="prompter-settings-field">
