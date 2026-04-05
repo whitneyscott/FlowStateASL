@@ -951,6 +951,31 @@ export class CanvasService {
     }
   }
 
+  /**
+   * Set module item visibility for students. Canvas documents `module_item[published]` on PUT update;
+   * some instances also honor it on create — callers may set both for reliability.
+   */
+  async setModuleItemPublished(
+    courseId: string,
+    moduleId: string,
+    itemId: number | string,
+    published: boolean,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<void> {
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/modules/${moduleId}/items/${itemId}`;
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: this.getAuthHeaders(tokenOverride),
+      body: JSON.stringify({ module_item: { published } }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Canvas set module item published failed: ${res.status} ${text}`);
+    }
+  }
+
   async prunePrompterExternalToolModuleItems(
     courseId: string,
     moduleId: string,
@@ -1692,6 +1717,18 @@ export class CanvasService {
         sessionlessLaunchUrl: String(sessionless?.url ?? '') || null,
         ltiResourceLinksLookup: 'skipped_for_save_latency',
       });
+      try {
+        await this.setModuleItemPublished(courseId, moduleId, existing.id, true, domainOverride, tokenOverride);
+        appendLtiLog('canvas', 'syncPrompterLtiModuleItem: ensured published (existing item)', {
+          moduleItemId: existing.id,
+        });
+      } catch (pubErr) {
+        appendLtiLog('canvas', 'syncPrompterLtiModuleItem: publish existing item failed', {
+          moduleItemId: existing.id,
+          error: String(pubErr),
+        });
+        throw pubErr;
+      }
       return {
         created: false,
         skippedReason: 'already_linked',
@@ -1715,6 +1752,7 @@ export class CanvasService {
       position,
       title,
       new_tab: true,
+      published: true,
     };
     if (payloadVariant === 'content_id_plus_external_url') {
       moduleItemPayload.external_url = externalUrl;
@@ -1748,6 +1786,20 @@ export class CanvasService {
       throw new Error(`Canvas add ExternalTool module item failed: ${res.status} ${text}`);
     }
     const created = (await res.json()) as { id?: number; [key: string]: unknown };
+    if (created?.id != null) {
+      try {
+        await this.setModuleItemPublished(courseId, moduleId, created.id, true, domainOverride, tokenOverride);
+        appendLtiLog('canvas', 'syncPrompterLtiModuleItem: ensured published (after create)', {
+          moduleItemId: created.id,
+        });
+      } catch (pubErr) {
+        appendLtiLog('canvas', 'syncPrompterLtiModuleItem: publish after create failed', {
+          moduleItemId: created.id,
+          error: String(pubErr),
+        });
+        throw pubErr;
+      }
+    }
     const externalTool = await this.getExternalTool(courseId, toolIdNum, domainOverride, tokenOverride);
     const createdDetails = created?.id
       ? await this.getModuleItemDetails(courseId, moduleId, created.id, domainOverride, tokenOverride)
