@@ -3,6 +3,7 @@ import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
 import { resolveLtiContextValue } from '../utils/lti-context';
 import { computeDeckHubFilters } from '../utils/deckHierarchyFilters';
+import { isLastDeckCard, nextDeckIndexAfterAdvance } from '../utils/deck-advance';
 import { TeacherSettings } from '../components/TeacherSettings';
 import { ManualTokenModal } from '../components/ManualTokenModal';
 import './FlashcardsPage.css';
@@ -398,10 +399,10 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
         }
       }
 
-      if (currentIndex + 1 >= items.length) {
+      if (isLastDeckCard(currentIndex, items.length)) {
         setView('results');
       } else {
-        setCurrentIndex((i) => i + 1);
+        setCurrentIndex((i) => nextDeckIndexAfterAdvance(i, items.length) ?? i);
         setShowingAnswer(false);
       }
     },
@@ -1143,7 +1144,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                           className="flashcards-btn flashcards-btn-secondary"
                           onClick={() => {
                             setScreeningOverlay(null);
-                            setCurrentIndex((i) => i + 1);
+                            setCurrentIndex((i) => nextDeckIndexAfterAdvance(i, items.length) ?? i);
                             setShowingAnswer(false);
                           }}
                         >
@@ -1159,7 +1160,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                             setMode('tutorial');
                             setStreak(0);
                             setScreeningOverlay(null);
-                            setCurrentIndex((i) => i + 1);
+                            setCurrentIndex((i) => nextDeckIndexAfterAdvance(i, items.length) ?? i);
                             setShowingAnswer(false);
                           }}
                         >
@@ -1171,7 +1172,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
                           onClick={() => {
                             setBenchmarkNagDismissed(true);
                             setScreeningOverlay(null);
-                            setCurrentIndex((i) => i + 1);
+                            setCurrentIndex((i) => nextDeckIndexAfterAdvance(i, items.length) ?? i);
                             setShowingAnswer(false);
                           }}
                         >

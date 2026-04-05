@@ -4,6 +4,7 @@ import { useDebug } from '../contexts/DebugContext';
 import * as promptApi from '../api/prompt.api';
 import { ManualTokenModal } from '../components/ManualTokenModal';
 import { resolveLtiContextValue } from '../utils/lti-context';
+import { nextDeckIndexAfterAdvance } from '../utils/deck-advance';
 import './PrompterPage.css';
 
 interface TimerPageProps {
@@ -430,16 +431,16 @@ export default function TimerPage({ context }: TimerPageProps) {
     if (deckZeroHandledForIndexRef.current === promptIndex) return;
     deckZeroHandledForIndexRef.current = promptIndex;
 
-    if (deckMode && promptIndex < deckPrompts.length - 1) {
-      const next = promptIndex + 1;
+    const nextPrompt = deckMode ? nextDeckIndexAfterAdvance(promptIndex, deckPrompts.length) : undefined;
+    if (nextPrompt !== undefined) {
       appendDeckDebugLog('deck flow: advance card (continuous recording)', {
         fromIndex: promptIndex,
-        toIndex: next,
+        toIndex: nextPrompt,
         totalCards: deckPrompts.length,
       });
-      setPromptIndex(next);
+      setPromptIndex(nextPrompt);
       // Avoid a frame where index advanced but seconds stayed 0 (would re-trigger this effect).
-      setRecordSecondsLeft(recordSecondsForDeckCard(deckPrompts[next]));
+      setRecordSecondsLeft(recordSecondsForDeckCard(deckPrompts[nextPrompt]));
       return;
     }
 
@@ -633,8 +634,7 @@ export default function TimerPage({ context }: TimerPageProps) {
           </div>
           {deckMode && (
             <p className="prompter-info-message prompter-deck-progress-hint">
-              Card {Math.min(promptIndex + 1, deckPrompts.length)} of {deckPrompts.length} — one continuous recording for
-              all prompts
+              Item {promptIndex + 1} of {deckPrompts.length} — one continuous recording for all prompts
             </p>
           )}
           <div className="prompter-record-layout">
