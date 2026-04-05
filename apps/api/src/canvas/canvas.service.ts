@@ -541,6 +541,8 @@ export class CanvasService {
     rubric?: Array<unknown>;
     assignment_group_id?: number;
     allowed_attempts?: number;
+    /** Canvas-allowed submission types, e.g. online_upload, online_text_entry */
+    submission_types?: string[];
   } | null> {
     const base = this.getBaseUrl(domainOverride);
     const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}`;
@@ -556,6 +558,7 @@ export class CanvasService {
       rubric?: Array<unknown>;
       assignment_group_id?: number;
       allowed_attempts?: number;
+      submission_types?: string[];
     };
     return {
       name: data.name,
@@ -564,6 +567,7 @@ export class CanvasService {
       rubric: data.rubric,
       assignment_group_id: data.assignment_group_id,
       allowed_attempts: data.allowed_attempts,
+      submission_types: Array.isArray(data.submission_types) ? data.submission_types : undefined,
     };
   }
 
@@ -2076,6 +2080,20 @@ export class CanvasService {
       );
     }
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
+    const assign = await this.getAssignment(ctx.courseId, assignmentId, domainOverride, token);
+    const types = assign?.submission_types;
+    const allowsOnlineText =
+      !types ||
+      types.length === 0 ||
+      types.some((t) => String(t).toLowerCase() === 'online_text_entry');
+    if (!allowsOnlineText) {
+      appendLtiLog('canvas', 'writeSubmissionBody: skip POST body (assignment disallows online_text_entry)', {
+        assignmentId,
+        submission_types: types ?? [],
+        note: 'Prompt text should be sent via submission comment + file via upload (PHP-style two-step).',
+      });
+      return;
+    }
     const studentCanvasId = ((ctx.canvasUserId ?? '').trim() || ctx.userId).trim();
     const tokenUserId = await this.getCurrentCanvasUserId(domainOverride, token);
     const preferActAs = tokenUserId ? String(tokenUserId) !== String(studentCanvasId) : true;
@@ -2085,6 +2103,7 @@ export class CanvasService {
       studentCanvasId,
       tokenUserId: tokenUserId ?? '(unknown)',
       preferActAs,
+      submission_types: types ?? '(unknown)',
       tokenPreview: token ? `${token.slice(0, 4)}...${token.slice(-4)}` : 'MISSING',
     });
     const postBody = (actAsUser: boolean) =>
