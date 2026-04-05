@@ -2052,6 +2052,23 @@ export class PromptService {
       );
     }
 
+    const tokenHolderNumeric =
+      usingStudentOAuth && selfNumeric
+        ? selfNumeric
+        : await this.canvas.getCurrentCanvasUserId(domainOverride, token);
+    appendLtiLog('prompt-upload', 'uploadVideo: token actor vs submission user', {
+      tokenHolderCanvasId: tokenHolderNumeric ?? '(unknown)',
+      studentUserId,
+      studentIdSource,
+      sameActor:
+        tokenHolderNumeric != null && String(tokenHolderNumeric).trim() === String(studentUserId).trim(),
+      note:
+        tokenHolderNumeric != null &&
+        String(tokenHolderNumeric).trim() !== String(studentUserId).trim()
+          ? 'If submit used teacher token without as_user_id, text lives on token holder; file APIs still target student — verify may show empty attachments on student row.'
+          : '(n/a)',
+    });
+
     const assignmentId = await this.getPrompterAssignmentId(ctx);
     appendLtiLog('prompt-upload', 'uploadVideo: initiateSubmissionFileUploadForUser', {
       assignmentId,
@@ -2088,6 +2105,7 @@ export class PromptService {
       studentUserId,
       domainOverride,
       token,
+      { bridge: true, tag: 'upload-video-verify' },
     );
     const subAny = sub as {
       workflow_state?: string;

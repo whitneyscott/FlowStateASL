@@ -232,7 +232,18 @@ export class CanvasService {
     if (!data.upload_url || !data.upload_params) {
       throw new Error('Canvas did not return upload_url and upload_params');
     }
-    appendLtiLog('canvas', 'initiateSubmissionFileUploadForUser OK');
+    let uploadHost = '(parse-failed)';
+    try {
+      uploadHost = new URL(data.upload_url).host;
+    } catch {
+      /* ignore */
+    }
+    const paramKeys = Object.keys(data.upload_params ?? {}).sort();
+    appendLtiLog('canvas', 'initiateSubmissionFileUploadForUser OK', {
+      uploadHost,
+      uploadParamKeys: paramKeys,
+      hasFilenameParam: paramKeys.some((k) => /filename|name/i.test(k)),
+    });
     return {
       uploadUrl: data.upload_url,
       uploadParams: data.upload_params,
@@ -326,17 +337,33 @@ export class CanvasService {
     });
     if (!res.ok) {
       const text = await res.text();
-      appendLtiLog('canvas', 'attachFileToSubmission FAIL', { status: res.status, text: text.slice(0, 200) });
+      appendLtiLog('canvas', 'attachFileToSubmission FAIL', {
+        status: res.status,
+        requestPath: `/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}`,
+        text: text.slice(0, 800),
+      });
       throw new Error(`Canvas attach file to submission failed: ${res.status} ${text}`);
     }
+    const raw = await res.text();
+    const rawPreview = raw?.trim() ? raw.slice(0, 1800) : '';
+    appendLtiLog('canvas', 'attachFileToSubmission response raw (preview)', {
+      courseId,
+      assignmentId,
+      userId,
+      fileId,
+      length: raw?.length ?? 0,
+      preview: rawPreview || '(empty)',
+    });
     let attachSummary: Record<string, unknown> = {};
     try {
-      const raw = await res.text();
       if (raw?.trim()) {
         const data = JSON.parse(raw) as {
+          id?: number;
+          user_id?: number;
           workflow_state?: string;
           submission_type?: string;
-          attachments?: Array<{ id?: number }>;
+          attempt?: number;
+          attachments?: Array<{ id?: number; display_name?: string }>;
           attachment?: { id?: number };
         };
         const attIds = [
@@ -344,17 +371,23 @@ export class CanvasService {
           ...(data.attachment?.id != null ? [data.attachment.id] : []),
         ];
         attachSummary = {
+          responseUserId: data.user_id ?? '(none)',
+          responseSubmissionId: data.id ?? '(none)',
+          attempt: data.attempt ?? '(none)',
           workflow_state: data.workflow_state ?? '(none)',
           submission_type: data.submission_type ?? '(none)',
           attachmentCount: attIds.length,
-          attachmentIds: attIds.slice(0, 5),
+          attachmentIds: attIds.slice(0, 8),
           uploadedFileIdInResponse: attIds.includes(Number(fileId)),
+          attachmentNamesSample: (data.attachments ?? [])
+            .slice(0, 3)
+            .map((a) => ({ id: a.id, name: a.display_name ?? '(no name)' })),
         };
       } else {
         attachSummary = { responseBody: 'empty' };
       }
-    } catch {
-      attachSummary = { parseBody: 'non-json' };
+    } catch (parseErr) {
+      attachSummary = { parseBody: 'non-json', parseError: String(parseErr) };
     }
     appendLtiLog('canvas', 'attachFileToSubmission OK', { courseId, assignmentId, userId, fileId, ...attachSummary });
   }
@@ -2128,15 +2161,36 @@ export class CanvasService {
       throw new Error(`Canvas create submission with body failed: ${res.status} ${responseText}`);
     }
     try {
-      const created = JSON.parse(responseText) as { body?: string; submission_type?: string };
+      const created = JSON.parse(responseText) as {
+        body?: string;
+        submission_type?: string;
+        user_id?: number;
+        id?: number;
+        workflow_state?: string;
+        attempt?: number;
+        attachments?: unknown[];
+      };
       appendLtiLog('canvas', 'createSubmissionWithBody POST response', {
         status: res.status,
+        actAsUserRequested: !!actAsUser,
+        canvasUserIdInResponse: created.user_id ?? '(missing)',
+        submissionRowId: created.id ?? '(missing)',
+        workflow_state: created.workflow_state ?? '(missing)',
         responseHasBody: !!created?.body,
         responseBodyLength: created?.body?.length ?? 0,
-        submission_type: created?.submission_type,
+        submission_type: created.submission_type ?? '(missing)',
+        attachmentCountInResponse: Array.isArray(created.attachments) ? created.attachments.length : 0,
+      });
+      appendLtiLog('canvas', 'createSubmissionWithBody POST response (raw preview)', {
+        actAsUserRequested: !!actAsUser,
+        preview: responseText.slice(0, 1200),
       });
     } catch {
-      appendLtiLog('canvas', 'createSubmissionWithBody POST response', { status: res.status, parseError: true });
+      appendLtiLog('canvas', 'createSubmissionWithBody POST response', {
+        status: res.status,
+        parseError: true,
+        rawPreview: responseText.slice(0, 800),
+      });
     }
   }
 
@@ -2195,8 +2249,10 @@ export class CanvasService {
         token,
         actAsUser,
       );
+    let succeededWithActAs: boolean | undefined;
     try {
       await postBody(preferActAs);
+      succeededWithActAs = preferActAs;
     } catch (firstErr) {
       const msg = String(firstErr);
       const authLike = /401|403|invalid as_user_id/i.test(msg);
@@ -2206,6 +2262,22 @@ export class CanvasService {
         error: msg.slice(0, 120),
       });
       await postBody(!preferActAs);
+      succeededWithActAs = !preferActAs;
+    }
+    if (
+      tokenUserId &&
+      String(tokenUserId) !== String(studentCanvasId) &&
+      succeededWithActAs === false
+    ) {
+      appendLtiLog(
+        'canvas',
+        'writeSubmissionBody WARN: POST succeeded without as_user_id but OAuth/service token belongs to a different Canvas user than the student — Canvas almost certainly stored the text submission on the TOKEN HOLDER, not on studentCanvasId. Video upload still targets the student path; attach/verify may look empty or split across users.',
+        {
+          tokenUserId,
+          studentCanvasId,
+          preferActAs,
+        },
+      );
     }
   }
 
@@ -2238,6 +2310,7 @@ export class CanvasService {
     userId: string,
     domainOverride?: string,
     tokenOverride?: string | null,
+    diagnostics?: { bridge?: boolean; tag?: string },
   ): Promise<{
     body?: string;
     score?: number;
@@ -2245,26 +2318,95 @@ export class CanvasService {
     attempt?: number;
     submitted_at?: string;
     submission_comments?: Array<{ id: number; comment: string }>;
-    attachment?: { url?: string };
-    attachments?: Array<{ url?: string; download_url?: string }>;
+    attachment?: { url?: string; id?: number };
+    attachments?: Array<{ url?: string; download_url?: string; id?: number; display_name?: string }>;
     versioned_attachments?: Array<Array<{ url?: string }>>;
     rubric_assessment?: Record<string, unknown>;
+    user_id?: number;
+    workflow_state?: string;
+    submission_type?: string;
+    id?: number;
   } | null> {
     const base = this.getBaseUrl(domainOverride);
-    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}?include[]=submission_history&include[]=submission_comments&include[]=rubric_assessment`;
+    const includes = ['submission_history', 'submission_comments', 'rubric_assessment'];
+    if (diagnostics?.bridge) includes.push('user');
+    const q = includes.map((i) => `include[]=${encodeURIComponent(i)}`).join('&');
+    const path = `/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}`;
+    const url = `${base}${path}?${q}`;
+    if (diagnostics?.bridge) {
+      appendLtiLog('canvas', 'getSubmissionFull diagnostics: request', {
+        tag: diagnostics.tag ?? 'getSubmissionFull',
+        path,
+        includes,
+      });
+    }
     const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
-    if (!res.ok) return null;
-    return (await res.json()) as {
+    const text = await res.text();
+    if (!res.ok) {
+      if (diagnostics?.bridge) {
+        appendLtiLog('canvas', 'getSubmissionFull diagnostics: non-OK', {
+          tag: diagnostics.tag ?? 'getSubmissionFull',
+          status: res.status,
+          bodyPreview: text.slice(0, 900),
+        });
+      }
+      return null;
+    }
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(text) as Record<string, unknown>;
+    } catch (e) {
+      if (diagnostics?.bridge) {
+        appendLtiLog('canvas', 'getSubmissionFull diagnostics: JSON parse failed', {
+          tag: diagnostics.tag ?? 'getSubmissionFull',
+          error: String(e),
+          textPreview: text.slice(0, 400),
+        });
+      }
+      return null;
+    }
+    if (diagnostics?.bridge) {
+      const atts = parsed.attachments;
+      const attList = Array.isArray(atts) ? atts : [];
+      const ids = attList
+        .map((a) => (a && typeof a === 'object' ? (a as { id?: number }).id : undefined))
+        .filter((id): id is number => id != null);
+      const hist = parsed.submission_history;
+      const histLen = Array.isArray(hist) ? hist.length : 0;
+      const ver = parsed.versioned_attachments;
+      const verLen = Array.isArray(ver) ? ver.length : 0;
+      appendLtiLog('canvas', 'getSubmissionFull diagnostics: parsed summary', {
+        tag: diagnostics.tag ?? 'getSubmissionFull',
+        queriedUserId: userId,
+        responseUserId: parsed.user_id ?? '(missing)',
+        submissionRowId: parsed.id ?? '(missing)',
+        workflow_state: parsed.workflow_state ?? '(missing)',
+        submission_type: parsed.submission_type ?? '(missing)',
+        attempt: parsed.attempt ?? '(missing)',
+        submitted_at: parsed.submitted_at ?? '(missing)',
+        bodyLength: typeof parsed.body === 'string' ? parsed.body.length : 0,
+        attachmentCount: attList.length,
+        attachmentIdsSample: ids.slice(0, 8),
+        submissionHistoryLength: histLen,
+        versionedAttachmentsDepth: verLen,
+        topLevelKeys: Object.keys(parsed).sort().slice(0, 40),
+      });
+    }
+    return parsed as {
       body?: string;
       score?: number;
       grade?: string;
       attempt?: number;
       submitted_at?: string;
       submission_comments?: Array<{ id: number; comment: string }>;
-      attachment?: { url?: string };
-      attachments?: Array<{ url?: string; download_url?: string }>;
+      attachment?: { url?: string; id?: number };
+      attachments?: Array<{ url?: string; download_url?: string; id?: number; display_name?: string }>;
       versioned_attachments?: Array<Array<{ url?: string }>>;
       rubric_assessment?: Record<string, unknown>;
+      user_id?: number;
+      workflow_state?: string;
+      submission_type?: string;
+      id?: number;
     };
   }
 
