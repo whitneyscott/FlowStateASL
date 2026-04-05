@@ -59,8 +59,8 @@ export class PromptController {
   /** Merge assignmentId from query into ctx for teacher endpoints (course_navigation has no assignment). */
   private getCtxWithAssignment(req: Request): LtiContext {
     const ctx = this.getCtx(req);
-    const q = req.query as { assignmentId?: string };
-    const aid = (q?.assignmentId ?? '').toString().trim();
+    const q = req.query as { assignmentId?: string; assignment_id?: string };
+    const aid = (q?.assignmentId ?? q?.assignment_id ?? '').toString().trim();
     if (aid) return { ...ctx, assignmentId: aid };
     return ctx;
   }

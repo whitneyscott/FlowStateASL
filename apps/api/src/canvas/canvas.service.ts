@@ -1068,6 +1068,63 @@ export class CanvasService {
     });
   }
 
+  /** Try to resolve assignmentId from a Canvas LTI resource link id/uuid. */
+  async resolveAssignmentIdForResourceLink(
+    courseId: string,
+    resourceLinkId: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<{
+    assignmentId?: string;
+    source?: 'associated_assignment' | 'canvas_launch_url';
+    matchedField?: 'id' | 'lookup_uuid' | 'resource_link_uuid' | 'resource_link_id';
+  }> {
+    const rid = (resourceLinkId ?? '').trim();
+    if (!rid) return {};
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/lti_resource_links?per_page=100`;
+    const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
+    if (!res.ok) return {};
+    const raw = (await res.json()) as Array<Record<string, unknown>>;
+    if (!Array.isArray(raw) || raw.length === 0) return {};
+
+    const same = (v: unknown): boolean => String(v ?? '').trim() === rid;
+    const entry =
+      raw.find((e) => same(e.id)) ??
+      raw.find((e) => same(e.lookup_uuid)) ??
+      raw.find((e) => same(e.resource_link_uuid)) ??
+      raw.find((e) => same(e.resource_link_id));
+    if (!entry) return {};
+
+    const matchedField: 'id' | 'lookup_uuid' | 'resource_link_uuid' | 'resource_link_id' =
+      same(entry.id)
+        ? 'id'
+        : same(entry.lookup_uuid)
+          ? 'lookup_uuid'
+          : same(entry.resource_link_uuid)
+            ? 'resource_link_uuid'
+            : 'resource_link_id';
+
+    const associatedType = String(entry.associated_content_type ?? '').toLowerCase();
+    const associatedId = String(entry.associated_content_id ?? '').trim();
+    if (associatedType.includes('assignment') && associatedId) {
+      return { assignmentId: associatedId, source: 'associated_assignment', matchedField };
+    }
+
+    const launchUrl = String(entry.canvas_launch_url ?? '').trim();
+    if (launchUrl) {
+      try {
+        const u = new URL(launchUrl, base);
+        const aid = (u.searchParams.get('assignment_id') ?? '').trim();
+        if (aid) return { assignmentId: aid, source: 'canvas_launch_url', matchedField };
+      } catch {
+        const m = launchUrl.match(/assignment_id=(\d{3,})/i);
+        if (m?.[1]) return { assignmentId: m[1], source: 'canvas_launch_url', matchedField };
+      }
+    }
+    return { matchedField };
+  }
+
   /**
    * Course Context External Tool id for the Prompter LTI app (module item content_id).
    * Prefer env CANVAS_PROMPTER_EXTERNAL_TOOL_ID / LTI_PROMPTER_EXTERNAL_TOOL_ID when set;

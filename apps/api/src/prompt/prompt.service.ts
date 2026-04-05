@@ -482,16 +482,87 @@ export class PromptService {
     });
   }
 
+  private extractAssignmentIdFromLisResult(ctx: LtiContext): string | null {
+    const raw = (ctx.lisResultSourcedid ?? '').trim();
+    if (!raw) return null;
+    const patterns = [
+      /assignment[_:=/-](\d{3,})/i,
+      /resource_link_(\d{3,})/i,
+      /\/assignments\/(\d{3,})(?:\/|$)/i,
+      /assignment_id=(\d{3,})/i,
+    ];
+    for (const re of patterns) {
+      const m = raw.match(re);
+      if (m?.[1]) return m[1];
+    }
+    return null;
+  }
+
+  private extractAssignmentIdFromOutcomeUrl(ctx: LtiContext): string | null {
+    const raw = (ctx.lisOutcomeServiceUrl ?? '').trim();
+    if (!raw) return null;
+    const m = raw.match(/\/assignments\/(\d{3,})(?:\/|$)/i);
+    return m?.[1] ?? null;
+  }
+
+  private extractAssignmentIdFromExternalUrl(value: string | undefined): string | null {
+    const raw = (value ?? '').trim();
+    if (!raw) return null;
+    try {
+      const u = new URL(raw, 'https://example.invalid');
+      const aid = (u.searchParams.get('assignment_id') ?? '').trim();
+      if (aid) return aid;
+    } catch {
+      /* fall through */
+    }
+    const m = raw.match(/assignment_id=(\d{3,})/i);
+    return m?.[1] ?? null;
+  }
+
+  private async resolveAssignmentIdFromModuleItems(
+    ctx: LtiContext,
+    token: string,
+    domainOverride: string | undefined,
+  ): Promise<string | null> {
+    const moduleId = (ctx.moduleId ?? '').trim();
+    if (!moduleId) return null;
+    try {
+      const items = await this.canvas.listModuleItems(ctx.courseId, moduleId, domainOverride, token);
+      const matches = items
+        .filter((i) => (i.type ?? '').toLowerCase() === 'externaltool')
+        .map((i) => this.extractAssignmentIdFromExternalUrl(i.external_url))
+        .filter((aid): aid is string => !!aid);
+      const unique = Array.from(new Set(matches));
+      if (unique.length === 1) return unique[0];
+      return null;
+    } catch (err) {
+      appendLtiLog('prompt', 'resolveAssignmentIdFromModuleItems failed', {
+        moduleId,
+        error: String(err),
+      });
+      return null;
+    }
+  }
+
   private resolveAssignmentIdFromBlob(
     ctx: LtiContext,
     blob: PromptManagerSettingsBlob | null,
-  ): { assignmentId: string | null; source: 'ctx' | 'map' | 'module' | 'title' | 'single' | 'none' } {
+  ): {
+    assignmentId: string | null;
+    source: 'ctx' | 'map' | 'lis_result' | 'outcome_url' | 'module' | 'title' | 'single' | 'single_deck' | 'none';
+  } {
     const assignmentIdFromCtx = (ctx.assignmentId ?? '').trim();
     if (assignmentIdFromCtx) return { assignmentId: assignmentIdFromCtx, source: 'ctx' };
 
     const resourceLinkId = (ctx.resourceLinkId ?? '').trim();
     const assignmentIdFromMap = (blob?.resourceLinkAssignmentMap?.[resourceLinkId] ?? '').trim();
     if (assignmentIdFromMap) return { assignmentId: assignmentIdFromMap, source: 'map' };
+
+    const assignmentIdFromLisResult = this.extractAssignmentIdFromLisResult(ctx);
+    if (assignmentIdFromLisResult) return { assignmentId: assignmentIdFromLisResult, source: 'lis_result' };
+
+    const assignmentIdFromOutcomeUrl = this.extractAssignmentIdFromOutcomeUrl(ctx);
+    if (assignmentIdFromOutcomeUrl) return { assignmentId: assignmentIdFromOutcomeUrl, source: 'outcome_url' };
 
     const configs = blob?.configs ?? {};
     const configEntries = Object.entries(configs).filter(([id]) => String(id).trim().length > 0);
@@ -508,8 +579,10 @@ export class PromptService {
 
     const title = (ctx.resourceLinkTitle ?? '').trim();
     const titleMatch = title.match(/^(.+?)\s+(?:—|–|-)\s+Prompter(?:\s*\(.*\))?\s*$/i);
-    const assignmentNameHint = (titleMatch?.[1] ?? '').trim();
-    if (assignmentNameHint) {
+    const assignmentNameHints = [titleMatch?.[1], title]
+      .map((v) => String(v ?? '').trim())
+      .filter(Boolean);
+    for (const assignmentNameHint of assignmentNameHints) {
       const titleMatches = configEntries
         .filter(([, c]) => (c?.assignmentName ?? '').trim() === assignmentNameHint)
         .map(([id]) => id);
@@ -522,6 +595,15 @@ export class PromptService {
       return { assignmentId: configEntries[0][0], source: 'single' };
     }
 
+    // Last-resort heuristic: if exactly one deck-mode config exists, prefer it.
+    // This helps learner launches that omit assignment/module/title fields.
+    const deckOnlyMatches = configEntries
+      .filter(([, c]) => (c?.promptMode ?? 'text') === 'decks')
+      .map(([id]) => id);
+    if (deckOnlyMatches.length === 1) {
+      return { assignmentId: deckOnlyMatches[0], source: 'single_deck' };
+    }
+
     return { assignmentId: null, source: 'none' };
   }
 
@@ -529,9 +611,49 @@ export class PromptService {
     ctx: LtiContext,
     token: string,
     domainOverride: string | undefined,
-  ): Promise<{ assignmentId: string | null; source: 'ctx' | 'map' | 'module' | 'title' | 'single' | 'none' }> {
-    const blob = await this.readPromptManagerSettingsBlob(ctx.courseId, domainOverride, token);
-    return this.resolveAssignmentIdFromBlob(ctx, blob);
+    blobOverride?: PromptManagerSettingsBlob | null,
+  ): Promise<{
+    assignmentId: string | null;
+    source:
+      | 'ctx'
+      | 'map'
+      | 'lis_result'
+      | 'outcome_url'
+      | 'module'
+      | 'title'
+      | 'single'
+      | 'single_deck'
+      | 'resource_link_api'
+      | 'module_item_url'
+      | 'none';
+  }> {
+    const blob =
+      blobOverride !== undefined
+        ? blobOverride
+        : await this.readPromptManagerSettingsBlob(ctx.courseId, domainOverride, token);
+    const fromBlob = this.resolveAssignmentIdFromBlob(ctx, blob);
+    if (fromBlob.assignmentId) return fromBlob;
+    const resourceLinkId = (ctx.resourceLinkId ?? '').trim();
+    if (resourceLinkId) {
+      const fromResourceLink = await this.canvas.resolveAssignmentIdForResourceLink(
+        ctx.courseId,
+        resourceLinkId,
+        domainOverride,
+        token,
+      );
+      if (fromResourceLink.assignmentId) {
+        appendLtiLog('prompt', 'resolveAssignmentIdForContext: resolved from resource link', {
+          resourceLinkId,
+          assignmentId: fromResourceLink.assignmentId,
+          source: fromResourceLink.source ?? '(unknown)',
+          matchedField: fromResourceLink.matchedField ?? '(unknown)',
+        });
+        return { assignmentId: fromResourceLink.assignmentId, source: 'resource_link_api' };
+      }
+    }
+    const fromModuleItems = await this.resolveAssignmentIdFromModuleItems(ctx, token, domainOverride);
+    if (fromModuleItems) return { assignmentId: fromModuleItems, source: 'module_item_url' };
+    return fromBlob;
   }
 
   async getConfig(ctx: LtiContext): Promise<PromptConfigJson | null> {
@@ -541,19 +663,30 @@ export class PromptService {
     }
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
     const blob = await this.readPromptManagerSettingsBlob(ctx.courseId, domainOverride, token);
-    const resolved = this.resolveAssignmentIdFromBlob(ctx, blob);
+    const resolved = await this.resolveAssignmentIdForContext(ctx, token, domainOverride, blob);
     const assignmentId = resolved.assignmentId ?? '';
     appendLtiLog('prompt', 'getConfig: assignment resolution', {
       source: resolved.source,
       assignmentId: assignmentId || '(none)',
       assignmentIdFromCtx: (ctx.assignmentId ?? '').trim() || '(none)',
       assignmentIdFromMap: (blob?.resourceLinkAssignmentMap?.[(ctx.resourceLinkId ?? '').trim()] ?? '').trim() || '(none)',
+      assignmentIdFromLisResult: this.extractAssignmentIdFromLisResult(ctx) ?? '(none)',
+      assignmentIdFromOutcomeUrl: this.extractAssignmentIdFromOutcomeUrl(ctx) ?? '(none)',
       moduleId: (ctx.moduleId ?? '').trim() || '(none)',
       resourceLinkTitle: (ctx.resourceLinkTitle ?? '').trim() || '(none)',
+      lisResultSourcedid: (ctx.lisResultSourcedid ?? '').trim() ? '(present)' : '(none)',
+      lisOutcomeServiceUrl: (ctx.lisOutcomeServiceUrl ?? '').trim() ? '(present)' : '(none)',
       configCount: Object.keys(blob?.configs ?? {}).length,
       resourceLinkId: (ctx.resourceLinkId ?? '').trim() || '(none)',
     });
     if (!assignmentId) {
+      appendLtiLog('prompt-decks', 'getConfig: no assignment resolved', {
+        source: resolved.source,
+        resourceLinkId: (ctx.resourceLinkId ?? '').trim() || '(none)',
+        moduleId: (ctx.moduleId ?? '').trim() || '(none)',
+        resourceLinkTitle: (ctx.resourceLinkTitle ?? '').trim() || '(none)',
+        configCount: Object.keys(blob?.configs ?? {}).length,
+      });
       return null;
     }
     let config = blob?.configs?.[assignmentId] ?? null;
@@ -565,6 +698,9 @@ export class PromptService {
     if (config?.promptMode === 'decks') {
       const rawTotal = Number(config.videoPromptConfig?.totalCards);
       const totalCards = Number.isFinite(rawTotal) && rawTotal > 0 ? Math.floor(rawTotal) : 10;
+      const selectedDecks = Array.isArray(config.videoPromptConfig?.selectedDecks)
+        ? config.videoPromptConfig?.selectedDecks
+        : [];
       const existingBanks = Array.isArray(config.videoPromptConfig?.storedPromptBanks)
         ? config.videoPromptConfig?.storedPromptBanks
         : [];
@@ -587,13 +723,82 @@ export class PromptService {
       config = {
         ...config,
         videoPromptConfig: {
-          selectedDecks: config.videoPromptConfig?.selectedDecks ?? [],
+          selectedDecks,
           totalCards,
           ...(normalizedBanks.length > 0 ? { storedPromptBanks: normalizedBanks } : {}),
           ...(existingStatic.length > 0 ? { staticFallbackPrompts: existingStatic } : {}),
         },
       };
+
+      // Self-heal older deck configs that predate stored fallback fields.
+      // This keeps learner prompt display resilient when live deck build fails.
+      if (selectedDecks.length > 0 && normalizedBanks.length === 0 && existingStatic.length === 0) {
+        try {
+          appendLtiLog('prompt-decks', 'getConfig: generating missing fallback banks for legacy deck config', {
+            assignmentId,
+            selectedDeckCount: selectedDecks.length,
+            totalCards,
+          });
+          const banks = await this.generateStoredDeckPromptBanks(selectedDecks, totalCards, 2);
+          const staticFallbackPrompts = (banks[0] ?? []).map((p) => p.title).filter(Boolean);
+          if (banks.length > 0 || staticFallbackPrompts.length > 0) {
+            const settingsAssignmentId = await this.ensurePromptManagerSettingsAssignment(ctx.courseId, domainOverride, token);
+            const payload: PromptManagerSettingsBlob = {
+              ...blob,
+              v: blob?.v ?? 1,
+              configs: {
+                ...(blob?.configs ?? {}),
+                [assignmentId]: {
+                  ...(blob?.configs?.[assignmentId] ?? config),
+                  promptMode: 'decks',
+                  videoPromptConfig: {
+                    selectedDecks,
+                    totalCards,
+                    ...(banks.length > 0 ? { storedPromptBanks: banks } : {}),
+                    ...(staticFallbackPrompts.length > 0 ? { staticFallbackPrompts } : {}),
+                  },
+                },
+              },
+              updatedAt: new Date().toISOString(),
+            };
+            await this.canvas.updateAssignmentDescription(
+              ctx.courseId,
+              settingsAssignmentId,
+              JSON.stringify(payload),
+              domainOverride,
+              token,
+            );
+            config = {
+              ...config,
+              videoPromptConfig: {
+                selectedDecks,
+                totalCards,
+                ...(banks.length > 0 ? { storedPromptBanks: banks } : {}),
+                ...(staticFallbackPrompts.length > 0 ? { staticFallbackPrompts } : {}),
+              },
+            };
+            appendLtiLog('prompt-decks', 'getConfig: persisted fallback banks for legacy deck config', {
+              assignmentId,
+              bankCount: banks.length,
+              staticFallbackCount: staticFallbackPrompts.length,
+            });
+          }
+        } catch (err) {
+          appendLtiLog('prompt-decks', 'getConfig: failed to backfill fallback banks (non-fatal)', {
+            assignmentId,
+            error: String(err),
+          });
+        }
+      }
     }
+    appendLtiLog('prompt-decks', 'getConfig: deck mode snapshot', {
+      assignmentId,
+      promptMode: config?.promptMode ?? '(none)',
+      selectedDeckCount: config?.videoPromptConfig?.selectedDecks?.length ?? 0,
+      hasStoredBanks: Array.isArray(config?.videoPromptConfig?.storedPromptBanks),
+      storedBankCount: config?.videoPromptConfig?.storedPromptBanks?.length ?? 0,
+      staticFallbackCount: config?.videoPromptConfig?.staticFallbackPrompts?.length ?? 0,
+    });
 
     // Hydrate key assignment-backed fields directly from Canvas so UI reflects current assignment state.
     // Keep blob values as fallback when Canvas read is unavailable.

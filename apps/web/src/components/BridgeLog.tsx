@@ -14,10 +14,15 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
   const { lastFunctionCalled, lastApiResult } = useDebug();
   const { isDeveloperMode } = useAppMode();
   const [searchParams] = useSearchParams();
+  const isPrompterPath =
+    window.location.pathname.includes('/prompter') ||
+    window.location.pathname.includes('/config') ||
+    window.location.pathname.includes('/viewer');
   /** Allow forcing Bridge Log with ?debug=1 in any environment. */
   const debugParamEnabled = searchParams.get('debug') === '1';
-  const forcePrompterDebug = context?.toolType === 'prompter';
+  const forcePrompterDebug = context?.toolType === 'prompter' || isPrompterPath;
   const developerUi = isDeveloperMode || debugParamEnabled || forcePrompterDebug;
+  const canClearLog = isDeveloperMode || debugParamEnabled;
   const [lastServerError, setLastServerError] = useState<{ endpoint: string; message: string } | null>(null);
   const [ltiLog, setLtiLog] = useState<string[]>([]);
   const [lines, setLines] = useState<string[]>(['Initializing...']);
@@ -289,24 +294,27 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
         </button>
         <button
           type="button"
+          disabled={!canClearLog}
           onClick={async () => {
+            if (!canClearLog) return;
             await fetch('/api/debug/lti-log?clear=1', { credentials: 'include' });
             setLtiLog([]);
           }}
-          title="Clear LTI log"
+          title={canClearLog ? 'Clear LTI log' : 'Clear disabled outside developer/debug mode'}
           style={{
             background: 'none',
             border: '1px solid #00ff88',
             color: '#00ff88',
             padding: '4px 8px',
             borderRadius: 4,
-            cursor: 'pointer',
+            cursor: canClearLog ? 'pointer' : 'not-allowed',
             fontFamily: 'inherit',
             fontSize: 11,
             marginRight: 8,
+            opacity: canClearLog ? 1 : 0.55,
           }}
         >
-          Clear LTI log
+          Clear LTI log {canClearLog ? '' : '(dev only)'}
         </button>
         <button
           type="button"

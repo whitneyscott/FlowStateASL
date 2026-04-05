@@ -55,7 +55,11 @@ export default function TimerPage({ context }: TimerPageProps) {
   const autoFinishFiredRef = useRef(false);
   const [showManualTokenModal, setShowManualTokenModal] = useState(false);
   const assignmentId = resolveLtiContextValue(context?.assignmentId);
-  const urlAssignmentId = new URLSearchParams(window.location.search).get('assignmentId')?.trim() ?? '';
+  const params = new URLSearchParams(window.location.search);
+  const urlAssignmentId =
+    params.get('assignmentId')?.trim() ??
+    params.get('assignment_id')?.trim() ??
+    '';
   const effectiveAssignmentId = assignmentId || urlAssignmentId || null;
 
   const appendDeckDebugLog = useCallback((message: string, extra?: Record<string, unknown>) => {
