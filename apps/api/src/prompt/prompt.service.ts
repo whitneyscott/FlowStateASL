@@ -1944,15 +1944,27 @@ export class PromptService {
       });
     }
 
-    await this.canvas.addSubmissionComment(
-      ctx.courseId,
-      assignmentId,
-      userId,
-      promptSnapshotHtml,
-      undefined,
-      domainOverride,
-      token,
-    );
+    // Optional SpeedGrader-style duplicate of the snapshot. Body may already hold the same JSON;
+    // service-token + LTI opaque user id can make this PUT 404 (submission path user id mismatch).
+    // Never fail submit here — client must still reach upload-video.
+    try {
+      await this.canvas.addSubmissionComment(
+        ctx.courseId,
+        assignmentId,
+        userId,
+        promptSnapshotHtml,
+        undefined,
+        domainOverride,
+        token,
+      );
+      appendLtiLog('prompt-submit', 'submit: submission comment added', { assignmentId });
+    } catch (commentErr) {
+      appendLtiLog('prompt-submit', 'submit: addSubmissionComment failed (non-fatal)', {
+        assignmentId,
+        studentCanvasUserId: userId,
+        error: String(commentErr),
+      });
+    }
 
     try {
       const assign = await this.canvas.getAssignment(ctx.courseId, assignmentId, domainOverride, token);
@@ -1962,7 +1974,7 @@ export class PromptService {
       appendLtiLog('prompt-submit', 'submit: storePrompt in quiz failed (non-fatal)', { error: String(quizErr) });
     }
 
-    appendLtiLog('prompt-submit', 'submit DONE (Canvas: submission body if allowed, comment, quiz storage)', {
+    appendLtiLog('prompt-submit', 'submit DONE (Canvas body + optional comment + quiz)', {
       assignmentId,
     });
   }
