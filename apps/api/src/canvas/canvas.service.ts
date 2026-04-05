@@ -329,7 +329,12 @@ export class CanvasService {
     appendLtiLog('canvas', 'attachFileToSubmission', { courseId, assignmentId, userId, fileId });
     const base = this.getBaseUrl(domainOverride);
     const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}`;
-    const body = { submission: { file_ids: [fileId] } };
+    const body = {
+      submission: {
+        submission_type: 'online_upload',
+        file_ids: [Number(fileId)],
+      },
+    };
     const res = await fetch(url, {
       method: 'PUT',
       headers: this.getAuthHeaders(tokenOverride),

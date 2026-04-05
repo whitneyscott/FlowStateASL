@@ -2114,19 +2114,18 @@ export class PromptService {
       if (authLike && uploadNeedsActAs) {
         appendLtiLog(
           'prompt-upload',
-          'uploadVideo: submitAssignmentWithFile rejected as_user_id; trying comment[file_ids] fallback',
+          'uploadVideo: submitAssignmentWithFile rejected as_user_id; trying submission[file_ids] fallback',
           {
             assignmentId,
             studentUserId,
             fileId,
           },
         );
-        await this.canvas.attachFileToSubmissionComment(
+        await this.canvas.attachFileToSubmission(
           ctx.courseId,
           assignmentId,
           studentUserId,
           fileId,
-          { textComment: 'ASL Express video attachment' },
           domainOverride,
           token,
         );
