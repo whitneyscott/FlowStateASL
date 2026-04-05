@@ -2302,20 +2302,19 @@ export class CanvasService {
       bodyLength: bodyContent?.length ?? 0,
       studentCanvasId,
       tokenUserId: tokenUserId ?? '(unknown)',
-      writeMode: 'submit_with_as_user_id',
+      writeMode: 'targeted_put_submission_body',
       submission_types: types ?? '(unknown)',
       tokenPreview: token ? `${token.slice(0, 4)}...${token.slice(-4)}` : 'MISSING',
     });
-    await this.createSubmissionWithBody(
+    await this.putSubmissionBody(
       ctx.courseId,
       assignmentId,
       studentCanvasId,
       bodyContent,
       domainOverride,
       token,
-      true,
     );
-    appendLtiLog('canvas', 'writeSubmissionBody: as_user_id POST succeeded', {
+    appendLtiLog('canvas', 'writeSubmissionBody: targeted PUT succeeded', {
       studentCanvasId,
       assignmentId,
     });
