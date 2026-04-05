@@ -166,7 +166,6 @@ export class PromptController {
     @Req() req: Request,
     @UploadedFile() file: { buffer?: Buffer; originalname?: string } | undefined,
   ) {
-    const { appendLtiLog } = await import('../common/last-error.store');
     appendLtiLog('prompt', 'POST /upload-video received', { hasFile: !!file?.buffer, size: file?.buffer?.length ?? 0, filename: file?.originalname ?? '(none)' });
     const ctx = this.getCtxWithAssignment(req);
     if (!file?.buffer) {
@@ -177,7 +176,21 @@ export class PromptController {
       Buffer.from(file.buffer),
       file.originalname || `asl_submission_${Date.now()}.webm`,
     );
-    return { status: 'success', fileId: result.fileId };
+    appendLtiLog('prompt-upload', 'POST /api/prompt/upload-video 201 response (client can read verify in JSON body)', {
+      fileId: result.fileId,
+      courseId: result.courseId,
+      assignmentId: result.assignmentId,
+      verify: result.verify,
+    });
+    return {
+      status: 'success',
+      fileId: result.fileId,
+      courseId: result.courseId,
+      assignmentId: result.assignmentId,
+      studentUserId: result.studentUserId,
+      studentIdSource: result.studentIdSource,
+      verify: result.verify,
+    };
   }
 
   /**

@@ -194,17 +194,36 @@ export async function submitPrompt(
   if (!res.ok) throw new Error(await getErrorMessage(res));
 }
 
+/** Canvas upload pipeline audit (same request as Bridge log when single API instance). */
+export type PromptUploadVideoVerify = {
+  submissionFetched: boolean;
+  workflow_state?: string;
+  submission_type?: string;
+  attachmentCount: number;
+  hasPlaybackUrl: boolean;
+};
+
+export type PromptUploadVideoResult = {
+  status?: string;
+  fileId: string;
+  courseId?: string;
+  assignmentId?: string;
+  studentUserId?: string;
+  studentIdSource?: string;
+  verify?: PromptUploadVideoVerify;
+};
+
 export async function uploadVideo(
   blob: Blob,
   filename: string,
   assignmentId?: string | null
-): Promise<{ fileId: string }> {
+): Promise<PromptUploadVideoResult> {
   const form = new FormData();
   form.append('video', blob, filename);
   const res = await fetch(withAssignmentId(base + '/upload-video', assignmentId), apiInit({ method: 'POST', body: form }));
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error((data as { message?: string }).message ?? `HTTP ${res.status}`);
-  return data as { fileId: string };
+  return data as PromptUploadVideoResult;
 }
 
 /**

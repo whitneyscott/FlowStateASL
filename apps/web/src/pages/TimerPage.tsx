@@ -185,6 +185,13 @@ export default function TimerPage({ context }: TimerPageProps) {
           const result = await promptApi.uploadVideo(blob, `asl_submission_${Date.now()}.webm`, effectiveAssignmentId);
           setLastApiResult('POST /api/prompt/upload-video', 200, true);
           console.log('[TimerPage:doSubmit] uploadVideo OK', result);
+          const verifyLine = `[client] upload-video response fileId=${result.fileId} verify=${JSON.stringify(result.verify ?? {})} assignmentId=${result.assignmentId ?? ''} studentUserId=${result.studentUserId ?? ''}`;
+          fetch('/api/debug/lti-log', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tag: 'prompt-upload', message: verifyLine }),
+          }).catch(() => {});
         }
         setPhase('done');
         console.log('[TimerPage:doSubmit] DONE');

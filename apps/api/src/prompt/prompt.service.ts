@@ -1995,7 +1995,20 @@ export class PromptService {
     ctx: LtiContext,
     buffer: Buffer,
     filename: string,
-  ): Promise<{ fileId: string }> {
+  ): Promise<{
+    fileId: string;
+    courseId: string;
+    assignmentId: string;
+    studentUserId: string;
+    studentIdSource: string | undefined;
+    verify: {
+      submissionFetched: boolean;
+      workflow_state?: string;
+      submission_type?: string;
+      attachmentCount: number;
+      hasPlaybackUrl: boolean;
+    };
+  }> {
     appendLtiLog('prompt-upload', 'uploadVideo ENTER', { filename, size: buffer.length });
     const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken, ctx);
     if (!token) {
@@ -2068,8 +2081,55 @@ export class PromptService {
       domainOverride,
       token,
     );
-    appendLtiLog('prompt-upload', 'uploadVideo DONE', { fileId });
-    return { fileId };
+
+    const sub = await this.canvas.getSubmissionFull(
+      ctx.courseId,
+      assignmentId,
+      studentUserId,
+      domainOverride,
+      token,
+    );
+    const subAny = sub as {
+      workflow_state?: string;
+      submission_type?: string;
+      attachments?: unknown[];
+      attachment?: unknown;
+    } | null;
+    const attachmentCount =
+      (sub?.attachments?.length ?? 0) + (sub?.attachment ? 1 : 0);
+    const hasPlaybackUrl = !!(
+      sub && getVideoUrlFromCanvasSubmission(sub as Parameters<typeof getVideoUrlFromCanvasSubmission>[0])
+    );
+    const verify = {
+      submissionFetched: !!sub,
+      workflow_state: subAny?.workflow_state,
+      submission_type: subAny?.submission_type,
+      attachmentCount,
+      hasPlaybackUrl,
+    };
+    appendLtiLog('prompt-upload', 'upload-video VERIFY after attach (getSubmissionFull)', {
+      courseId: ctx.courseId,
+      assignmentId,
+      studentUserId,
+      fileId,
+      ...verify,
+    });
+    if (verify.submissionFetched && !verify.hasPlaybackUrl && verify.attachmentCount === 0) {
+      appendLtiLog(
+        'prompt-upload',
+        'upload-video WARN: submission has no attachments and no playback URL yet (may still be processing, or wrong user)',
+        { assignmentId, studentUserId, fileId },
+      );
+    }
+    appendLtiLog('prompt-upload', 'uploadVideo DONE', { fileId, assignmentId, studentUserId, ...verify });
+    return {
+      fileId,
+      courseId: ctx.courseId,
+      assignmentId,
+      studentUserId,
+      studentIdSource,
+      verify,
+    };
   }
 
   /**

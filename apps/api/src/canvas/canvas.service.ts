@@ -329,7 +329,34 @@ export class CanvasService {
       appendLtiLog('canvas', 'attachFileToSubmission FAIL', { status: res.status, text: text.slice(0, 200) });
       throw new Error(`Canvas attach file to submission failed: ${res.status} ${text}`);
     }
-    appendLtiLog('canvas', 'attachFileToSubmission OK');
+    let attachSummary: Record<string, unknown> = {};
+    try {
+      const raw = await res.text();
+      if (raw?.trim()) {
+        const data = JSON.parse(raw) as {
+          workflow_state?: string;
+          submission_type?: string;
+          attachments?: Array<{ id?: number }>;
+          attachment?: { id?: number };
+        };
+        const attIds = [
+          ...(data.attachments?.map((a) => a.id).filter((id): id is number => id != null) ?? []),
+          ...(data.attachment?.id != null ? [data.attachment.id] : []),
+        ];
+        attachSummary = {
+          workflow_state: data.workflow_state ?? '(none)',
+          submission_type: data.submission_type ?? '(none)',
+          attachmentCount: attIds.length,
+          attachmentIds: attIds.slice(0, 5),
+          uploadedFileIdInResponse: attIds.includes(Number(fileId)),
+        };
+      } else {
+        attachSummary = { responseBody: 'empty' };
+      }
+    } catch {
+      attachSummary = { parseBody: 'non-json' };
+    }
+    appendLtiLog('canvas', 'attachFileToSubmission OK', { courseId, assignmentId, userId, fileId, ...attachSummary });
   }
 
   async submitAssignmentWithFile(
