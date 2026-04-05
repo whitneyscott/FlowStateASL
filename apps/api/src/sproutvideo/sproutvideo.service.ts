@@ -61,11 +61,18 @@ export class SproutVideoService {
    */
   async fetchVideosByPlaylistId(
     playlistId: string,
-  ): Promise<Array<{ id: string; title: string; embed_code: string }>> {
+  ): Promise<
+    Array<{ id: string; title: string; embed_code: string; durationSeconds: number | null }>
+  > {
     const apiKey = this.config.get('SPROUT_KEY');
     if (!apiKey) throw new Error('SproutVideo not configured');
 
-    const all: Array<{ id: string; title: string; embed_code: string }> = [];
+    const all: Array<{
+      id: string;
+      title: string;
+      embed_code: string;
+      durationSeconds: number | null;
+    }> = [];
     const perPage = 100;
     let page = 1;
     const baseDelay = (() => {
@@ -132,7 +139,13 @@ export class SproutVideoService {
 
       if (!res || !res.ok) throw new Error('SproutVideo API error while listing videos');
       const data = (await res.json()) as {
-        videos?: Array<{ id?: string; title?: string; embed_code?: string }>;
+        videos?: Array<{
+          id?: string;
+          title?: string;
+          embed_code?: string;
+          duration?: number | null;
+          length?: number | null;
+        }>;
         total?: number;
         next_page?: string | null;
       };
@@ -140,10 +153,17 @@ export class SproutVideoService {
       const videos = data.videos ?? [];
       for (const v of videos) {
         if (!v.id) continue;
+        const raw =
+          typeof v.duration === 'number' && Number.isFinite(v.duration) && v.duration > 0
+            ? v.duration
+            : typeof v.length === 'number' && Number.isFinite(v.length) && v.length > 0
+              ? v.length
+              : null;
         all.push({
           id: String(v.id),
           title: String(v.title ?? 'Vocabulary Item'),
           embed_code: String(v.embed_code ?? ''),
+          durationSeconds: raw,
         });
       }
 
@@ -326,7 +346,7 @@ export class SproutVideoService {
   }
 
   /**
-   * Get video details including duration for a list of video IDs.
+   * Get video details including duration for a list of video IDs (Sprout `duration` field, seconds).
    * Returns a map of video ID to duration in seconds.
    */
   async getVideoDurations(videoIds: string[]): Promise<Map<string, number>> {
@@ -378,13 +398,20 @@ export class SproutVideoService {
       if (!res || !res.ok) continue;
 
       const data = (await res.json()) as {
-        videos?: Array<{ id?: string; length?: number }>;
+        videos?: Array<{ id?: string; duration?: number | null; length?: number | null }>;
       };
 
       const videos = data.videos ?? [];
       for (const v of videos) {
-        if (v.id && typeof v.length === 'number') {
-          result.set(String(v.id), v.length);
+        if (!v.id) continue;
+        const raw =
+          typeof v.duration === 'number' && Number.isFinite(v.duration) && v.duration > 0
+            ? v.duration
+            : typeof v.length === 'number' && Number.isFinite(v.length) && v.length > 0
+              ? v.length
+              : null;
+        if (raw != null) {
+          result.set(String(v.id), raw);
         }
       }
 

@@ -148,6 +148,60 @@
   margin-bottom: 16px;
 }
 
+/* Deck prompter: large centered prompt + enter transition between cards */
+@keyframes prompter-deck-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.prompter-deck-prompt-shell {
+  flex: 1 1 280px;
+  min-height: 220px;
+  max-width: min(100%, 560px);
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 24px 20px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  background: #f9f9f9;
+  border-left: 5px solid var(--prompter-canvas-blue);
+  box-sizing: border-box;
+}
+
+.prompter-deck-prompt-shell--warmup {
+  min-height: 180px;
+  max-width: 520px;
+  margin: 0 auto 16px;
+}
+
+.prompter-deck-prompt-shell--record {
+  min-height: 260px;
+}
+
+.prompter-deck-prompt-display {
+  font-size: max(30pt, 1.25rem + 2.5vw);
+  font-weight: 700;
+  line-height: 1.25;
+  word-break: break-word;
+  hyphens: auto;
+  animation: prompter-deck-card-in 0.45s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .prompter-deck-prompt-display {
+    animation: none;
+  }
+}
+
 .prompter-record-layout {
   display: flex;
   gap: 20px;

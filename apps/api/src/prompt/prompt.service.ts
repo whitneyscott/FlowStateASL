@@ -1,4 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { In, Repository } from 'typeorm';
 import { ASSESSMENT_REPOSITORY, PROMPT_DATA_REPOSITORY } from '../data/tokens';
 import type { IAssessmentRepository } from '../data/interfaces/assessment-repository.interface';
 import type { IPromptDataRepository } from '../data/interfaces/prompt-data-repository.interface';
@@ -16,6 +18,7 @@ import { LtiDeepLinkFileStore } from '../lti/lti-deep-link-file.store';
 import { LtiDeepLinkResponseService } from '../lti/lti-deep-link-response.service';
 import { QuizService } from '../quiz/quiz.service';
 import { SproutVideoService } from '../sproutvideo/sproutvideo.service';
+import { SproutPlaylistVideoEntity } from '../sproutvideo/entities/sprout-playlist-video.entity';
 import { PromptFallbackStore } from './prompt-fallback.store';
 import { PromptVideoTitleStore } from './prompt-video-title.store';
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
@@ -27,10 +30,11 @@ const PROMPT_MANAGER_SETTINGS_ASSIGNMENT_TITLE = 'Prompt Manager Settings';
 const PROMPT_MANAGER_SETTINGS_ANNOUNCEMENT_TITLE = 'ASL Express Prompt Manager Settings';
 const PROMPT_LEDGER_ASSIGNMENT_TITLE = 'ASL Express Prompt Ledger';
 
-/** Per-card timer = video duration + this read/refocus buffer (seconds). Mirrors student TimerPage deck logic. */
-const DECK_READ_REFOCUS_SECONDS = 1.5;
-const DECK_DEFAULT_VIDEO_SECONDS_WHEN_UNKNOWN = 3;
-const DECK_DEFAULT_TOTAL_SECONDS = DECK_READ_REFOCUS_SECONDS + DECK_DEFAULT_VIDEO_SECONDS_WHEN_UNKNOWN;
+/**
+ * Deck card timing (mirrors TimerPage): unknown length → fixed total; known → ceil(video) + buffer.
+ */
+const DECK_DEFAULT_TOTAL_SECONDS_UNKNOWN = 4;
+const DECK_KNOWN_VIDEO_EXTRA_SECONDS = 1;
 
 interface PromptManagerSettingsBlob {
   v?: number;
@@ -201,7 +205,38 @@ export class PromptService {
     private readonly sproutVideo: SproutVideoService,
     private readonly promptFallbackStore: PromptFallbackStore,
     private readonly promptVideoTitleStore: PromptVideoTitleStore,
+    @InjectRepository(SproutPlaylistVideoEntity)
+    private readonly sproutPlaylistVideoRepo: Repository<SproutPlaylistVideoEntity>,
   ) {}
+
+  /** Total seconds allowed on a deck card (prompt timer). */
+  private deckCardTotalSeconds(videoDurationSec: number | null | undefined): number {
+    if (
+      typeof videoDurationSec === 'number' &&
+      Number.isFinite(videoDurationSec) &&
+      videoDurationSec > 0
+    ) {
+      return Math.max(1, Math.ceil(videoDurationSec) + DECK_KNOWN_VIDEO_EXTRA_SECONDS);
+    }
+    return DECK_DEFAULT_TOTAL_SECONDS_UNKNOWN;
+  }
+
+  private async loadVideoDurationsFromDb(videoIds: string[]): Promise<Map<string, number>> {
+    const uniq = [...new Set(videoIds.filter(Boolean))];
+    if (uniq.length === 0) return new Map();
+    const rows = await this.sproutPlaylistVideoRepo.find({
+      where: { videoId: In(uniq) },
+      select: ['videoId', 'durationSeconds'],
+    });
+    const m = new Map<string, number>();
+    for (const r of rows) {
+      const d = r.durationSeconds;
+      if (typeof d === 'number' && Number.isFinite(d) && d > 0 && !m.has(r.videoId)) {
+        m.set(r.videoId, d);
+      }
+    }
+    return m;
+  }
 
   private createPlacementAttemptId(): string {
     return randomUUID().replace(/-/g, '').slice(0, 8);
@@ -866,7 +901,7 @@ export class PromptService {
                   duration:
                     Number.isFinite(Number(p?.duration)) && Number(p?.duration) > 0
                       ? Number(p?.duration)
-                      : DECK_DEFAULT_TOTAL_SECONDS,
+                      : DECK_DEFAULT_TOTAL_SECONDS_UNKNOWN,
                 }))
                 .filter((p) => p.title)
             : [],
@@ -1647,19 +1682,25 @@ export class PromptService {
       return { prompts: [], warning: 'No decks selected' };
     }
 
-    // Step 1: Fetch all cards from each deck
-    const deckCards = new Map<string, Array<{ id: string; title: string }>>();
+    // Step 1: Fetch all cards from each deck (Sprout list includes duration; also persisted in DB on sync)
+    const deckCards = new Map<string, Array<{ id: string; title: string; durationSeconds: number | null }>>();
     for (const deck of selectedDecks) {
       try {
         const videos = await this.sproutVideo.fetchVideosByPlaylistId(deck.id);
         // Step 2: Deduplicate within each deck by English title (case-insensitive)
         const seen = new Set<string>();
-        const deduped: Array<{ id: string; title: string }> = [];
+        const deduped: Array<{ id: string; title: string; durationSeconds: number | null }> = [];
         for (const v of videos) {
           const key = (v.title ?? '').trim().toLowerCase();
           if (!key || seen.has(key)) continue;
           seen.add(key);
-          deduped.push({ id: v.id, title: v.title.trim() });
+          const ds = v.durationSeconds;
+          deduped.push({
+            id: v.id,
+            title: v.title.trim(),
+            durationSeconds:
+              typeof ds === 'number' && Number.isFinite(ds) && ds > 0 ? ds : null,
+          });
         }
         // Step 3: Shuffle each deck randomly
         for (let i = deduped.length - 1; i > 0; i--) {
@@ -1678,7 +1719,7 @@ export class PromptService {
       Number.isFinite(requestedTotal) && requestedTotal > 0 ? Math.floor(requestedTotal) : 10;
 
     // Step 4: Round-robin selection across decks
-    const selected: Array<{ title: string; videoId?: string }> = [];
+    const selected: Array<{ title: string; videoId?: string; durationSeconds?: number | null }> = [];
     const usedTitles = new Set<string>();
     const deckIndices = new Map<string, number>(); // Track current position in each deck
     selectedDecks.forEach(d => deckIndices.set(d.id, 0));
@@ -1697,7 +1738,11 @@ export class PromptService {
           const card = cards[idx];
           const key = card.title.toLowerCase().trim();
           if (!usedTitles.has(key)) {
-            selected.push({ title: card.title, videoId: card.id });
+            selected.push({
+              title: card.title,
+              videoId: card.id,
+              durationSeconds: card.durationSeconds ?? null,
+            });
             usedTitles.add(key);
             idx++;
             addedThisRound = true;
@@ -1726,15 +1771,43 @@ export class PromptService {
       [selected[i], selected[j]] = [selected[j], selected[i]];
     }
 
-    // Step 3 (Timing): Fetch video durations
-    const videoIds = selected.filter(s => s.videoId).map(s => s.videoId!);
-    const durations = await this.sproutVideo.getVideoDurations(videoIds);
+    // Timing: playlist response + batched video API + DB cache (sprout_playlist_videos.duration_seconds)
+    const needsLookupIds = selected
+      .filter(
+        (s) =>
+          s.videoId &&
+          (s.durationSeconds == null ||
+            !Number.isFinite(s.durationSeconds) ||
+            s.durationSeconds <= 0),
+      )
+      .map((s) => s.videoId!);
+    const fromApi = await this.sproutVideo.getVideoDurations(needsLookupIds);
+    const fromDb = await this.loadVideoDurationsFromDb(needsLookupIds);
+
+    const resolveVideoSeconds = (s: {
+      videoId?: string;
+      durationSeconds?: number | null;
+    }): number | null => {
+      if (
+        typeof s.durationSeconds === 'number' &&
+        Number.isFinite(s.durationSeconds) &&
+        s.durationSeconds > 0
+      ) {
+        return s.durationSeconds;
+      }
+      if (s.videoId) {
+        const a = fromApi.get(s.videoId);
+        if (typeof a === 'number' && Number.isFinite(a) && a > 0) return a;
+        const d = fromDb.get(s.videoId);
+        if (typeof d === 'number' && Number.isFinite(d) && d > 0) return d;
+      }
+      return null;
+    };
+
     const prompts = selected.map((s) => ({
       title: s.title,
       videoId: s.videoId,
-      duration:
-        DECK_READ_REFOCUS_SECONDS +
-        (s.videoId ? (durations.get(s.videoId) ?? DECK_DEFAULT_VIDEO_SECONDS_WHEN_UNKNOWN) : DECK_DEFAULT_VIDEO_SECONDS_WHEN_UNKNOWN),
+      duration: this.deckCardTotalSeconds(resolveVideoSeconds(s)),
     }));
 
     appendLtiLog('prompt-decks', 'buildDeckPromptList result', {

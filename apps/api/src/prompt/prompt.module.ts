@@ -1,4 +1,5 @@
 import { Module, forwardRef } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { PromptController } from './prompt.controller';
 import { PromptService } from './prompt.service';
 import { PromptFallbackStore } from './prompt-fallback.store';
@@ -9,6 +10,7 @@ import { CourseSettingsModule } from '../course-settings/course-settings.module'
 import { LtiModule } from '../lti/lti.module';
 import { QuizModule } from '../quiz/quiz.module';
 import { SproutVideoModule } from '../sproutvideo/sproutvideo.module';
+import { SproutPlaylistVideoEntity } from '../sproutvideo/entities/sprout-playlist-video.entity';
 
 @Module({
   imports: [
@@ -18,6 +20,7 @@ import { SproutVideoModule } from '../sproutvideo/sproutvideo.module';
     forwardRef(() => LtiModule),
     forwardRef(() => QuizModule),
     SproutVideoModule,
+    TypeOrmModule.forFeature([SproutPlaylistVideoEntity]),
   ],
   controllers: [PromptController],
   providers: [PromptService, PromptFallbackStore, PromptVideoTitleStore],

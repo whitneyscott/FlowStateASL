@@ -20,4 +20,8 @@ export class SproutPlaylistVideoEntity {
 
   @Column({ name: 'embed_code', type: 'text', nullable: true })
   embedCode: string | null;
+
+  /** SproutVideo API `duration` (seconds), when known. Populated on playlist sync. */
+  @Column({ name: 'duration_seconds', type: 'double precision', nullable: true })
+  durationSeconds: number | null;
 }

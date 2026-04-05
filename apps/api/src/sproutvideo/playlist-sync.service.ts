@@ -123,6 +123,9 @@ export class PlaylistSyncService {
         const row = videoRows[i];
         const title = String(row?.title ?? 'Vocabulary Item');
         const embed = String(row?.embed_code ?? '');
+        const dur = row?.durationSeconds;
+        const durationSeconds =
+          typeof dur === 'number' && Number.isFinite(dur) && dur > 0 ? dur : null;
         await this.videoRepo.upsert(
           {
             playlistId: p.id,
@@ -130,6 +133,7 @@ export class PlaylistSyncService {
             position: i,
             title,
             embedCode: embed || null,
+            durationSeconds,
           },
           { conflictPaths: ['playlistId', 'videoId'] },
         );

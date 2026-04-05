@@ -17,17 +17,14 @@ function simpleFingerprint(): string {
   return btoa(ua + '|' + lang).slice(0, 32);
 }
 
-/** Per-card read/refocus after the signing video — must match server `DECK_READ_REFOCUS_SECONDS` in prompt.service.ts */
-const DECK_READ_REFOCUS_SECONDS = 1.5;
-/** When Sprout duration is unknown (legacy blob / static fallback), assume this many seconds of video. */
-const DECK_FALLBACK_VIDEO_SECONDS = 3;
-const DECK_FALLBACK_TOTAL_SECONDS = DECK_READ_REFOCUS_SECONDS + DECK_FALLBACK_VIDEO_SECONDS;
+/** When duration is unknown — must match `DECK_DEFAULT_TOTAL_SECONDS_UNKNOWN` in prompt.service.ts */
+const DECK_FALLBACK_TOTAL_SECONDS = 4;
 
 /** Deck-based prompt with timing info */
 interface DeckPromptItem {
   title: string;
   videoId?: string;
-  /** Total seconds for this card: Sprout video length + read/refocus (see server buildDeckPromptList). */
+  /** Total seconds for this card (see server buildDeckPromptList). */
   duration: number;
 }
 
@@ -58,9 +55,6 @@ export default function TimerPage({ context }: TimerPageProps) {
   
   // Deck mode state
   const [deckPrompts, setDeckPrompts] = useState<DeckPromptItem[]>([]);
-  const [wordTimestamps, setWordTimestamps] = useState<Array<{ word: string; timestampMs: number }>>([]);
-  const [showTransition, setShowTransition] = useState(false);
-  const [sessionStartTime, setSessionStartTime] = useState<number>(0);
   
   const streamRef = useRef<MediaStream | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -585,9 +579,13 @@ export default function TimerPage({ context }: TimerPageProps) {
     return (
       <div className="prompter-page">
         <div className="prompter-card">
-          <div className="prompter-prompt-column prompter-prompt-column-center">
-            {display}
-          </div>
+          {deckMode ? (
+            <div className="prompter-deck-prompt-shell prompter-deck-prompt-shell--warmup">
+              <div className="prompter-deck-prompt-display">{display}</div>
+            </div>
+          ) : (
+            <div className="prompter-prompt-column prompter-prompt-column-center">{display}</div>
+          )}
           <div className="prompter-timer-display">{m}:{s < 10 ? '0' : ''}{s}</div>
           <button type="button" onClick={() => setPhase('preflight')} className="prompter-btn-ready">Ready Early</button>
         </div>
@@ -638,9 +636,17 @@ export default function TimerPage({ context }: TimerPageProps) {
             </p>
           )}
           <div className="prompter-record-layout">
-            <div className="prompter-prompt-column" style={{ flex: '1 1 300px', maxWidth: 480 }}>
-              <div>{currentPromptText}</div>
-            </div>
+            {deckMode ? (
+              <div className="prompter-deck-prompt-shell prompter-deck-prompt-shell--record">
+                <div key={promptIndex} className="prompter-deck-prompt-display">
+                  {currentPromptText}
+                </div>
+              </div>
+            ) : (
+              <div className="prompter-prompt-column" style={{ flex: '1 1 300px', maxWidth: 480 }}>
+                <div>{currentPromptText}</div>
+              </div>
+            )}
             <div className="prompter-record-video-col">
               <div className="prompter-video-container">
                 <video ref={videoRef} autoPlay muted playsInline />
