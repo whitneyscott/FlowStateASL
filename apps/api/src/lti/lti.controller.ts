@@ -113,12 +113,12 @@ export class LtiController {
     @Res() res: Response,
   ) {
     this.logLaunchEntry(req, 'POST /api/lti/launch/flashcards received', {
-      courseId: body.custom_canvas_course_id,
-      assignmentId: body.custom_canvas_assignment_id,
-      moduleId: body.custom_canvas_module_id,
-      resourceLinkId: body.resource_link_id,
-      userId: body.custom_canvas_user_id,
-      roles: body.roles,
+      courseId: body.custom_canvas_course_id ?? body.custom_course_id ?? body.context_id,
+      assignmentId: body.custom_canvas_assignment_id ?? body.custom_assignment_id,
+      moduleId: body.custom_canvas_module_id ?? body.custom_module_id,
+      resourceLinkId: body.resource_link_id ?? body.custom_resource_link_id,
+      userId: body.custom_canvas_user_id ?? body.user_id ?? body.lis_person_sourcedid,
+      roles: body.roles ?? body.custom_roles ?? body.ext_roles ?? body.canvas_membership_roles,
       hasOAuthSignature: !!body.oauth_signature,
     });
     const roleKeys = ['custom_roles','roles','ext_roles','canvas_membership_roles'];
@@ -165,12 +165,12 @@ export class LtiController {
     @Res() res: Response,
   ) {
     this.logLaunchEntry(req, 'POST /api/lti/launch/prompter received', {
-      courseId: body.custom_canvas_course_id,
-      assignmentId: body.custom_canvas_assignment_id,
-      moduleId: body.custom_canvas_module_id,
-      resourceLinkId: body.resource_link_id,
-      userId: body.custom_canvas_user_id,
-      roles: body.roles,
+      courseId: body.custom_canvas_course_id ?? body.custom_course_id ?? body.context_id,
+      assignmentId: body.custom_canvas_assignment_id ?? body.custom_assignment_id,
+      moduleId: body.custom_canvas_module_id ?? body.custom_module_id,
+      resourceLinkId: body.resource_link_id ?? body.custom_resource_link_id,
+      userId: body.custom_canvas_user_id ?? body.user_id ?? body.lis_person_sourcedid,
+      roles: body.roles ?? body.custom_roles ?? body.ext_roles ?? body.canvas_membership_roles,
       hasOAuthSignature: !!body.oauth_signature,
     });
     const ctx = this.ltiService.extractContext(body);
@@ -198,7 +198,15 @@ export class LtiController {
 
   @Get('context')
   getContext(@Req() req: Request) {
-    this.logLaunchEntry(req, 'GET /api/lti/context', {});
+    const sctx = req.session?.ltiContext;
+    this.logLaunchEntry(req, 'GET /api/lti/context', {
+      courseId: sctx?.courseId,
+      assignmentId: sctx?.assignmentId,
+      moduleId: sctx?.moduleId,
+      resourceLinkId: sctx?.resourceLinkId,
+      userId: sctx?.userId,
+      roles: sctx?.roles,
+    });
     const ctx = req.session?.ltiContext;
     if (ctx) {
       console.log('[LTI] context from session', { courseId: ctx.courseId, roles: ctx.roles?.slice(0, 30) });

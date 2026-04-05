@@ -251,6 +251,20 @@ export class PromptService {
     if (id) {
       return id;
     }
+    const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken);
+    if (token) {
+      const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
+      const resolved = await this.resolveAssignmentIdForContext(ctx, token, domainOverride);
+      appendLtiLog('prompt', 'getPrompterAssignmentId: fallback resolution', {
+        source: resolved.source,
+        assignmentId: resolved.assignmentId ?? '(none)',
+        resourceLinkId: (ctx.resourceLinkId ?? '').trim() || '(none)',
+        moduleId: (ctx.moduleId ?? '').trim() || '(none)',
+      });
+      if (resolved.assignmentId) {
+        return resolved.assignmentId;
+      }
+    }
     throw new Error('Assignment ID required. In course_navigation, pass assignmentId as query parameter.');
   }
 
@@ -468,6 +482,58 @@ export class PromptService {
     });
   }
 
+  private resolveAssignmentIdFromBlob(
+    ctx: LtiContext,
+    blob: PromptManagerSettingsBlob | null,
+  ): { assignmentId: string | null; source: 'ctx' | 'map' | 'module' | 'title' | 'single' | 'none' } {
+    const assignmentIdFromCtx = (ctx.assignmentId ?? '').trim();
+    if (assignmentIdFromCtx) return { assignmentId: assignmentIdFromCtx, source: 'ctx' };
+
+    const resourceLinkId = (ctx.resourceLinkId ?? '').trim();
+    const assignmentIdFromMap = (blob?.resourceLinkAssignmentMap?.[resourceLinkId] ?? '').trim();
+    if (assignmentIdFromMap) return { assignmentId: assignmentIdFromMap, source: 'map' };
+
+    const configs = blob?.configs ?? {};
+    const configEntries = Object.entries(configs).filter(([id]) => String(id).trim().length > 0);
+
+    const moduleId = (ctx.moduleId ?? '').trim();
+    if (moduleId) {
+      const moduleMatches = configEntries
+        .filter(([, c]) => (c?.moduleId ?? '').trim() === moduleId)
+        .map(([id]) => id);
+      if (moduleMatches.length === 1) {
+        return { assignmentId: moduleMatches[0], source: 'module' };
+      }
+    }
+
+    const title = (ctx.resourceLinkTitle ?? '').trim();
+    const titleMatch = title.match(/^(.+?)\s+(?:—|–|-)\s+Prompter(?:\s*\(.*\))?\s*$/i);
+    const assignmentNameHint = (titleMatch?.[1] ?? '').trim();
+    if (assignmentNameHint) {
+      const titleMatches = configEntries
+        .filter(([, c]) => (c?.assignmentName ?? '').trim() === assignmentNameHint)
+        .map(([id]) => id);
+      if (titleMatches.length === 1) {
+        return { assignmentId: titleMatches[0], source: 'title' };
+      }
+    }
+
+    if (configEntries.length === 1) {
+      return { assignmentId: configEntries[0][0], source: 'single' };
+    }
+
+    return { assignmentId: null, source: 'none' };
+  }
+
+  private async resolveAssignmentIdForContext(
+    ctx: LtiContext,
+    token: string,
+    domainOverride: string | undefined,
+  ): Promise<{ assignmentId: string | null; source: 'ctx' | 'map' | 'module' | 'title' | 'single' | 'none' }> {
+    const blob = await this.readPromptManagerSettingsBlob(ctx.courseId, domainOverride, token);
+    return this.resolveAssignmentIdFromBlob(ctx, blob);
+  }
+
   async getConfig(ctx: LtiContext): Promise<PromptConfigJson | null> {
     const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken);
     if (!token) {
@@ -475,35 +541,16 @@ export class PromptService {
     }
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
     const blob = await this.readPromptManagerSettingsBlob(ctx.courseId, domainOverride, token);
-    const assignmentIdFromCtx = (ctx.assignmentId ?? '').trim();
-    const assignmentIdFromMap = (blob?.resourceLinkAssignmentMap?.[(ctx.resourceLinkId ?? '').trim()] ?? '').trim();
-    let assignmentResolutionSource: 'ctx' | 'map' | 'title' | 'none' = assignmentIdFromCtx ? 'ctx' : assignmentIdFromMap ? 'map' : 'none';
-    let assignmentId = assignmentIdFromCtx || assignmentIdFromMap;
-    if (!assignmentId) {
-      const title = (ctx.resourceLinkTitle ?? '').trim();
-      const titleMatch = title.match(/^(.+?)\s+—\s+Prompter(?:\s*\(.*\))?\s*$/i);
-      const assignmentNameHint = (titleMatch?.[1] ?? '').trim();
-      if (assignmentNameHint) {
-        const configs = blob?.configs ?? {};
-        const candidates = Object.entries(configs)
-          .filter(([, c]) => (c?.assignmentName ?? '').trim() === assignmentNameHint)
-          .map(([id]) => id);
-        if (candidates.length === 1) {
-          assignmentId = candidates[0];
-          assignmentResolutionSource = 'title';
-          appendLtiLog('prompt', 'getConfig: resolved assignmentId from resourceLinkTitle', {
-            assignmentId,
-            assignmentNameHint,
-            resourceLinkId: (ctx.resourceLinkId ?? '').trim() || '(none)',
-          });
-        }
-      }
-    }
+    const resolved = this.resolveAssignmentIdFromBlob(ctx, blob);
+    const assignmentId = resolved.assignmentId ?? '';
     appendLtiLog('prompt', 'getConfig: assignment resolution', {
-      source: assignmentResolutionSource,
+      source: resolved.source,
       assignmentId: assignmentId || '(none)',
-      assignmentIdFromCtx: assignmentIdFromCtx || '(none)',
-      assignmentIdFromMap: assignmentIdFromMap || '(none)',
+      assignmentIdFromCtx: (ctx.assignmentId ?? '').trim() || '(none)',
+      assignmentIdFromMap: (blob?.resourceLinkAssignmentMap?.[(ctx.resourceLinkId ?? '').trim()] ?? '').trim() || '(none)',
+      moduleId: (ctx.moduleId ?? '').trim() || '(none)',
+      resourceLinkTitle: (ctx.resourceLinkTitle ?? '').trim() || '(none)',
+      configCount: Object.keys(blob?.configs ?? {}).length,
       resourceLinkId: (ctx.resourceLinkId ?? '').trim() || '(none)',
     });
     if (!assignmentId) {
