@@ -30,6 +30,8 @@ const PROMPT_LEDGER_ASSIGNMENT_TITLE = 'ASL Express Prompt Ledger';
 interface PromptManagerSettingsBlob {
   v?: number;
   configs?: Record<string, PromptConfigJson>;
+  /** Maps LTI resource_link_id -> Canvas assignment id for launches where assignment_id is absent. */
+  resourceLinkAssignmentMap?: Record<string, string>;
   updatedAt?: string;
   /** SproutVideo folder id for PromptSubmissions (dev fallback). Env SPROUT_PROMPT_SUBMISSIONS_FOLDER_ID checked first. NEVER delete this when writing the blob; always merge with existing blob so it persists. */
   sproutPromptSubmissionsFolderId?: string;
@@ -429,22 +431,100 @@ export class PromptService {
     return null;
   }
 
+  private async rememberResourceLinkAssignmentMapping(
+    courseId: string,
+    resourceLinkId: string | undefined,
+    assignmentId: string,
+    domainOverride: string | undefined,
+    token: string,
+  ): Promise<void> {
+    const rid = (resourceLinkId ?? '').trim();
+    const aid = (assignmentId ?? '').trim();
+    if (!rid || !aid) return;
+    const settingsAssignmentId = await this.ensurePromptManagerSettingsAssignment(courseId, domainOverride, token);
+    const blob = await this.readPromptManagerSettingsBlob(courseId, domainOverride, token);
+    const existingMap = blob?.resourceLinkAssignmentMap ?? {};
+    if (existingMap[rid] === aid) return;
+    const payload: PromptManagerSettingsBlob = {
+      ...blob,
+      v: blob?.v ?? 1,
+      configs: blob?.configs ?? {},
+      resourceLinkAssignmentMap: {
+        ...existingMap,
+        [rid]: aid,
+      },
+      updatedAt: new Date().toISOString(),
+    };
+    await this.canvas.updateAssignmentDescription(
+      courseId,
+      settingsAssignmentId,
+      JSON.stringify(payload),
+      domainOverride,
+      token,
+    );
+    appendLtiLog('prompt', 'rememberResourceLinkAssignmentMapping: saved', {
+      resourceLinkId: rid,
+      assignmentId: aid,
+    });
+  }
+
   async getConfig(ctx: LtiContext): Promise<PromptConfigJson | null> {
-    const assignmentId = ctx.assignmentId?.trim();
-    if (!assignmentId) {
-      return null;
-    }
     const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken);
     if (!token) {
       return null;
     }
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
     const blob = await this.readPromptManagerSettingsBlob(ctx.courseId, domainOverride, token);
+    const assignmentIdFromCtx = (ctx.assignmentId ?? '').trim();
+    const assignmentIdFromMap = (blob?.resourceLinkAssignmentMap?.[(ctx.resourceLinkId ?? '').trim()] ?? '').trim();
+    let assignmentResolutionSource: 'ctx' | 'map' | 'title' | 'none' = assignmentIdFromCtx ? 'ctx' : assignmentIdFromMap ? 'map' : 'none';
+    let assignmentId = assignmentIdFromCtx || assignmentIdFromMap;
+    if (!assignmentId) {
+      const title = (ctx.resourceLinkTitle ?? '').trim();
+      const titleMatch = title.match(/^(.+?)\s+—\s+Prompter(?:\s*\(.*\))?\s*$/i);
+      const assignmentNameHint = (titleMatch?.[1] ?? '').trim();
+      if (assignmentNameHint) {
+        const configs = blob?.configs ?? {};
+        const candidates = Object.entries(configs)
+          .filter(([, c]) => (c?.assignmentName ?? '').trim() === assignmentNameHint)
+          .map(([id]) => id);
+        if (candidates.length === 1) {
+          assignmentId = candidates[0];
+          assignmentResolutionSource = 'title';
+          appendLtiLog('prompt', 'getConfig: resolved assignmentId from resourceLinkTitle', {
+            assignmentId,
+            assignmentNameHint,
+            resourceLinkId: (ctx.resourceLinkId ?? '').trim() || '(none)',
+          });
+        }
+      }
+    }
+    appendLtiLog('prompt', 'getConfig: assignment resolution', {
+      source: assignmentResolutionSource,
+      assignmentId: assignmentId || '(none)',
+      assignmentIdFromCtx: assignmentIdFromCtx || '(none)',
+      assignmentIdFromMap: assignmentIdFromMap || '(none)',
+      resourceLinkId: (ctx.resourceLinkId ?? '').trim() || '(none)',
+    });
+    if (!assignmentId) {
+      return null;
+    }
     let config = blob?.configs?.[assignmentId] ?? null;
 
     // Backward compatibility: default promptMode to 'text' if not present
     if (config && !config.promptMode) {
       config = { ...config, promptMode: 'text' };
+    }
+    if (config?.promptMode === 'decks') {
+      const rawTotal = Number(config.videoPromptConfig?.totalCards);
+      const totalCards = Number.isFinite(rawTotal) && rawTotal > 0 ? Math.floor(rawTotal) : 10;
+      config = {
+        ...config,
+        videoPromptConfig: {
+          selectedDecks: config.videoPromptConfig?.selectedDecks ?? [],
+          totalCards,
+        },
+      };
     }
 
     // Hydrate key assignment-backed fields directly from Canvas so UI reflects current assignment state.
@@ -540,6 +620,9 @@ export class PromptService {
     });
 
     const existing = await this.getConfig(ctx);
+    const rawDeckTotal = Number(dto.videoPromptConfig?.totalCards);
+    const normalizedDeckTotal =
+      Number.isFinite(rawDeckTotal) && rawDeckTotal > 0 ? Math.floor(rawDeckTotal) : 10;
     const base: PromptConfigJson = existing ?? { minutes: 5, prompts: [], accessCode: '' };
     const merged: PromptConfigJson = {
       ...base,
@@ -568,7 +651,8 @@ export class PromptService {
                 id: d.id ?? '',
                 title: d.title ?? '',
               })),
-              totalCards: dto.videoPromptConfig.totalCards ?? 0,
+              // Guard against legacy/invalid values that caused empty prompt lists.
+              totalCards: normalizedDeckTotal,
             }
           : undefined,
       }),
@@ -756,6 +840,23 @@ export class PromptService {
               payloadVariant: 'content_id_only',
             },
           );
+          if (ensuredTool.resourceLinkId) {
+            try {
+              await this.rememberResourceLinkAssignmentMapping(
+                ctx.courseId,
+                ensuredTool.resourceLinkId,
+                assignmentId,
+                domainOverride,
+                token,
+              );
+            } catch (mapErr) {
+              appendLtiLog('prompt', 'externalToolEnsure: mapping save failed (non-fatal)', {
+                assignmentId,
+                resourceLinkId: ensuredTool.resourceLinkId,
+                error: String(mapErr),
+              });
+            }
+          }
           this.placementMarker({
             placementAttemptId,
             ltiVersion,
@@ -882,6 +983,23 @@ export class PromptService {
             token,
             { linkTitle },
           );
+          if (ltiSync.resourceLinkId) {
+            try {
+              await this.rememberResourceLinkAssignmentMapping(
+                ctx.courseId,
+                ltiSync.resourceLinkId,
+                assignmentId,
+                domainOverride,
+                token,
+              );
+            } catch (mapErr) {
+              appendLtiLog('prompt', 'templateClone11: mapping save failed (non-fatal)', {
+                assignmentId,
+                resourceLinkId: ltiSync.resourceLinkId,
+                error: String(mapErr),
+              });
+            }
+          }
           if (ltiSync.skippedReason && ltiSync.skippedReason !== 'already_linked') {
             throw new Error(`Prompter LTI module item sync skipped: ${ltiSync.skippedReason}`);
           }
@@ -1080,6 +1198,10 @@ export class PromptService {
       }
     }
 
+    const requestedTotal = Number(totalCards);
+    const totalToSelect =
+      Number.isFinite(requestedTotal) && requestedTotal > 0 ? Math.floor(requestedTotal) : 10;
+
     // Step 4: Round-robin selection across decks
     const selected: Array<{ title: string; videoId?: string }> = [];
     const usedTitles = new Set<string>();
@@ -1087,10 +1209,10 @@ export class PromptService {
     selectedDecks.forEach(d => deckIndices.set(d.id, 0));
 
     let deckRound = 0;
-    while (selected.length < totalCards) {
+    while (selected.length < totalToSelect) {
       let addedThisRound = false;
       for (const deck of selectedDecks) {
-        if (selected.length >= totalCards) break;
+        if (selected.length >= totalToSelect) break;
 
         const cards = deckCards.get(deck.id) ?? [];
         let idx = deckIndices.get(deck.id) ?? 0;
@@ -1119,8 +1241,8 @@ export class PromptService {
 
     // Step 7: Warning if can't reach totalCards
     let warning: string | undefined;
-    if (selected.length < totalCards) {
-      warning = `Only ${selected.length} unique words available across selected decks — showing ${selected.length} instead of ${totalCards}.`;
+    if (selected.length < totalToSelect) {
+      warning = `Only ${selected.length} unique words available across selected decks — showing ${selected.length} instead of ${totalToSelect}.`;
     }
 
     // Step 8: Final shuffle of selected prompts

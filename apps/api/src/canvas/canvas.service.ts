@@ -1306,6 +1306,7 @@ export class CanvasService {
     created: boolean;
     skippedReason?: string;
     itemId?: number;
+    resourceLinkId?: string | null;
     payloadVariant: 'content_id_only' | 'content_id_plus_external_url';
     diagnosisBucket?:
       | 'association_created'
@@ -1498,6 +1499,11 @@ export class CanvasService {
         created: false,
         skippedReason: 'already_linked',
         itemId: existing.id,
+        resourceLinkId:
+          existingLaunchIds.resourceLinkId ??
+          existingLaunchIds.ltiResourceLinkId ??
+          existingLaunchIds.launchUrlResourceLinkId ??
+          null,
         payloadVariant,
         diagnosisBucket,
       };
@@ -1589,6 +1595,11 @@ export class CanvasService {
     return {
       created: true,
       itemId: created?.id,
+      resourceLinkId:
+        createdLaunchIds.resourceLinkId ??
+        createdLaunchIds.ltiResourceLinkId ??
+        createdLaunchIds.launchUrlResourceLinkId ??
+        null,
       payloadVariant,
       diagnosisBucket,
     };

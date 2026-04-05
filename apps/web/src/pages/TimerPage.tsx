@@ -3,6 +3,7 @@ import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
 import * as promptApi from '../api/prompt.api';
 import { ManualTokenModal } from '../components/ManualTokenModal';
+import { resolveLtiContextValue } from '../utils/lti-context';
 import './PrompterPage.css';
 
 interface TimerPageProps {
@@ -53,6 +54,7 @@ export default function TimerPage({ context }: TimerPageProps) {
   const pendingPromptRef = useRef('');
   const autoFinishFiredRef = useRef(false);
   const [showManualTokenModal, setShowManualTokenModal] = useState(false);
+  const assignmentId = resolveLtiContextValue(context?.assignmentId);
 
   const doSubmit = useCallback(
     async (promptSnapshot: string, blob: Blob | null) => {
@@ -69,7 +71,7 @@ export default function TimerPage({ context }: TimerPageProps) {
       try {
         console.log('[TimerPage:doSubmit] Step 1: savePrompt');
         setLastFunction('POST /api/prompt/save-prompt');
-        await promptApi.savePrompt(promptSnapshot);
+        await promptApi.savePrompt(promptSnapshot, assignmentId);
         setLastApiResult('POST /api/prompt/save-prompt', 200, true);
         console.log('[TimerPage:doSubmit] savePrompt OK');
 
@@ -77,7 +79,7 @@ export default function TimerPage({ context }: TimerPageProps) {
           lastEndpoint = 'POST /api/prompt/submit-deep-link';
           console.log('[TimerPage:doSubmit] Step 2a: submitDeepLink (isDeepLink=true)', { blobSize: blob.size });
           setLastFunction('POST /api/prompt/submit-deep-link');
-          const result = await promptApi.submitDeepLink(blob, `asl_submission_${Date.now()}.webm`);
+          const result = await promptApi.submitDeepLink(blob, `asl_submission_${Date.now()}.webm`, assignmentId);
           setLastApiResult('POST /api/prompt/submit-deep-link', 200, true);
           let html: string;
           if (typeof result === 'object' && result?.dev) {
@@ -107,7 +109,7 @@ export default function TimerPage({ context }: TimerPageProps) {
           lastEndpoint = 'POST /api/prompt/submit';
           console.log('[TimerPage:doSubmit] Step 2b: submitPrompt (body to Canvas)');
           setLastFunction('POST /api/prompt/submit');
-          await promptApi.submitPrompt(promptSnapshot);
+          await promptApi.submitPrompt(promptSnapshot, assignmentId);
           setLastApiResult('POST /api/prompt/submit', 200, true);
           console.log('[TimerPage:doSubmit] submitPrompt OK');
         }
@@ -115,7 +117,7 @@ export default function TimerPage({ context }: TimerPageProps) {
           lastEndpoint = 'POST /api/prompt/upload-video';
           console.log('[TimerPage:doSubmit] Step 3: uploadVideo', { blobSize: blob.size });
           setLastFunction('POST /api/prompt/upload-video');
-          const result = await promptApi.uploadVideo(blob, `asl_submission_${Date.now()}.webm`);
+          const result = await promptApi.uploadVideo(blob, `asl_submission_${Date.now()}.webm`, assignmentId);
           setLastApiResult('POST /api/prompt/upload-video', 200, true);
           console.log('[TimerPage:doSubmit] uploadVideo OK', result);
         }
@@ -127,7 +129,7 @@ export default function TimerPage({ context }: TimerPageProps) {
         setLastApiError(lastEndpoint, 0, String(e));
       }
     },
-    [context?.messageType, setLastFunction, setLastApiResult, setLastApiError]
+    [context?.messageType, setLastFunction, setLastApiResult, setLastApiError, assignmentId]
   );
 
   useEffect(() => {
@@ -183,23 +185,32 @@ export default function TimerPage({ context }: TimerPageProps) {
     setLoading(true);
     try {
       setLastFunction('GET /api/prompt/config');
-      const data = await promptApi.getPromptConfig();
+      const urlAssignmentId = new URLSearchParams(window.location.search).get('assignmentId')?.trim() ?? '';
+      const effectiveAssignmentId = assignmentId || urlAssignmentId || null;
+      const data = await promptApi.getPromptConfig(effectiveAssignmentId);
       setLastApiResult('GET /api/prompt/config', 200, true);
       setConfig(data ?? null);
       
       // If deck mode, fetch the prompt list
       if (data?.promptMode === 'decks' && data?.videoPromptConfig?.selectedDecks && data.videoPromptConfig.selectedDecks.length > 0) {
         try {
+          const rawTotal = Number(data.videoPromptConfig.totalCards);
+          const totalCards = Number.isFinite(rawTotal) && rawTotal > 0 ? Math.floor(rawTotal) : 10;
           setLastFunction('POST /api/prompt/build-deck-prompts');
           const result = await promptApi.buildDeckPrompts(
             data.videoPromptConfig.selectedDecks,
-            data.videoPromptConfig.totalCards ?? 10
+            totalCards,
+            effectiveAssignmentId
           );
           setLastApiResult('POST /api/prompt/build-deck-prompts', 200, true);
           setDeckPrompts(result.prompts || []);
         } catch (e) {
           console.error('Failed to build deck prompts:', e);
+          setLastApiError('POST /api/prompt/build-deck-prompts', 0, String(e));
+          setDeckPrompts([]);
         }
+      } else {
+        setDeckPrompts([]);
       }
       
       if (!data?.accessCode?.trim()) {
@@ -214,7 +225,7 @@ export default function TimerPage({ context }: TimerPageProps) {
     } finally {
       setLoading(false);
     }
-  }, [context?.courseId, setLastFunction, setLastApiResult]);
+  }, [context?.courseId, assignmentId, setLastFunction, setLastApiResult, setLastApiError]);
 
   useEffect(() => {
     loadConfig();
@@ -247,7 +258,9 @@ export default function TimerPage({ context }: TimerPageProps) {
     setAccessError(null);
     try {
       setLastFunction('POST /api/prompt/verify-access');
-      const res = await promptApi.verifyAccess(accessCode, simpleFingerprint());
+      const urlAssignmentId = new URLSearchParams(window.location.search).get('assignmentId')?.trim() ?? '';
+      const effectiveAssignmentId = assignmentId || urlAssignmentId || null;
+      const res = await promptApi.verifyAccess(accessCode, simpleFingerprint(), effectiveAssignmentId);
       setLastApiResult('POST /api/prompt/verify-access', 200, true);
       if (res.blocked) {
         setBlocked(true);

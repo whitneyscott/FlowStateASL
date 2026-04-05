@@ -130,12 +130,16 @@ export async function putPromptConfig(config: Partial<PromptConfig>, assignmentI
   if (!res.ok) throw new Error(body.message ?? `HTTP ${res.status}`);
 }
 
-export async function verifyAccess(accessCode: string, fingerprint: string): Promise<{
+export async function verifyAccess(
+  accessCode: string,
+  fingerprint: string,
+  assignmentId?: string | null
+): Promise<{
   success: boolean;
   blocked?: boolean;
   attemptCount?: number;
 }> {
-  return fetchJson(base + '/verify-access', {
+  return fetchJson(withAssignmentId(base + '/verify-access', assignmentId), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ accessCode, fingerprint }),
@@ -143,26 +147,30 @@ export async function verifyAccess(accessCode: string, fingerprint: string): Pro
   });
 }
 
-export async function savePrompt(promptText: string): Promise<void> {
-  await fetch(base + '/save-prompt', apiInit({
+export async function savePrompt(promptText: string, assignmentId?: string | null): Promise<void> {
+  await fetch(withAssignmentId(base + '/save-prompt', assignmentId), apiInit({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ promptText }),
   }));
 }
 
-export async function submitPrompt(promptSnapshotHtml: string): Promise<void> {
-  await fetch(base + '/submit', apiInit({
+export async function submitPrompt(promptSnapshotHtml: string, assignmentId?: string | null): Promise<void> {
+  await fetch(withAssignmentId(base + '/submit', assignmentId), apiInit({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ promptSnapshotHtml }),
   }));
 }
 
-export async function uploadVideo(blob: Blob, filename: string): Promise<{ fileId: string }> {
+export async function uploadVideo(
+  blob: Blob,
+  filename: string,
+  assignmentId?: string | null
+): Promise<{ fileId: string }> {
   const form = new FormData();
   form.append('video', blob, filename);
-  const res = await fetch(base + '/upload-video', apiInit({ method: 'POST', body: form }));
+  const res = await fetch(withAssignmentId(base + '/upload-video', assignmentId), apiInit({ method: 'POST', body: form }));
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error((data as { message?: string }).message ?? `HTTP ${res.status}`);
   return data as { fileId: string };
@@ -186,10 +194,14 @@ export type SubmitDeepLinkResult =
       };
     };
 
-export async function submitDeepLink(blob: Blob, filename: string): Promise<SubmitDeepLinkResult> {
+export async function submitDeepLink(
+  blob: Blob,
+  filename: string,
+  assignmentId?: string | null
+): Promise<SubmitDeepLinkResult> {
   const form = new FormData();
   form.append('video', blob, filename);
-  const res = await fetch(base + '/submit-deep-link', apiInit({ method: 'POST', body: form }));
+  const res = await fetch(withAssignmentId(base + '/submit-deep-link', assignmentId), apiInit({ method: 'POST', body: form }));
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     throw new Error((data as { message?: string }).message ?? `HTTP ${res.status}`);
@@ -381,9 +393,10 @@ export async function deleteConfiguredAssignment(assignmentId: string): Promise<
 
 export async function buildDeckPrompts(
   selectedDecks: DeckConfig[],
-  totalCards: number
+  totalCards: number,
+  assignmentId?: string | null
 ): Promise<{ prompts: DeckPromptItem[]; warning?: string }> {
-  const res = await fetch(base + '/build-deck-prompts', apiInit({
+  const res = await fetch(withAssignmentId(base + '/build-deck-prompts', assignmentId), apiInit({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ selectedDecks, totalCards }),

@@ -78,6 +78,12 @@ export class PromptController {
         throw new BadRequestException('allowedAttempts must be an integer greater than or equal to 1');
       }
     }
+    if (dto.videoPromptConfig?.totalCards !== undefined) {
+      const v = Number(dto.videoPromptConfig.totalCards);
+      if (!Number.isFinite(v) || !Number.isInteger(v) || v < 1) {
+        throw new BadRequestException('videoPromptConfig.totalCards must be an integer greater than or equal to 1');
+      }
+    }
   }
 
   @Get('config')
@@ -128,14 +134,14 @@ export class PromptController {
   @Post('verify-access')
   @HttpCode(HttpStatus.OK)
   async verifyAccess(@Req() req: Request, @Body() dto: VerifyAccessDto) {
-    const ctx = this.getCtx(req);
+    const ctx = this.getCtxWithAssignment(req);
     return this.prompt.verifyAccess(ctx, dto.accessCode, dto.fingerprint);
   }
 
   @Post('save-prompt')
   @HttpCode(HttpStatus.OK)
   async savePrompt(@Req() req: Request, @Body() dto: SavePromptDto) {
-    const ctx = this.getCtx(req);
+    const ctx = this.getCtxWithAssignment(req);
     await this.prompt.savePrompt(ctx, dto.promptText);
     return { status: 'success' };
   }
@@ -145,7 +151,7 @@ export class PromptController {
   async submit(@Req() req: Request, @Body() dto: SubmitPromptDto) {
     const { appendLtiLog } = await import('../common/last-error.store');
     appendLtiLog('prompt', 'POST /submit received', { bodyLength: dto.promptSnapshotHtml?.length ?? 0 });
-    const ctx = this.getCtx(req);
+    const ctx = this.getCtxWithAssignment(req);
     await this.prompt.submit(ctx, dto.promptSnapshotHtml);
     return { status: 'success' };
   }
@@ -159,7 +165,7 @@ export class PromptController {
   ) {
     const { appendLtiLog } = await import('../common/last-error.store');
     appendLtiLog('prompt', 'POST /upload-video received', { hasFile: !!file?.buffer, size: file?.buffer?.length ?? 0, filename: file?.originalname ?? '(none)' });
-    const ctx = this.getCtx(req);
+    const ctx = this.getCtxWithAssignment(req);
     if (!file?.buffer) {
       throw new BadRequestException('No video file provided');
     }
@@ -258,7 +264,7 @@ export class PromptController {
   ) {
     const { appendLtiLog } = await import('../common/last-error.store');
     appendLtiLog('prompt', 'POST /submit-deep-link received', { hasFile: !!file?.buffer, size: file?.buffer?.length ?? 0, filename: file?.originalname ?? '(none)' });
-    const ctx = this.getCtx(req);
+    const ctx = this.getCtxWithAssignment(req);
     if (!file?.buffer) {
       throw new BadRequestException('No video file provided');
     }
@@ -414,12 +420,14 @@ export class PromptController {
     @Req() req: Request,
     @Body() body: { selectedDecks?: Array<{ id?: string; title?: string }>; totalCards?: number },
   ) {
-    const ctx = this.getCtx(req);
+    this.getCtxWithAssignment(req);
     const selectedDecks = (body.selectedDecks ?? []).map(d => ({
       id: (d.id ?? '').trim(),
       title: (d.title ?? '').trim(),
     })).filter(d => d.id);
-    const totalCards = body.totalCards ?? 10;
+    const requestedTotal = Number(body.totalCards);
+    const totalCards =
+      Number.isFinite(requestedTotal) && requestedTotal > 0 ? Math.floor(requestedTotal) : 10;
 
     if (selectedDecks.length === 0) {
       return { prompts: [], warning: 'No valid decks selected' };
