@@ -238,6 +238,40 @@ export class PromptService {
     return m;
   }
 
+  /**
+   * Recompute per-card timer from `sprout_playlist_videos.duration_seconds` so learners see
+   * updated timing without re-saving the assignment or creating a new one (fallback banks only;
+   * live build-deck-prompts already uses current rules).
+   */
+  private async enrichDeckPromptBankDurationsFromDb(
+    banks: Array<Array<{ title: string; videoId?: string; duration: number }>>,
+  ): Promise<Array<Array<{ title: string; videoId?: string; duration: number }>>> {
+    if (banks.length === 0) return banks;
+    const ids = new Set<string>();
+    for (const bank of banks) {
+      for (const p of bank) {
+        const id = (p.videoId ?? '').trim();
+        if (id) ids.add(id);
+      }
+    }
+    if (ids.size === 0) {
+      return banks.map((bank) =>
+        bank.map((p) => ({ ...p, duration: this.deckCardTotalSeconds(null) })),
+      );
+    }
+    const fromDb = await this.loadVideoDurationsFromDb([...ids]);
+    return banks.map((bank) =>
+      bank.map((p) => {
+        const vid = (p.videoId ?? '').trim();
+        if (!vid) {
+          return { ...p, duration: this.deckCardTotalSeconds(null) };
+        }
+        const sec = fromDb.get(vid);
+        return { ...p, duration: this.deckCardTotalSeconds(sec ?? null) };
+      }),
+    );
+  }
+
   private createPlacementAttemptId(): string {
     return randomUUID().replace(/-/g, '').slice(0, 8);
   }
@@ -907,6 +941,10 @@ export class PromptService {
             : [],
         )
         .filter((bank) => bank.length > 0);
+      const enrichedBanks =
+        normalizedBanks.length > 0
+          ? await this.enrichDeckPromptBankDurationsFromDb(normalizedBanks)
+          : [];
       const existingStatic = Array.isArray(config.videoPromptConfig?.staticFallbackPrompts)
         ? config.videoPromptConfig?.staticFallbackPrompts.map((s) => String(s ?? '').trim()).filter(Boolean)
         : [];
@@ -915,7 +953,7 @@ export class PromptService {
         videoPromptConfig: {
           selectedDecks,
           totalCards,
-          ...(normalizedBanks.length > 0 ? { storedPromptBanks: normalizedBanks } : {}),
+          ...(enrichedBanks.length > 0 ? { storedPromptBanks: enrichedBanks } : {}),
           ...(existingStatic.length > 0 ? { staticFallbackPrompts: existingStatic } : {}),
         },
       };
