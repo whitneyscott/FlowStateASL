@@ -1933,41 +1933,21 @@ export class PromptService {
         submittedAt: new Date().toISOString(),
       };
       const payloadJson = JSON.stringify(payload);
-      let wroteAsUser = false;
-      try {
-        await this.canvas.createSubmissionWithBody(
-          ctx.courseId,
-          ledgerAssignmentId,
-          userId,
-          payloadJson,
-          domainOverride,
-          token,
-          true,
-        );
-        wroteAsUser = true;
-      } catch (err) {
-        appendLtiLog('ledger', 'submit: ledger write with as_user_id failed; retrying self-submit', {
-          assignmentId,
-          ledgerAssignmentId,
-          userId,
-          error: String(err),
-        });
-        await this.canvas.createSubmissionWithBody(
-          ctx.courseId,
-          ledgerAssignmentId,
-          userId,
-          payloadJson,
-          domainOverride,
-          token,
-          false,
-        );
-      }
+      await this.canvas.createSubmissionWithBody(
+        ctx.courseId,
+        ledgerAssignmentId,
+        userId,
+        payloadJson,
+        domainOverride,
+        token,
+        false,
+      );
       appendLtiLog('ledger', 'submit: ledger row written', {
         assignmentId,
         ledgerAssignmentId,
         studentCanvasUserId: userId,
         eventId: payload.eventId,
-        writeMode: wroteAsUser ? 'as_user_id' : 'self-submit',
+        writeMode: 'self-submit',
       });
     } catch (ledgerErr) {
       appendLtiLog('ledger', 'submit: ledger write failed (non-fatal)', {
@@ -2066,7 +2046,7 @@ export class PromptService {
       note:
         tokenHolderNumeric != null &&
         String(tokenHolderNumeric).trim() !== String(studentUserId).trim()
-          ? 'If submit used teacher token without as_user_id, text lives on token holder; file APIs still target student — verify may show empty attachments on student row.'
+          ? 'Token holder differs from target student id; using direct student submission endpoints (no as_user_id).'
           : '(n/a)',
     });
 
@@ -2090,49 +2070,19 @@ export class PromptService {
     const { fileId } = await this.canvas.uploadFileToCanvas(uploadUrl, uploadParams, buffer, {
       tokenOverride: token,
     });
-    const uploadNeedsActAs =
-      tokenHolderNumeric != null && String(tokenHolderNumeric).trim() !== String(studentUserId).trim();
-    appendLtiLog('prompt-upload', 'uploadVideo: submitAssignmentWithFile (online_upload)', {
+    appendLtiLog('prompt-upload', 'uploadVideo: attachFileToSubmission (no as_user_id)', {
       fileId,
       assignmentId,
       studentUserId,
-      actAsUser: uploadNeedsActAs,
     });
-    try {
-      await this.canvas.submitAssignmentWithFile(
-        ctx.courseId,
-        assignmentId,
-        studentUserId,
-        fileId,
-        { actAsUser: uploadNeedsActAs },
-        domainOverride,
-        token,
-      );
-    } catch (err) {
-      const msg = String(err);
-      const authLike = /401|403|invalid as_user_id/i.test(msg);
-      if (authLike && uploadNeedsActAs) {
-        appendLtiLog(
-          'prompt-upload',
-          'uploadVideo: submitAssignmentWithFile rejected as_user_id; trying submission[file_ids] fallback',
-          {
-            assignmentId,
-            studentUserId,
-            fileId,
-          },
-        );
-        await this.canvas.attachFileToSubmission(
-          ctx.courseId,
-          assignmentId,
-          studentUserId,
-          fileId,
-          domainOverride,
-          token,
-        );
-      } else {
-        throw err;
-      }
-    }
+    await this.canvas.attachFileToSubmission(
+      ctx.courseId,
+      assignmentId,
+      studentUserId,
+      fileId,
+      domainOverride,
+      token,
+    );
 
     const readVerify = (
       sub: Awaited<ReturnType<CanvasService['getSubmissionFull']>>,

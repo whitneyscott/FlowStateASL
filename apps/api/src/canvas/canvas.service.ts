@@ -2299,88 +2299,27 @@ export class CanvasService {
     }
     const studentCanvasId = ((ctx.canvasUserId ?? '').trim() || ctx.userId).trim();
     const tokenUserId = await this.getCurrentCanvasUserId(domainOverride, token);
-    const preferActAs = tokenUserId ? String(tokenUserId) !== String(studentCanvasId) : true;
     appendLtiLog('canvas', 'writeSubmissionBody (Step 10)', {
       assignmentId,
       bodyLength: bodyContent?.length ?? 0,
       studentCanvasId,
       tokenUserId: tokenUserId ?? '(unknown)',
-      preferActAs,
+      writeMode: 'targeted_put_submission_body',
       submission_types: types ?? '(unknown)',
       tokenPreview: token ? `${token.slice(0, 4)}...${token.slice(-4)}` : 'MISSING',
     });
-    const postBody = (actAsUser: boolean) =>
-      this.createSubmissionWithBody(
-        ctx.courseId,
-        assignmentId,
-        studentCanvasId,
-        bodyContent,
-        domainOverride,
-        token,
-        actAsUser,
-      );
-    try {
-      await postBody(preferActAs);
-    } catch (firstErr) {
-      const msg = String(firstErr);
-      const authLike = /401|403|invalid as_user_id/i.test(msg);
-      if (authLike && preferActAs) {
-        appendLtiLog(
-          'canvas',
-          'writeSubmissionBody: trying safe targeted PUT fallback on student submission row',
-          {
-            tokenUserId: tokenUserId ?? '(unknown)',
-            studentCanvasId,
-            reason: 'as_user_id_rejected',
-          },
-        );
-        try {
-          await this.putSubmissionBody(
-            ctx.courseId,
-            assignmentId,
-            studentCanvasId,
-            bodyContent,
-            domainOverride,
-            token,
-          );
-          appendLtiLog(
-            'canvas',
-            'writeSubmissionBody: targeted PUT fallback succeeded',
-            {
-              studentCanvasId,
-              assignmentId,
-            },
-          );
-          return;
-        } catch (putErr) {
-          appendLtiLog(
-            'canvas',
-            'writeSubmissionBody: targeted PUT fallback failed',
-            {
-              studentCanvasId,
-              assignmentId,
-              error: String(putErr).slice(0, 220),
-            },
-          );
-        }
-        appendLtiLog(
-          'canvas',
-          'writeSubmissionBody FAIL: refusing unsafe fallback from as_user_id to self-submit because that can split ownership between token holder and student',
-          {
-            tokenUserId: tokenUserId ?? '(unknown)',
-            studentCanvasId,
-            error: msg.slice(0, 220),
-          },
-        );
-        throw new Error(
-          'Canvas rejected as_user_id for submission body. Refusing fallback to self-submit because it can write to the token holder instead of the student. Re-authorize with a token that can submit on behalf of students.',
-        );
-      }
-      if (!authLike) throw firstErr;
-      throw new Error(
-        `Canvas submission with body failed (${msg.slice(0, 220)}).`,
-      );
-    }
+    await this.putSubmissionBody(
+      ctx.courseId,
+      assignmentId,
+      studentCanvasId,
+      bodyContent,
+      domainOverride,
+      token,
+    );
+    appendLtiLog('canvas', 'writeSubmissionBody: targeted PUT succeeded', {
+      studentCanvasId,
+      assignmentId,
+    });
   }
 
   async putSubmissionBody(
