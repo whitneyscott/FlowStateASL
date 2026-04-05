@@ -2007,6 +2007,7 @@ export class PromptService {
       submission_type?: string;
       attachmentCount: number;
       hasPlaybackUrl: boolean;
+      commentAttachmentCount?: number;
     };
   }> {
     appendLtiLog('prompt-upload', 'uploadVideo ENTER', { filename, size: buffer.length });
@@ -2113,18 +2114,19 @@ export class PromptService {
       if (authLike && uploadNeedsActAs) {
         appendLtiLog(
           'prompt-upload',
-          'uploadVideo: submitAssignmentWithFile rejected as_user_id; trying safe targeted attach fallback',
+          'uploadVideo: submitAssignmentWithFile rejected as_user_id; trying comment[file_ids] fallback',
           {
             assignmentId,
             studentUserId,
             fileId,
           },
         );
-        await this.canvas.attachFileToSubmission(
+        await this.canvas.attachFileToSubmissionComment(
           ctx.courseId,
           assignmentId,
           studentUserId,
           fileId,
+          { textComment: 'ASL Express video attachment' },
           domainOverride,
           token,
         );
@@ -2141,17 +2143,32 @@ export class PromptService {
       submission_type: string | undefined;
       attachmentCount: number;
       hasPlaybackUrl: boolean;
+      commentAttachmentCount: number;
     } => {
       const subAny = sub as {
         workflow_state?: string;
         submission_type?: string;
         attachments?: unknown[];
         attachment?: unknown;
+        submission_comments?: Array<{
+          attachments?: Array<{ id?: number; url?: string; download_url?: string }>;
+          attachment_ids?: number[];
+        }>;
       } | null;
       const attachmentCount =
         (sub?.attachments?.length ?? 0) + (sub?.attachment ? 1 : 0);
+      const commentAttachmentCount = (subAny?.submission_comments ?? []).reduce((count, c) => {
+        const fromObjects = c?.attachments?.length ?? 0;
+        const fromIds = c?.attachment_ids?.length ?? 0;
+        return count + Math.max(fromObjects, fromIds);
+      }, 0);
+      const commentVideoUrl = (subAny?.submission_comments ?? [])
+        .flatMap((c) => c?.attachments ?? [])
+        .map((a) => (a?.url || a?.download_url || '').trim())
+        .find((u) => !!u);
       const hasPlaybackUrl = !!(
-        sub && getVideoUrlFromCanvasSubmission(sub as Parameters<typeof getVideoUrlFromCanvasSubmission>[0])
+        (sub && getVideoUrlFromCanvasSubmission(sub as Parameters<typeof getVideoUrlFromCanvasSubmission>[0])) ||
+        commentVideoUrl
       );
       return {
         submissionFetched: !!sub,
@@ -2159,6 +2176,7 @@ export class PromptService {
         submission_type: subAny?.submission_type ?? undefined,
         attachmentCount,
         hasPlaybackUrl,
+        commentAttachmentCount,
       };
     };
 
@@ -2168,6 +2186,7 @@ export class PromptService {
       submission_type: undefined as string | undefined,
       attachmentCount: 0,
       hasPlaybackUrl: false,
+      commentAttachmentCount: 0,
     };
     for (let attempt = 1; attempt <= 4; attempt += 1) {
       const sub = await this.canvas.getSubmissionFull(
@@ -2190,6 +2209,7 @@ export class PromptService {
       const hasSubmissionEvidence =
         verify.hasPlaybackUrl ||
         verify.attachmentCount > 0 ||
+        verify.commentAttachmentCount > 0 ||
         String(verify.submission_type ?? '').toLowerCase() === 'online_upload';
       if (hasSubmissionEvidence) break;
       if (attempt < 4) {
@@ -2201,6 +2221,7 @@ export class PromptService {
       verify.submissionFetched &&
       !verify.hasPlaybackUrl &&
       verify.attachmentCount === 0 &&
+      verify.commentAttachmentCount === 0 &&
       String(verify.submission_type ?? '').toLowerCase() !== 'online_upload'
     ) {
       appendLtiLog(
@@ -2425,7 +2446,10 @@ export class PromptService {
         body: s.body,
         score: s.score,
         grade: s.grade,
-        submissionComments: s.submission_comments?.map((c) => ({ id: c.id, comment: c.comment })) ?? [],
+        submissionComments:
+          s.submission_comments
+            ?.filter((c) => c.id != null && c.comment != null)
+            .map((c) => ({ id: c.id!, comment: c.comment! })) ?? [],
         videoUrl,
         fallbackVideoUrl,
       };
@@ -2805,7 +2829,10 @@ export class PromptService {
       body: sub.body,
       score: sub.score,
       grade: sub.grade,
-      submissionComments: sub.submission_comments?.map((c) => ({ id: c.id, comment: c.comment })) ?? [],
+      submissionComments:
+        sub.submission_comments
+          ?.filter((c) => c.id != null && c.comment != null)
+          .map((c) => ({ id: c.id!, comment: c.comment! })) ?? [],
       videoUrl,
       attempt: sub.attempt ?? 1,
       rubricAssessment: sub.rubric_assessment as Record<string, unknown> | undefined,

@@ -392,6 +392,57 @@ export class CanvasService {
     appendLtiLog('canvas', 'attachFileToSubmission OK', { courseId, assignmentId, userId, fileId, ...attachSummary });
   }
 
+  /**
+   * Attach a file to a submission comment on the target student row.
+   * This matches the Submissions update API parameter `comment[file_ids][]`.
+   */
+  async attachFileToSubmissionComment(
+    courseId: string,
+    assignmentId: string,
+    userId: string,
+    fileId: string,
+    options?: { textComment?: string },
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<void> {
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}?include[]=submission_comments`;
+    const textComment = options?.textComment?.trim() || 'ASL Express video attachment';
+    const body = {
+      comment: {
+        text_comment: textComment,
+        file_ids: [Number(fileId)],
+      },
+    };
+    appendLtiLog('canvas', 'attachFileToSubmissionComment', {
+      courseId,
+      assignmentId,
+      userId,
+      fileId,
+      textCommentPreview: textComment.slice(0, 80),
+    });
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: this.getAuthHeaders(tokenOverride),
+      body: JSON.stringify(body),
+    });
+    const raw = await res.text();
+    if (!res.ok) {
+      appendLtiLog('canvas', 'attachFileToSubmissionComment FAIL', {
+        status: res.status,
+        bodyPreview: raw.slice(0, 800),
+      });
+      throw new Error(`Canvas attach file to submission comment failed: ${res.status} ${raw}`);
+    }
+    appendLtiLog('canvas', 'attachFileToSubmissionComment OK', {
+      courseId,
+      assignmentId,
+      userId,
+      fileId,
+      responsePreview: raw.slice(0, 1200),
+    });
+  }
+
   async submitAssignmentWithFile(
     courseId: string,
     assignmentId: string,
@@ -2363,7 +2414,12 @@ export class CanvasService {
     grade?: string;
     attempt?: number;
     submitted_at?: string;
-    submission_comments?: Array<{ id: number; comment: string }>;
+    submission_comments?: Array<{
+      id?: number;
+      comment?: string;
+      attachments?: Array<{ id?: number; url?: string; download_url?: string }>;
+      attachment_ids?: number[];
+    }>;
     attachment?: { url?: string; id?: number };
     attachments?: Array<{ url?: string; download_url?: string; id?: number; display_name?: string }>;
     versioned_attachments?: Array<Array<{ url?: string }>>;
@@ -2444,7 +2500,12 @@ export class CanvasService {
       grade?: string;
       attempt?: number;
       submitted_at?: string;
-      submission_comments?: Array<{ id: number; comment: string }>;
+      submission_comments?: Array<{
+        id?: number;
+        comment?: string;
+        attachments?: Array<{ id?: number; url?: string; download_url?: string }>;
+        attachment_ids?: number[];
+      }>;
       attachment?: { url?: string; id?: number };
       attachments?: Array<{ url?: string; download_url?: string; id?: number; display_name?: string }>;
       versioned_attachments?: Array<Array<{ url?: string }>>;
