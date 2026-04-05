@@ -1603,6 +1603,7 @@ export class CanvasService {
       ),
     );
 
+    /** Save path skips `lti_resource_links` list scan for latency; association = launch hints only. */
     const classifyDiagnosisBucket = (args: {
       launchIds: {
         resourceLinkId?: string | null;
@@ -1610,15 +1611,12 @@ export class CanvasService {
         launchUrlResourceLinkId?: string | null;
       };
       sessionless: Record<string, unknown> | null;
-      resourceLinks: Array<Record<string, unknown>>;
     }): 'association_created' | 'association_missing_after_create' | 'tool_launch_mismatch' | 'sessionless_unresolvable' => {
-      const hasLaunchIds = !!(
+      const hasAssociation = !!(
         args.launchIds.resourceLinkId ||
         args.launchIds.ltiResourceLinkId ||
         args.launchIds.launchUrlResourceLinkId
       );
-      const hasResourceLinks = Array.isArray(args.resourceLinks) && args.resourceLinks.length > 0;
-      const hasAssociation = hasLaunchIds || hasResourceLinks;
       const sessionlessUrl = String(args.sessionless?.url ?? '').trim();
       const hasSessionlessUrl = !!sessionlessUrl;
       const sessionlessError = !!args.sessionless?.error;
@@ -1644,16 +1642,9 @@ export class CanvasService {
         domainOverride,
         tokenOverride,
       );
-      const resourceLinks = await this.findResourceLinksForModuleItem(
-        courseId,
-        existing.id,
-        domainOverride,
-        tokenOverride,
-      );
       const diagnosisBucket = classifyDiagnosisBucket({
         launchIds: existingLaunchIds,
         sessionless,
-        resourceLinks,
       });
       appendLtiLog('canvas', 'syncPrompterLtiModuleItem: already present', {
         externalToolId: toolIdNum,
@@ -1668,15 +1659,7 @@ export class CanvasService {
         toolLaunchUrl: String(externalTool?.url ?? externalTool?.target_link_uri ?? '') || null,
         toolDomain: String(externalTool?.domain ?? '') || null,
         sessionlessLaunchUrl: String(sessionless?.url ?? '') || null,
-        resourceLinks: resourceLinks.map((r) => ({
-          id: r.id ?? null,
-          contextExternalToolId: r.context_external_tool_id ?? null,
-          resourceLinkUuid: r.resource_link_uuid ?? null,
-          lookupUuid: r.lookup_uuid ?? null,
-          associatedContentType: r.associated_content_type ?? null,
-          associatedContentId: r.associated_content_id ?? null,
-          canvasLaunchUrl: r.canvas_launch_url ?? null,
-        })),
+        ltiResourceLinksLookup: 'skipped_for_save_latency',
       });
       return {
         created: false,
@@ -1741,26 +1724,13 @@ export class CanvasService {
     const sessionless = created?.id
       ? await this.getSessionlessLaunchForModuleItem(courseId, created.id, domainOverride, tokenOverride)
       : null;
-    const resourceLinks = created?.id
-      ? await this.findResourceLinksForModuleItem(courseId, created.id, domainOverride, tokenOverride)
-      : [];
-    appendLtiLog('prompt-decks', 'syncPrompterLtiModuleItem: resourceLinks raw', {
-      moduleItemId: created?.id,
-      resourceLinksCount: resourceLinks.length,
-      resourceLinks: resourceLinks.map((r) => ({
-        id: r.id ?? null,
-        resourceLinkUuid: r.resource_link_uuid ?? null,
-        lti11Id: r.lti_1_1_id ?? null,
-        lookupUuid: r.lookup_uuid ?? null,
-        associatedContentType: r.associated_content_type ?? null,
-        associatedContentId: r.associated_content_id ?? null,
-      })),
+    appendLtiLog('prompt-decks', 'syncPrompterLtiModuleItem: lti_resource_links scan skipped (save latency)', {
+      moduleItemId: created?.id ?? null,
     });
     const createdLaunchIds = collectLaunchIdHints(createdDetails ?? created);
     const diagnosisBucket = classifyDiagnosisBucket({
       launchIds: createdLaunchIds,
       sessionless,
-      resourceLinks,
     });
     appendLtiLog('canvas', 'syncPrompterLtiModuleItem OK', {
       externalToolId: toolIdStr,
@@ -1777,15 +1747,7 @@ export class CanvasService {
       toolLaunchUrl: String(externalTool?.url ?? externalTool?.target_link_uri ?? '') || null,
       toolDomain: String(externalTool?.domain ?? '') || null,
       sessionlessLaunchUrl: String(sessionless?.url ?? '') || null,
-      resourceLinks: resourceLinks.map((r) => ({
-        id: r.id ?? null,
-        contextExternalToolId: r.context_external_tool_id ?? null,
-        resourceLinkUuid: r.resource_link_uuid ?? null,
-        lookupUuid: r.lookup_uuid ?? null,
-        associatedContentType: r.associated_content_type ?? null,
-        associatedContentId: r.associated_content_id ?? null,
-        canvasLaunchUrl: r.canvas_launch_url ?? null,
-      })),
+      ltiResourceLinksLookup: 'skipped_for_save_latency',
     });
     return {
       created: true,
