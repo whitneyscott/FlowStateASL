@@ -18,6 +18,19 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
+async function getErrorMessage(res: Response): Promise<string> {
+  const contentType = res.headers.get('content-type') ?? '';
+  if (contentType.includes('application/json')) {
+    const data = await res.json().catch(() => ({}));
+    const msg = (data as { message?: string; error?: string }).message ?? (data as { error?: string }).error;
+    if (msg) return msg;
+  } else {
+    const text = await res.text().catch(() => '');
+    if (text) return text.slice(0, 300);
+  }
+  return `HTTP ${res.status}`;
+}
+
 /** Error thrown when LTI 1.1 user needs to enter manual token (no OAuth support). */
 export class NeedsManualTokenError extends Error {
   constructor(message?: string) {
@@ -148,19 +161,21 @@ export async function verifyAccess(
 }
 
 export async function savePrompt(promptText: string, assignmentId?: string | null): Promise<void> {
-  await fetch(withAssignmentId(base + '/save-prompt', assignmentId), apiInit({
+  const res = await fetch(withAssignmentId(base + '/save-prompt', assignmentId), apiInit({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ promptText }),
   }));
+  if (!res.ok) throw new Error(await getErrorMessage(res));
 }
 
 export async function submitPrompt(promptSnapshotHtml: string, assignmentId?: string | null): Promise<void> {
-  await fetch(withAssignmentId(base + '/submit', assignmentId), apiInit({
+  const res = await fetch(withAssignmentId(base + '/submit', assignmentId), apiInit({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ promptSnapshotHtml }),
   }));
+  if (!res.ok) throw new Error(await getErrorMessage(res));
 }
 
 export async function uploadVideo(

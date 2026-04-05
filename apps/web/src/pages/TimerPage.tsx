@@ -169,9 +169,8 @@ export default function TimerPage({ context }: TimerPageProps) {
   const minutes = config?.minutes ?? 5;
   const prompts = config?.prompts ?? [];
   const needsAccessCode = !!config?.accessCode?.trim();
-  const isDeckMode = (config?.promptMode ?? 'text') === 'decks' && deckPrompts.length > 0;
-  
-  // Use deck prompts in deck mode, otherwise use text prompts
+  // Use dynamically generated deck prompts when present; otherwise use configured text prompts.
+  // This keeps deck-mode rendering on the same display path as standard text prompts.
   const displayPrompts = deckPrompts.length > 0 
     ? deckPrompts.map(p => p.title) 
     : prompts;
@@ -432,20 +431,7 @@ export default function TimerPage({ context }: TimerPageProps) {
       <div className="prompter-page">
         <div className="prompter-card">
           <div className="prompter-prompt-column prompter-prompt-column-center">
-            {isDeckMode && displayPrompts.length > 0 ? (
-              <>
-                <strong>Selected Video Prompts</strong>
-                <ol style={{ marginTop: 10 }}>
-                  {displayPrompts.map((title, idx) => (
-                    <li key={`${idx}-${title}`} style={{ fontWeight: idx === promptIndex ? 700 : 400 }}>
-                      {title}
-                    </li>
-                  ))}
-                </ol>
-              </>
-            ) : (
-              display
-            )}
+            {display}
           </div>
           <div className="prompter-timer-display">{m}:{s < 10 ? '0' : ''}{s}</div>
           <button type="button" onClick={() => setPhase('preflight')} className="prompter-btn-ready">Ready Early</button>
@@ -493,20 +479,7 @@ export default function TimerPage({ context }: TimerPageProps) {
           </div>
           <div className="prompter-record-layout">
             <div className="prompter-prompt-column" style={{ flex: '1 1 300px', maxWidth: 480 }}>
-              {isDeckMode && displayPrompts.length > 0 ? (
-                <>
-                  <strong>Selected Video Prompts</strong>
-                  <ol style={{ marginTop: 10 }}>
-                    {displayPrompts.map((title, idx) => (
-                      <li key={`${idx}-${title}`} style={{ fontWeight: idx === promptIndex ? 700 : 400 }}>
-                        {title}
-                      </li>
-                    ))}
-                  </ol>
-                </>
-              ) : (
-                <div>{currentPromptText}</div>
-              )}
+              <div>{currentPromptText}</div>
             </div>
             <div className="prompter-record-video-col">
               <div className="prompter-video-container">
