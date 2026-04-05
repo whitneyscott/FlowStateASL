@@ -1671,6 +1671,18 @@ export class CanvasService {
     const resourceLinks = created?.id
       ? await this.findResourceLinksForModuleItem(courseId, created.id, domainOverride, tokenOverride)
       : [];
+    appendLtiLog('canvas', 'syncPrompterLtiModuleItem: resourceLinks raw', {
+      moduleItemId: created?.id,
+      resourceLinksCount: resourceLinks.length,
+      resourceLinks: resourceLinks.map((r) => ({
+        id: r.id ?? null,
+        resourceLinkUuid: r.resource_link_uuid ?? null,
+        lti11Id: r.lti_1_1_id ?? null,
+        lookupUuid: r.lookup_uuid ?? null,
+        associatedContentType: r.associated_content_type ?? null,
+        associatedContentId: r.associated_content_id ?? null,
+      })),
+    });
     const createdLaunchIds = collectLaunchIdHints(createdDetails ?? created);
     const diagnosisBucket = classifyDiagnosisBucket({
       launchIds: createdLaunchIds,
