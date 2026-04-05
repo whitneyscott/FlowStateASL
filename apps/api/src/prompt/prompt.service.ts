@@ -2111,11 +2111,26 @@ export class PromptService {
       const msg = String(err);
       const authLike = /401|403|invalid as_user_id/i.test(msg);
       if (authLike && uploadNeedsActAs) {
-        throw new Error(
-          'Canvas rejected submit-on-behalf (as_user_id) for video submission. Refusing unsafe fallback that could write to the token holder instead of the student.',
+        appendLtiLog(
+          'prompt-upload',
+          'uploadVideo: submitAssignmentWithFile rejected as_user_id; trying safe targeted attach fallback',
+          {
+            assignmentId,
+            studentUserId,
+            fileId,
+          },
         );
+        await this.canvas.attachFileToSubmission(
+          ctx.courseId,
+          assignmentId,
+          studentUserId,
+          fileId,
+          domainOverride,
+          token,
+        );
+      } else {
+        throw err;
       }
-      throw err;
     }
 
     const readVerify = (

@@ -2271,6 +2271,44 @@ export class CanvasService {
       if (authLike && preferActAs) {
         appendLtiLog(
           'canvas',
+          'writeSubmissionBody: trying safe targeted PUT fallback on student submission row',
+          {
+            tokenUserId: tokenUserId ?? '(unknown)',
+            studentCanvasId,
+            reason: 'as_user_id_rejected',
+          },
+        );
+        try {
+          await this.putSubmissionBody(
+            ctx.courseId,
+            assignmentId,
+            studentCanvasId,
+            bodyContent,
+            domainOverride,
+            token,
+          );
+          appendLtiLog(
+            'canvas',
+            'writeSubmissionBody: targeted PUT fallback succeeded',
+            {
+              studentCanvasId,
+              assignmentId,
+            },
+          );
+          return;
+        } catch (putErr) {
+          appendLtiLog(
+            'canvas',
+            'writeSubmissionBody: targeted PUT fallback failed',
+            {
+              studentCanvasId,
+              assignmentId,
+              error: String(putErr).slice(0, 220),
+            },
+          );
+        }
+        appendLtiLog(
+          'canvas',
           'writeSubmissionBody FAIL: refusing unsafe fallback from as_user_id to self-submit because that can split ownership between token holder and student',
           {
             tokenUserId: tokenUserId ?? '(unknown)',
