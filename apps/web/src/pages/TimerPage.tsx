@@ -791,6 +791,7 @@ export default function TimerPage({ context }: TimerPageProps) {
       <div className="prompter-page">
         <div className="prompter-card">
           <p className="prompter-info-message">Uploading video...</p>
+          {submitError && <p className="prompter-error-message prompter-error-message-mt">{submitError}</p>}
         </div>
       </div>
     );

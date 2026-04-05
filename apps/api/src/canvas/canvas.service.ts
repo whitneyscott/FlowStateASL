@@ -397,28 +397,42 @@ export class CanvasService {
     assignmentId: string,
     userId: string,
     fileId: string,
-    bodyHtml: string,
+    options?: { bodyHtml?: string; actAsUser?: boolean },
     domainOverride?: string,
     tokenOverride?: string | null,
   ): Promise<void> {
     const base = this.getBaseUrl(domainOverride);
-    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions`;
+    const baseUrl = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions`;
+    const actAsUser = options?.actAsUser === true;
+    const url = actAsUser ? `${baseUrl}?as_user_id=${encodeURIComponent(userId)}` : baseUrl;
     const body = {
       submission: {
         submission_type: 'online_upload',
-        file_ids: [fileId],
-        body: bodyHtml,
+        file_ids: [Number(fileId)],
+        ...(options?.bodyHtml ? { body: options.bodyHtml } : {}),
       },
     };
-    const res = await fetch(url + '?as_user_id=' + encodeURIComponent(userId), {
+    appendLtiLog('canvas', 'submitAssignmentWithFile: POST request', {
+      assignmentId,
+      userId,
+      fileId,
+      actAsUser,
+      requestUrl: actAsUser ? `${baseUrl}?as_user_id=<userId>` : baseUrl,
+    });
+    const res = await fetch(url, {
       method: 'POST',
       headers: this.getAuthHeaders(tokenOverride),
       body: JSON.stringify(body),
     });
+    const text = await res.text();
     if (!res.ok) {
-      const text = await res.text();
       throw new Error(`Canvas submit assignment failed: ${res.status} ${text}`);
     }
+    appendLtiLog('canvas', 'submitAssignmentWithFile: POST response', {
+      status: res.status,
+      actAsUser,
+      responsePreview: text.slice(0, 1200),
+    });
   }
 
   async renameAssignment(
@@ -2249,34 +2263,28 @@ export class CanvasService {
         token,
         actAsUser,
       );
-    let succeededWithActAs: boolean | undefined;
     try {
       await postBody(preferActAs);
-      succeededWithActAs = preferActAs;
     } catch (firstErr) {
       const msg = String(firstErr);
       const authLike = /401|403|invalid as_user_id/i.test(msg);
+      if (authLike && preferActAs) {
+        appendLtiLog(
+          'canvas',
+          'writeSubmissionBody FAIL: refusing unsafe fallback from as_user_id to self-submit because that can split ownership between token holder and student',
+          {
+            tokenUserId: tokenUserId ?? '(unknown)',
+            studentCanvasId,
+            error: msg.slice(0, 220),
+          },
+        );
+        throw new Error(
+          'Canvas rejected as_user_id for submission body. Refusing fallback to self-submit because it can write to the token holder instead of the student. Re-authorize with a token that can submit on behalf of students.',
+        );
+      }
       if (!authLike) throw firstErr;
-      appendLtiLog('canvas', 'writeSubmissionBody: retry with flipped actAsUser', {
-        preferActAs,
-        error: msg.slice(0, 120),
-      });
-      await postBody(!preferActAs);
-      succeededWithActAs = !preferActAs;
-    }
-    if (
-      tokenUserId &&
-      String(tokenUserId) !== String(studentCanvasId) &&
-      succeededWithActAs === false
-    ) {
-      appendLtiLog(
-        'canvas',
-        'writeSubmissionBody WARN: POST succeeded without as_user_id but OAuth/service token belongs to a different Canvas user than the student — Canvas almost certainly stored the text submission on the TOKEN HOLDER, not on studentCanvasId. Video upload still targets the student path; attach/verify may look empty or split across users.',
-        {
-          tokenUserId,
-          studentCanvasId,
-          preferActAs,
-        },
+      throw new Error(
+        `Canvas submission with body failed (${msg.slice(0, 220)}).`,
       );
     }
   }

@@ -2089,54 +2089,112 @@ export class PromptService {
     const { fileId } = await this.canvas.uploadFileToCanvas(uploadUrl, uploadParams, buffer, {
       tokenOverride: token,
     });
-    appendLtiLog('prompt-upload', 'uploadVideo: attachFileToSubmission', { fileId, assignmentId, studentUserId });
-    await this.canvas.attachFileToSubmission(
-      ctx.courseId,
-      assignmentId,
-      studentUserId,
+    const uploadNeedsActAs =
+      tokenHolderNumeric != null && String(tokenHolderNumeric).trim() !== String(studentUserId).trim();
+    appendLtiLog('prompt-upload', 'uploadVideo: submitAssignmentWithFile (online_upload)', {
       fileId,
-      domainOverride,
-      token,
-    );
-
-    const sub = await this.canvas.getSubmissionFull(
-      ctx.courseId,
       assignmentId,
       studentUserId,
-      domainOverride,
-      token,
-      { bridge: true, tag: 'upload-video-verify' },
-    );
-    const subAny = sub as {
-      workflow_state?: string;
-      submission_type?: string;
-      attachments?: unknown[];
-      attachment?: unknown;
-    } | null;
-    const attachmentCount =
-      (sub?.attachments?.length ?? 0) + (sub?.attachment ? 1 : 0);
-    const hasPlaybackUrl = !!(
-      sub && getVideoUrlFromCanvasSubmission(sub as Parameters<typeof getVideoUrlFromCanvasSubmission>[0])
-    );
-    const verify = {
-      submissionFetched: !!sub,
-      workflow_state: subAny?.workflow_state,
-      submission_type: subAny?.submission_type,
-      attachmentCount,
-      hasPlaybackUrl,
-    };
-    appendLtiLog('prompt-upload', 'upload-video VERIFY after attach (getSubmissionFull)', {
-      courseId: ctx.courseId,
-      assignmentId,
-      studentUserId,
-      fileId,
-      ...verify,
+      actAsUser: uploadNeedsActAs,
     });
-    if (verify.submissionFetched && !verify.hasPlaybackUrl && verify.attachmentCount === 0) {
+    try {
+      await this.canvas.submitAssignmentWithFile(
+        ctx.courseId,
+        assignmentId,
+        studentUserId,
+        fileId,
+        { actAsUser: uploadNeedsActAs },
+        domainOverride,
+        token,
+      );
+    } catch (err) {
+      const msg = String(err);
+      const authLike = /401|403|invalid as_user_id/i.test(msg);
+      if (authLike && uploadNeedsActAs) {
+        throw new Error(
+          'Canvas rejected submit-on-behalf (as_user_id) for video submission. Refusing unsafe fallback that could write to the token holder instead of the student.',
+        );
+      }
+      throw err;
+    }
+
+    const readVerify = (
+      sub: Awaited<ReturnType<CanvasService['getSubmissionFull']>>,
+    ): {
+      submissionFetched: boolean;
+      workflow_state: string | undefined;
+      submission_type: string | undefined;
+      attachmentCount: number;
+      hasPlaybackUrl: boolean;
+    } => {
+      const subAny = sub as {
+        workflow_state?: string;
+        submission_type?: string;
+        attachments?: unknown[];
+        attachment?: unknown;
+      } | null;
+      const attachmentCount =
+        (sub?.attachments?.length ?? 0) + (sub?.attachment ? 1 : 0);
+      const hasPlaybackUrl = !!(
+        sub && getVideoUrlFromCanvasSubmission(sub as Parameters<typeof getVideoUrlFromCanvasSubmission>[0])
+      );
+      return {
+        submissionFetched: !!sub,
+        workflow_state: subAny?.workflow_state ?? undefined,
+        submission_type: subAny?.submission_type ?? undefined,
+        attachmentCount,
+        hasPlaybackUrl,
+      };
+    };
+
+    let verify = {
+      submissionFetched: false,
+      workflow_state: undefined as string | undefined,
+      submission_type: undefined as string | undefined,
+      attachmentCount: 0,
+      hasPlaybackUrl: false,
+    };
+    for (let attempt = 1; attempt <= 4; attempt += 1) {
+      const sub = await this.canvas.getSubmissionFull(
+        ctx.courseId,
+        assignmentId,
+        studentUserId,
+        domainOverride,
+        token,
+        { bridge: true, tag: `upload-video-verify-attempt-${attempt}` },
+      );
+      verify = readVerify(sub);
+      appendLtiLog('prompt-upload', 'upload-video VERIFY after online_upload submit', {
+        courseId: ctx.courseId,
+        assignmentId,
+        studentUserId,
+        fileId,
+        attempt,
+        ...verify,
+      });
+      const hasSubmissionEvidence =
+        verify.hasPlaybackUrl ||
+        verify.attachmentCount > 0 ||
+        String(verify.submission_type ?? '').toLowerCase() === 'online_upload';
+      if (hasSubmissionEvidence) break;
+      if (attempt < 4) {
+        const waitMs = attempt === 1 ? 500 : attempt === 2 ? 1000 : 2000;
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+      }
+    }
+    if (
+      verify.submissionFetched &&
+      !verify.hasPlaybackUrl &&
+      verify.attachmentCount === 0 &&
+      String(verify.submission_type ?? '').toLowerCase() !== 'online_upload'
+    ) {
       appendLtiLog(
         'prompt-upload',
-        'upload-video WARN: submission has no attachments and no playback URL yet (may still be processing, or wrong user)',
-        { assignmentId, studentUserId, fileId },
+        'upload-video FAIL: no evidence of video on target student submission after retries',
+        { assignmentId, studentUserId, fileId, verify },
+      );
+      throw new Error(
+        'Canvas did not confirm a video attachment on the target student submission after upload retries. Submission not marked successful.',
       );
     }
     appendLtiLog('prompt-upload', 'uploadVideo DONE', { fileId, assignmentId, studentUserId, ...verify });
