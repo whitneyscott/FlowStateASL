@@ -314,9 +314,8 @@ export class CanvasService {
   }
 
   /**
-   * Attach an uploaded file to an existing submission (PUT file_ids).
-   * Mirrors PHP upload_handler.php: same endpoint and body.
-   * Use a token with permission to act on behalf of the user (e.g. CANVAS_API_TOKEN).
+   * Submit an uploaded file using an online_upload submission payload.
+   * Uses POST /submissions with submission_type + file_ids (no as_user_id).
    */
   async attachFileToSubmission(
     courseId: string,
@@ -328,7 +327,7 @@ export class CanvasService {
   ): Promise<void> {
     appendLtiLog('canvas', 'attachFileToSubmission', { courseId, assignmentId, userId, fileId });
     const base = this.getBaseUrl(domainOverride);
-    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}`;
+    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions`;
     const body = {
       submission: {
         submission_type: 'online_upload',
@@ -336,7 +335,7 @@ export class CanvasService {
       },
     };
     const res = await fetch(url, {
-      method: 'PUT',
+      method: 'POST',
       headers: this.getAuthHeaders(tokenOverride),
       body: JSON.stringify(body),
     });
@@ -344,7 +343,7 @@ export class CanvasService {
       const text = await res.text();
       appendLtiLog('canvas', 'attachFileToSubmission FAIL', {
         status: res.status,
-        requestPath: `/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}`,
+        requestPath: `/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions`,
         text: text.slice(0, 800),
       });
       throw new Error(`Canvas attach file to submission failed: ${res.status} ${text}`);
