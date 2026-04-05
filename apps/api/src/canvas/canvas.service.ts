@@ -1089,7 +1089,7 @@ export class CanvasService {
     tokenOverride?: string | null,
   ): Promise<{
     assignmentId?: string;
-    source?: 'associated_assignment' | 'canvas_launch_url';
+    source?: 'associated_assignment' | 'canvas_launch_url' | 'module_item_external_url';
     matchedField?: 'id' | 'lookup_uuid' | 'resource_link_uuid' | 'resource_link_id';
   }> {
     const rid = (resourceLinkId ?? '').trim();
@@ -1138,14 +1138,41 @@ export class CanvasService {
     }
 
     const launchUrl = String(entry.canvas_launch_url ?? '').trim();
-    if (launchUrl) {
+    const parseAssignmentIdFromUrl = (value: string): string | null => {
+      if (!value) return null;
       try {
-        const u = new URL(launchUrl, base);
-        const aid = (u.searchParams.get('assignment_id') ?? '').trim();
-        if (aid) return { assignmentId: aid, source: 'canvas_launch_url', matchedField };
+        const u = new URL(value, base);
+        return (u.searchParams.get('assignment_id') ?? '').trim() || null;
       } catch {
-        const m = launchUrl.match(/assignment_id=(\d{3,})/i);
-        if (m?.[1]) return { assignmentId: m[1], source: 'canvas_launch_url', matchedField };
+        const m = value.match(/assignment_id=(\d{3,})/i);
+        return m?.[1] ?? null;
+      }
+    };
+    if (launchUrl) {
+      const aid = parseAssignmentIdFromUrl(launchUrl);
+      if (aid) return { assignmentId: aid, source: 'canvas_launch_url', matchedField };
+    }
+
+    // Canvas may store module-item association without assignment id on lti_resource_links row.
+    // In that case, resolve via associated module item external_url assignment_id.
+    if (associatedType.includes('moduleitem') && associatedId) {
+      try {
+        const targetItemId = Number(associatedId);
+        if (!Number.isNaN(targetItemId)) {
+          const modules = await this.listModules(courseId, domainOverride, tokenOverride);
+          for (const mod of modules) {
+            const items = await this.listModuleItems(courseId, String(mod.id), domainOverride, tokenOverride);
+            const item = items.find((i) => Number(i.id) === targetItemId);
+            if (!item) continue;
+            const aid = parseAssignmentIdFromUrl(String(item.external_url ?? ''));
+            if (aid) {
+              return { assignmentId: aid, source: 'module_item_external_url', matchedField };
+            }
+            break;
+          }
+        }
+      } catch {
+        // Best-effort fallback; ignore lookup failures here.
       }
     }
     return { matchedField };
