@@ -793,6 +793,9 @@ export class PromptService {
 
   async getConfig(ctx: LtiContext): Promise<PromptConfigJson | null> {
     const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken);
+    appendLtiLog('prompt-decks', 'getConfig: token check', {
+      hasToken: !!token,
+    });
     if (!token) {
       return null;
     }
