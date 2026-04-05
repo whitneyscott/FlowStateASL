@@ -22,8 +22,6 @@ import type { LtiContext } from '../common/interfaces/lti-context.interface';
 import { canvasApiBaseFromLtiContext } from '../common/utils/canvas-base-url.util';
 import type { PromptConfigJson, PutPromptConfigDto } from './dto/prompt-config.dto';
 import { randomUUID } from 'crypto';
-import { spawnSync } from 'node:child_process';
-import { getLtiToken } from '../lti/lti-token.store';
 
 const PROMPT_MANAGER_SETTINGS_ASSIGNMENT_TITLE = 'Prompt Manager Settings';
 const PROMPT_MANAGER_SETTINGS_ANNOUNCEMENT_TITLE = 'ASL Express Prompt Manager Settings';
@@ -484,7 +482,61 @@ export class PromptService {
     });
   }
 
-  private async saveResourceLinkMappingViaProgrammaticLaunch(
+  /**
+   * Guaranteed fallback: when Canvas performs a real LTI 1.1 launch and both
+   * assignmentId/resourceLinkId are present, persist the mapping immediately.
+   * Non-fatal by design; launch flow must never break because of mapping writes.
+   */
+  async rememberResourceLinkAssignmentMappingFromLaunch(ctx: LtiContext): Promise<void> {
+    const courseId = (ctx.courseId ?? '').trim();
+    const assignmentId = (ctx.assignmentId ?? '').trim();
+    const resourceLinkId = (ctx.resourceLinkId ?? '').trim();
+    if (!courseId || !assignmentId || !resourceLinkId) {
+      appendLtiLog('prompt-decks', 'real launch mapping skipped', {
+        reason: 'missing_required_ids',
+        courseId: courseId || '(none)',
+        assignmentId: assignmentId || '(none)',
+        resourceLinkId: resourceLinkId || '(none)',
+      });
+      return;
+    }
+
+    const token = this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken);
+    if (!token) {
+      appendLtiLog('prompt-decks', 'real launch mapping skipped', {
+        reason: 'no_canvas_token_available',
+        courseId,
+        assignmentId,
+        resourceLinkId,
+      });
+      return;
+    }
+
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
+    try {
+      await this.rememberResourceLinkAssignmentMapping(
+        courseId,
+        resourceLinkId,
+        assignmentId,
+        domainOverride,
+        token,
+      );
+      appendLtiLog('prompt-decks', 'real launch mapping saved', {
+        courseId,
+        assignmentId,
+        resourceLinkId,
+      });
+    } catch (err) {
+      appendLtiLog('prompt-decks', 'real launch mapping failed (non-fatal)', {
+        courseId,
+        assignmentId,
+        resourceLinkId,
+        error: String(err),
+      });
+    }
+  }
+
+  private async saveResourceLinkMappingViaSessionlessForm(
     courseId: string,
     moduleItemId: number,
     assignmentId: string,
@@ -492,85 +544,18 @@ export class PromptService {
     token: string,
   ): Promise<void> {
     try {
-      const canvasApiBase =
-        (domainOverride?.trim() || this.config.get<string>('CANVAS_API_BASE_URL')?.trim() || 'http://localhost');
-      const canvasBase = canvasApiBase.replace(/\/api\/v1\/?$/i, '');
-      appendLtiLog('prompt-decks', 'programmatic launch: resolved canvasBase', {
-        canvasApiBase,
-        canvasBase,
-        assignmentId,
+      const resolved = await this.canvas.resolveResourceLinkIdForModuleItemViaSessionlessForm(
+        courseId,
         moduleItemId,
-      });
-      const child = spawnSync(
-        'node',
-        [
-          'scripts/validate-lti-module-click.mjs',
-          `--apiBase=http://localhost:3000`,
-          `--canvasBase=${canvasBase}`,
-          `--courseId=${courseId}`,
-          `--moduleItemId=${moduleItemId}`,
-        ],
-        { cwd: process.cwd(), encoding: 'utf8', timeout: 30000 },
+        domainOverride,
+        token,
       );
-
-      const stdout = String(child.stdout ?? '');
-      const stderr = String(child.stderr ?? '');
-      const stdoutPreview = stdout.slice(0, 800);
-      const stderrPreview = stderr.slice(0, 800);
-      if (child.status !== 0) {
-        appendLtiLog('prompt-decks', 'resourceLink mapping skipped: no resourceLinkId from programmatic launch', {
-          reason: 'validator_nonzero_exit',
-          exitStatus: child.status ?? null,
-          signal: child.signal ?? null,
-          stdoutPreview,
-          stderrPreview,
-          assignmentId,
-          moduleItemId,
-        });
-        return;
-      }
-
-      const m = stdout.match(/PROMPTER_OPENED finalUrl=(\S+)/);
-      const finalUrl = m?.[1]?.trim() ?? '';
-      if (!finalUrl) {
-        appendLtiLog('prompt-decks', 'resourceLink mapping skipped: no resourceLinkId from programmatic launch', {
-          reason: 'missing_PROMPTER_OPENED_finalUrl',
-          stdoutPreview,
-          stderrPreview,
-          assignmentId,
-          moduleItemId,
-        });
-        return;
-      }
-
-      let ltiToken = '';
-      try {
-        ltiToken = new URL(finalUrl).searchParams.get('lti_token')?.trim() ?? '';
-      } catch {
-        appendLtiLog('prompt-decks', 'resourceLink mapping skipped: no resourceLinkId from programmatic launch', {
-          reason: 'invalid_final_url',
-          finalUrlPreview: finalUrl.slice(0, 300),
-          assignmentId,
-          moduleItemId,
-        });
-        return;
-      }
-      if (!ltiToken) {
-        appendLtiLog('prompt-decks', 'resourceLink mapping skipped: no resourceLinkId from programmatic launch', {
-          reason: 'missing_lti_token',
-          finalUrlPreview: finalUrl.slice(0, 300),
-          assignmentId,
-          moduleItemId,
-        });
-        return;
-      }
-
-      const tokenCtx = getLtiToken(ltiToken);
-      const resourceLinkId = (tokenCtx?.resourceLinkId ?? '').trim();
+      const resourceLinkId = (resolved.resourceLinkId ?? '').trim();
       if (!resourceLinkId) {
-        appendLtiLog('prompt-decks', 'resourceLink mapping skipped: no resourceLinkId from programmatic launch', {
-          reason: 'token_ctx_missing_resourceLinkId',
-          hasTokenCtx: !!tokenCtx,
+        appendLtiLog('prompt-decks', 'resourceLink mapping skipped: no resourceLinkId from sessionless form', {
+          reason: resolved.reason ?? 'not_found',
+          source: resolved.source ?? '(none)',
+          attempts: resolved.attempts ?? 0,
           assignmentId,
           moduleItemId,
         });
@@ -584,13 +569,14 @@ export class PromptService {
         domainOverride,
         token,
       );
-      appendLtiLog('prompt-decks', 'resourceLink mapping saved via programmatic launch', {
+      appendLtiLog('prompt-decks', 'resourceLink mapping saved via sessionless form', {
         resourceLinkId,
         assignmentId,
         moduleItemId,
+        attempts: resolved.attempts ?? 0,
       });
     } catch (err) {
-      appendLtiLog('prompt-decks', 'resourceLink mapping skipped: no resourceLinkId from programmatic launch', {
+      appendLtiLog('prompt-decks', 'resourceLink mapping skipped: no resourceLinkId from sessionless form', {
         reason: 'exception',
         error: String(err),
         assignmentId,
@@ -1302,7 +1288,7 @@ export class PromptService {
             }
           }
           if (ensuredTool.itemId) {
-            await this.saveResourceLinkMappingViaProgrammaticLaunch(
+            await this.saveResourceLinkMappingViaSessionlessForm(
               ctx.courseId,
               ensuredTool.itemId,
               assignmentId,
@@ -1310,7 +1296,7 @@ export class PromptService {
               token,
             );
           } else {
-            appendLtiLog('prompt-decks', 'resourceLink mapping skipped: no resourceLinkId from programmatic launch', {
+            appendLtiLog('prompt-decks', 'resourceLink mapping skipped: no resourceLinkId from sessionless form', {
               reason: 'missing_moduleItemId_after_externalToolEnsure',
               assignmentId,
             });
@@ -1459,7 +1445,7 @@ export class PromptService {
             }
           }
           if (ltiSync.itemId) {
-            await this.saveResourceLinkMappingViaProgrammaticLaunch(
+            await this.saveResourceLinkMappingViaSessionlessForm(
               ctx.courseId,
               ltiSync.itemId,
               assignmentId,
@@ -1467,7 +1453,7 @@ export class PromptService {
               token,
             );
           } else {
-            appendLtiLog('prompt-decks', 'resourceLink mapping skipped: no resourceLinkId from programmatic launch', {
+            appendLtiLog('prompt-decks', 'resourceLink mapping skipped: no resourceLinkId from sessionless form', {
               reason: 'missing_moduleItemId_after_templateClone11',
               assignmentId,
             });

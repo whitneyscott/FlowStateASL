@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { CanvasModule } from '../canvas/canvas.module';
 import { SproutVideoModule } from '../sproutvideo/sproutvideo.module';
@@ -12,7 +12,7 @@ import { CourseSettingsEntity } from './entities/course-settings.entity';
     TypeOrmModule.forFeature([CourseSettingsEntity]),
     CanvasModule,
     SproutVideoModule,
-    LtiModule,
+    forwardRef(() => LtiModule),
   ],
   controllers: [CourseSettingsController],
   providers: [CourseSettingsService],

@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { PromptController } from './prompt.controller';
 import { PromptService } from './prompt.service';
 import { PromptFallbackStore } from './prompt-fallback.store';
@@ -11,8 +11,16 @@ import { QuizModule } from '../quiz/quiz.module';
 import { SproutVideoModule } from '../sproutvideo/sproutvideo.module';
 
 @Module({
-  imports: [DataModule, CanvasModule, CourseSettingsModule, LtiModule, QuizModule, SproutVideoModule],
+  imports: [
+    DataModule,
+    CanvasModule,
+    forwardRef(() => CourseSettingsModule),
+    forwardRef(() => LtiModule),
+    forwardRef(() => QuizModule),
+    SproutVideoModule,
+  ],
   controllers: [PromptController],
   providers: [PromptService, PromptFallbackStore, PromptVideoTitleStore],
+  exports: [PromptService],
 })
 export class PromptModule {}

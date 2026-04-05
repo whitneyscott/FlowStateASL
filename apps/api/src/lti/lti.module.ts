@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { LtiController } from './lti.controller';
 import { LtiService } from './lti.service';
 import { LtiJwksService } from './lti-jwks.service';
@@ -8,9 +8,10 @@ import { LtiAgsService } from './lti-ags.service';
 import { LtiDeepLinkFileStore } from './lti-deep-link-file.store';
 import { LtiDeepLinkResponseService } from './lti-deep-link-response.service';
 import { AssessmentModule } from '../assessment/assessment.module';
+import { PromptModule } from '../prompt/prompt.module';
 
 @Module({
-  imports: [AssessmentModule],
+  imports: [AssessmentModule, forwardRef(() => PromptModule)],
   controllers: [LtiController],
   providers: [
     LtiService,

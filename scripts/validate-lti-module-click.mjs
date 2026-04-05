@@ -715,10 +715,18 @@ function resolveMappingOutcome(apiBase) {
   for (let i = lines.length - 1; i >= 0; i -= 1) {
     const line = lines[i];
     if (!line.includes('[prompt-decks]')) continue;
-    if (line.includes('resourceLink mapping saved via programmatic launch')) {
+    if (
+      line.includes('resourceLink mapping saved via sessionless form') ||
+      line.includes('resourceLink mapping saved via programmatic launch') ||
+      line.includes('real launch mapping saved')
+    ) {
       return { outcome: 'MAPPING_SAVED', line };
     }
-    if (line.includes('resourceLink mapping skipped: no resourceLinkId from programmatic launch')) {
+    if (
+      line.includes('resourceLink mapping skipped: no resourceLinkId from sessionless form') ||
+      line.includes('resourceLink mapping skipped: no resourceLinkId from programmatic launch') ||
+      line.includes('real launch mapping skipped')
+    ) {
       return { outcome: 'MAPPING_SKIPPED', line };
     }
   }
@@ -792,19 +800,45 @@ function runFullAutocheck(cfg, args) {
     target = discoverDeckAssignmentTarget(canvasBase, tokenInfo.token, args);
     console.log(`TARGET_DISCOVERED courseId=${target.courseId} assignmentId=${target.assignmentId} moduleId=${target.moduleId || '(none)'}`);
   } catch (discoverErr) {
-    const fallbackCourseId = String(args.courseId ?? '').trim() || String(cfg.courseId ?? '').trim();
-    if (!fallbackCourseId) throw discoverErr;
     console.log(`TARGET_DISCOVERY_FAILED ${String(discoverErr)}`);
-    console.log(`TARGET_BOOTSTRAP_START courseId=${fallbackCourseId}`);
-    bootstrapTeacherApiSession(
-      cfg.apiBase,
-      canvasApiBase,
-      tokenInfo.token,
-      { courseId: fallbackCourseId, assignmentId: '', moduleId: '' },
-      cookieFile,
-    );
-    target = bootstrapAutocheckTarget(cfg.apiBase, fallbackCourseId, cookieFile);
-    console.log(`TARGET_BOOTSTRAPPED courseId=${target.courseId} assignmentId=${target.assignmentId} moduleId=${target.moduleId}`);
+    const teacherCourses = listTeacherCourses(canvasBase, tokenInfo.token)
+      .map((c) => String(c?.id ?? '').trim())
+      .filter(Boolean);
+    const bootstrapCandidates = [
+      String(args.courseId ?? '').trim(),
+      String(cfg.courseId ?? '').trim(),
+      ...teacherCourses,
+      '1',
+    ].filter(Boolean);
+    const seen = new Set();
+    const orderedCandidates = bootstrapCandidates.filter((id) => {
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+    let bootstrapErr = discoverErr;
+    for (const candidateCourseId of orderedCandidates) {
+      try {
+        console.log(`TARGET_BOOTSTRAP_START courseId=${candidateCourseId}`);
+        bootstrapTeacherApiSession(
+          cfg.apiBase,
+          canvasApiBase,
+          tokenInfo.token,
+          { courseId: candidateCourseId, assignmentId: '', moduleId: '' },
+          cookieFile,
+        );
+        target = bootstrapAutocheckTarget(cfg.apiBase, candidateCourseId, cookieFile);
+        console.log(`TARGET_BOOTSTRAPPED courseId=${target.courseId} assignmentId=${target.assignmentId} moduleId=${target.moduleId}`);
+        bootstrapErr = null;
+        break;
+      } catch (err) {
+        bootstrapErr = err;
+        console.log(`TARGET_BOOTSTRAP_FAILED courseId=${candidateCourseId} error=${String(err)}`);
+      }
+    }
+    if (!target) {
+      throw bootstrapErr ?? discoverErr;
+    }
   }
 
   bootstrapTeacherApiSession(cfg.apiBase, canvasApiBase, tokenInfo.token, target, cookieFile);

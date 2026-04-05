@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Body, Res, Req, Param } from '@nestjs/common';
+import { Controller, Post, Get, Body, Res, Req, Param, Inject, forwardRef } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { randomBytes } from 'crypto';
 import { ConfigService } from '@nestjs/config';
@@ -21,6 +21,7 @@ import {
   isGenericCanvasCloudRestBase,
   normalizeToCanvasRestBase,
 } from '../common/utils/canvas-base-url.util';
+import { PromptService } from '../prompt/prompt.service';
 
 @Controller('lti')
 export class LtiController {
@@ -32,6 +33,8 @@ export class LtiController {
     private readonly assessmentService: AssessmentService,
     private readonly config: ConfigService,
     private readonly deepLinkFileStore: LtiDeepLinkFileStore,
+    @Inject(forwardRef(() => PromptService))
+    private readonly promptService: PromptService,
   ) {}
 
   private inferCanvasBaseFromLaunchRequest(req: Request): string | undefined {
@@ -179,6 +182,19 @@ export class LtiController {
     }
     ctx.toolType = 'prompter';
     this.repairCanvasHostFromLaunchRequest(req, ctx);
+    try {
+      await this.promptService.rememberResourceLinkAssignmentMappingFromLaunch({
+        ...ctx,
+        canvasAccessToken: (req.session as { canvasAccessToken?: string } | undefined)?.canvasAccessToken,
+        ltiLaunchType: '1.1',
+      });
+    } catch (err) {
+      appendLtiLog('prompt-decks', 'real launch mapping failed (controller non-fatal)', {
+        assignmentId: ctx.assignmentId || '(none)',
+        resourceLinkId: ctx.resourceLinkId || '(none)',
+        error: String(err),
+      });
+    }
     /* Do not rename assignment - prompter is placed in the assignment; leave title unchanged. */
     const token = randomBytes(24).toString('hex');
     setLtiToken(token, ctx);
@@ -563,6 +579,22 @@ export class LtiController {
       canvasBaseUrl: data.canvasBaseUrl || undefined,
     };
     this.repairCanvasHostFromLaunchRequest(req, ctx);
+
+    // Step 1 fallback (highest priority): on real 1.1 launch, persist map immediately
+    // when both ids are present. Non-fatal by design.
+    try {
+      await this.promptService.rememberResourceLinkAssignmentMappingFromLaunch({
+        ...ctx,
+        canvasAccessToken: (req.session as { canvasAccessToken?: string } | undefined)?.canvasAccessToken,
+        ltiLaunchType: '1.1',
+      });
+    } catch (err) {
+      appendLtiLog('prompt-decks', 'real launch mapping failed (controller non-fatal)', {
+        assignmentId: ctx.assignmentId || '(none)',
+        resourceLinkId: ctx.resourceLinkId || '(none)',
+        error: String(err),
+      });
+    }
 
     const token = randomBytes(24).toString('hex');
     setLtiToken(token, ctx);

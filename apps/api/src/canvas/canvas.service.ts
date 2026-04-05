@@ -1046,6 +1046,79 @@ export class CanvasService {
     return raw && typeof raw === 'object' ? raw : null;
   }
 
+  /**
+   * Best-effort resolver for resource_link_id right after module-item creation.
+   * Uses Canvas sessionless launch URL, then parses hidden form inputs where
+   * Canvas includes resource_link_id during real launch handoff.
+   */
+  async resolveResourceLinkIdForModuleItemViaSessionlessForm(
+    courseId: string,
+    moduleItemId: number | string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<{
+    resourceLinkId?: string;
+    source?: 'sessionless_form';
+    attempts: number;
+    reason?: string;
+  }> {
+    const maxAttempts = 3;
+    const waitMs = [0, 350, 900];
+    const readInput = (html: string, name: string): string => {
+      const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp(`<input[^>]*name=["']${escaped}["'][^>]*value=["']([^"']*)["']`, 'i');
+      const m = html.match(re);
+      return (m?.[1] ?? '').trim();
+    };
+    const readAnyResourceLinkId = (html: string): string => {
+      const candidates = [
+        'resource_link_id',
+        'custom_resource_link_id',
+        'custom_custom_resource_link_id',
+        'lti_resource_link_id',
+      ];
+      for (const name of candidates) {
+        const value = readInput(html, name);
+        if (value) return value;
+      }
+      return '';
+    };
+
+    for (let i = 0; i < maxAttempts; i += 1) {
+      const delay = waitMs[i] ?? waitMs[waitMs.length - 1];
+      if (delay > 0) {
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+      const sessionless = await this.getSessionlessLaunchForModuleItem(
+        courseId,
+        moduleItemId,
+        domainOverride,
+        tokenOverride,
+      );
+      const sessionlessUrl = String(sessionless?.url ?? '').trim();
+      if (!sessionlessUrl) {
+        continue;
+      }
+
+      try {
+        const res = await fetch(sessionlessUrl, {
+          method: 'GET',
+          headers: this.getAuthHeaders(tokenOverride),
+          redirect: 'follow',
+        });
+        const html = await res.text();
+        const rid = readAnyResourceLinkId(html);
+        if (rid) {
+          return { resourceLinkId: rid, source: 'sessionless_form', attempts: i + 1 };
+        }
+      } catch {
+        // Best-effort: ignore and retry
+      }
+    }
+
+    return { attempts: maxAttempts, reason: 'not_found_in_sessionless_form' };
+  }
+
   /** Find LTI resource-link records associated to a given module item. */
   async findResourceLinksForModuleItem(
     courseId: string,
