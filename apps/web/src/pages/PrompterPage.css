@@ -219,6 +219,11 @@
   margin: 10px 0;
 }
 
+.prompter-deck-progress-hint {
+  font-size: 0.95rem;
+  margin: -4px 0 12px;
+}
+
 .prompter-blocked-warning {
   background: #fff3cd;
   border: 1px solid #ffc107;

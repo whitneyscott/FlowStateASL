@@ -27,6 +27,11 @@ const PROMPT_MANAGER_SETTINGS_ASSIGNMENT_TITLE = 'Prompt Manager Settings';
 const PROMPT_MANAGER_SETTINGS_ANNOUNCEMENT_TITLE = 'ASL Express Prompt Manager Settings';
 const PROMPT_LEDGER_ASSIGNMENT_TITLE = 'ASL Express Prompt Ledger';
 
+/** Per-card timer = video duration + this read/refocus buffer (seconds). Mirrors student TimerPage deck logic. */
+const DECK_READ_REFOCUS_SECONDS = 1.5;
+const DECK_DEFAULT_VIDEO_SECONDS_WHEN_UNKNOWN = 3;
+const DECK_DEFAULT_TOTAL_SECONDS = DECK_READ_REFOCUS_SECONDS + DECK_DEFAULT_VIDEO_SECONDS_WHEN_UNKNOWN;
+
 interface PromptManagerSettingsBlob {
   v?: number;
   configs?: Record<string, PromptConfigJson>;
@@ -858,7 +863,10 @@ export class PromptService {
                 .map((p) => ({
                   title: String(p?.title ?? '').trim(),
                   ...(String(p?.videoId ?? '').trim() ? { videoId: String(p?.videoId).trim() } : {}),
-                  duration: Number.isFinite(Number(p?.duration)) && Number(p?.duration) > 0 ? Number(p?.duration) : 3,
+                  duration:
+                    Number.isFinite(Number(p?.duration)) && Number(p?.duration) > 0
+                      ? Number(p?.duration)
+                      : DECK_DEFAULT_TOTAL_SECONDS,
                 }))
                 .filter((p) => p.title)
             : [],
@@ -1721,11 +1729,12 @@ export class PromptService {
     // Step 3 (Timing): Fetch video durations
     const videoIds = selected.filter(s => s.videoId).map(s => s.videoId!);
     const durations = await this.sproutVideo.getVideoDurations(videoIds);
-    const prompts = selected.map(s => ({
+    const prompts = selected.map((s) => ({
       title: s.title,
       videoId: s.videoId,
-      // totalPromptTime = 1.5s + videoDuration, fallback 3s
-      duration: 1.5 + (durations.get(s.videoId!) ?? 3),
+      duration:
+        DECK_READ_REFOCUS_SECONDS +
+        (s.videoId ? (durations.get(s.videoId) ?? DECK_DEFAULT_VIDEO_SECONDS_WHEN_UNKNOWN) : DECK_DEFAULT_VIDEO_SECONDS_WHEN_UNKNOWN),
     }));
 
     appendLtiLog('prompt-decks', 'buildDeckPromptList result', {

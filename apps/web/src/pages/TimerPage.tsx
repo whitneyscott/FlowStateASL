@@ -16,11 +16,26 @@ function simpleFingerprint(): string {
   return btoa(ua + '|' + lang).slice(0, 32);
 }
 
+/** Per-card read/refocus after the signing video — must match server `DECK_READ_REFOCUS_SECONDS` in prompt.service.ts */
+const DECK_READ_REFOCUS_SECONDS = 1.5;
+/** When Sprout duration is unknown (legacy blob / static fallback), assume this many seconds of video. */
+const DECK_FALLBACK_VIDEO_SECONDS = 3;
+const DECK_FALLBACK_TOTAL_SECONDS = DECK_READ_REFOCUS_SECONDS + DECK_FALLBACK_VIDEO_SECONDS;
+
 /** Deck-based prompt with timing info */
 interface DeckPromptItem {
   title: string;
   videoId?: string;
-  duration: number; // total time in seconds for this prompt
+  /** Total seconds for this card: Sprout video length + read/refocus (see server buildDeckPromptList). */
+  duration: number;
+}
+
+function recordSecondsForDeckCard(item: DeckPromptItem | undefined): number {
+  const d = item?.duration;
+  if (typeof d === 'number' && Number.isFinite(d) && d > 0) {
+    return Math.max(1, Math.ceil(d));
+  }
+  return Math.max(1, Math.ceil(DECK_FALLBACK_TOTAL_SECONDS));
 }
 
 export default function TimerPage({ context }: TimerPageProps) {
@@ -207,6 +222,7 @@ export default function TimerPage({ context }: TimerPageProps) {
   const displayPrompts = deckPrompts.length > 0 
     ? deckPrompts.map(p => p.title) 
     : prompts;
+  const deckMode = deckPrompts.length > 0;
   const currentPromptText = displayPrompts[promptIndex] ?? (displayPrompts[0] ?? '');
 
   const loadConfig = useCallback(async () => {
@@ -273,7 +289,9 @@ export default function TimerPage({ context }: TimerPageProps) {
           } else {
             const staticTitles = (data.videoPromptConfig?.staticFallbackPrompts ?? []).filter(Boolean);
             if (staticTitles.length > 0) {
-              setDeckPrompts(staticTitles.map((title) => ({ title, duration: 3 })));
+              setDeckPrompts(
+                staticTitles.map((title) => ({ title, duration: DECK_FALLBACK_TOTAL_SECONDS })),
+              );
               appendDeckDebugLog('deck flow: source selected', {
                 source: 'static',
                 count: staticTitles.length,
@@ -389,10 +407,11 @@ export default function TimerPage({ context }: TimerPageProps) {
 
   useEffect(() => {
     if (phase === 'record') {
-      setRecordSecondsLeft(minutes * 60);
+      const sec = deckMode ? recordSecondsForDeckCard(deckPrompts[promptIndex]) : minutes * 60;
+      setRecordSecondsLeft(sec);
       autoFinishFiredRef.current = false;
     }
-  }, [phase, minutes]);
+  }, [phase, minutes, deckMode, deckPrompts, promptIndex]);
 
   useEffect(() => {
     if (phase !== 'record' || recordSecondsLeft > 0) return;
@@ -572,6 +591,11 @@ export default function TimerPage({ context }: TimerPageProps) {
           <div className="prompter-timer-display-sm">
             {rm}:{rs < 10 ? '0' : ''}{rs}
           </div>
+          {deckMode && (
+            <p className="prompter-info-message prompter-deck-progress-hint">
+              Card {Math.min(promptIndex + 1, deckPrompts.length)} of {deckPrompts.length} — one prompt at a time
+            </p>
+          )}
           <div className="prompter-record-layout">
             <div className="prompter-prompt-column" style={{ flex: '1 1 300px', maxWidth: 480 }}>
               <div>{currentPromptText}</div>
