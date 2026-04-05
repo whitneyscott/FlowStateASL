@@ -251,7 +251,7 @@ export class PromptService {
     if (id) {
       return id;
     }
-    const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken);
+    const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken, ctx);
     if (token) {
       const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
       const resolved = await this.resolveAssignmentIdForContext(ctx, token, domainOverride);
@@ -533,7 +533,7 @@ export class PromptService {
       return;
     }
 
-    const token = this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken);
+    const token = this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken, ctx);
     if (!token) {
       appendLtiLog('prompt-decks', 'real launch mapping skipped', {
         reason: 'no_canvas_token_available',
@@ -792,7 +792,7 @@ export class PromptService {
   }
 
   async getConfig(ctx: LtiContext): Promise<PromptConfigJson | null> {
-    const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken);
+    const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken, ctx);
     appendLtiLog('prompt-decks', 'getConfig: token check', {
       hasToken: !!token,
     });
@@ -1784,11 +1784,11 @@ export class PromptService {
 
   async submit(ctx: LtiContext, promptSnapshotHtml: string): Promise<void> {
     appendLtiLog('prompt-submit', 'submit ENTER', { assignmentId: ctx.assignmentId, bodyLength: promptSnapshotHtml?.length ?? 0 });
-    const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken);
+    const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken, ctx);
     if (!token) {
       appendLtiLog('prompt-submit', 'submit FAIL: no token');
       throw new Error(
-        'Canvas token required for submission (complete OAuth as student/teacher, or set CANVAS_API_TOKEN / CANVAS_ACCESS_TOKEN on the server)',
+        'Canvas token required for submission (OAuth or host-matched static token: CANVAS_API_TOKEN_LOCAL / CANVAS_API_TOKEN_FFT / CANVAS_API_TOKEN_TJC)',
       );
     }
     const assignmentId = await this.getPrompterAssignmentId(ctx);
@@ -1889,11 +1889,11 @@ export class PromptService {
     filename: string,
   ): Promise<{ fileId: string }> {
     appendLtiLog('prompt-upload', 'uploadVideo ENTER', { filename, size: buffer.length });
-    const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken);
+    const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken, ctx);
     if (!token) {
       appendLtiLog('prompt-upload', 'uploadVideo FAIL: no token');
       throw new Error(
-        'Canvas token required for video upload (OAuth or server CANVAS_API_TOKEN / CANVAS_ACCESS_TOKEN)',
+        'Canvas token required for video upload (OAuth or host-matched static Canvas token in .env)',
       );
     }
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
@@ -1974,7 +1974,7 @@ export class PromptService {
     });
     if (process.env.NODE_ENV !== 'production' && videoTitle) {
       this.promptVideoTitleStore.set(ctx.courseId, ctx.assignmentId ?? '', submitUserId, videoTitle);
-      const canvasToken = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken);
+      const canvasToken = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken, ctx);
       const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
       const folderId = await this.getPromptSubmissionsFolderId(ctx.courseId, domainOverride, canvasToken);
       if (folderId) {
@@ -2030,7 +2030,7 @@ export class PromptService {
 
   /** Submission count for the visible assignment (for teacher UI). Uses ctx.assignmentId when present. */
   async getSubmissionCount(ctx: LtiContext): Promise<number> {
-    const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken);
+    const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken, ctx);
     if (!token) return 0;
     const assignmentId = ctx.assignmentId?.trim() || (await this.getPrompterAssignmentId(ctx));
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
@@ -2060,9 +2060,11 @@ export class PromptService {
       promptHtml?: string;
     }>
   > {
-    const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken);
+    const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken, ctx);
     if (!token) {
-      throw new Error('Canvas token required (OAuth or server CANVAS_API_TOKEN / CANVAS_ACCESS_TOKEN)');
+      throw new Error(
+        'Canvas token required (OAuth or host-matched static token: CANVAS_API_TOKEN_LOCAL / _FFT / _TJC)',
+      );
     }
     const assignmentId = await this.getPrompterAssignmentId(ctx);
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
@@ -2342,7 +2344,7 @@ export class PromptService {
       parsed.hostname === 'instructureusercontent.com' ||
       parsed.hostname.endsWith('.instructureusercontent.com');
     if (!isSameCanvas && !isInstructure) return null;
-    const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken);
+    const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken, ctx);
     if (!token) return null;
     const res = await fetch(targetUrl, {
       headers: { Authorization: `Bearer ${token}` },
@@ -2366,7 +2368,7 @@ export class PromptService {
     resultContent?: string,
     rubricAssessment?: Record<string, unknown>,
   ): Promise<void> {
-    const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken);
+    const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken, ctx);
     if (!token) {
       throw new Error('Canvas OAuth token required');
     }
@@ -2401,7 +2403,7 @@ export class PromptService {
     text: string,
     attempt?: number,
   ): Promise<{ commentId?: number }> {
-    const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken);
+    const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken, ctx);
     if (!token) throw new Error('Canvas OAuth token required');
     const assignmentId = await this.getPrompterAssignmentId(ctx);
     const m = Math.floor(time / 60);
@@ -2426,7 +2428,7 @@ export class PromptService {
     time: number,
     text: string,
   ): Promise<void> {
-    const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken);
+    const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken, ctx);
     if (!token) throw new Error('Canvas OAuth token required');
     const assignmentId = await this.getPrompterAssignmentId(ctx);
     const m = Math.floor(time / 60);
@@ -2446,7 +2448,7 @@ export class PromptService {
 
   /** Teacher only - guard applied at controller. */
   async deleteComment(ctx: LtiContext, userId: string, commentId: string): Promise<void> {
-    const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken);
+    const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken, ctx);
     if (!token) throw new Error('Canvas OAuth token required');
     const assignmentId = await this.getPrompterAssignmentId(ctx);
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
@@ -2478,7 +2480,7 @@ export class PromptService {
     rubricAssessment?: Record<string, unknown>;
     promptHtml?: string;
   } | null> {
-    const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken);
+    const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken, ctx);
     if (!token) return null;
     const assignmentId = ctx.assignmentId?.trim();
     if (!assignmentId) return null;
@@ -2523,7 +2525,7 @@ export class PromptService {
     pointsPossible?: number;
     rubric?: Array<unknown>;
   } | null> {
-    const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken);
+    const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken, ctx);
     if (!token) return null;
     const assignmentId = await this.getPrompterAssignmentId(ctx);
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
@@ -2546,7 +2548,7 @@ export class PromptService {
   async getConfiguredAssignments(ctx: LtiContext): Promise<
     Array<{ id: string; name: string; submissionCount: number; ungradedCount: number }>
   > {
-    const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken);
+    const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken, ctx);
     if (!token) {
       return [];
     }
@@ -2700,7 +2702,7 @@ export class PromptService {
 
   /** Teacher only. Returns course assignment groups for teacher config. */
   async getAssignmentGroups(ctx: LtiContext): Promise<Array<{ id: number; name: string }>> {
-    const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken);
+    const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken, ctx);
     if (!token) return [];
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
     return this.canvas.listAssignmentGroups(ctx.courseId, domainOverride, token);
@@ -2708,7 +2710,7 @@ export class PromptService {
 
   /** Teacher only. Returns course rubrics for teacher config. */
   async getRubrics(ctx: LtiContext): Promise<Array<{ id: number; title: string; pointsPossible: number }>> {
-    const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken);
+    const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken, ctx);
     if (!token) return [];
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
     return this.canvas.listRubrics(ctx.courseId, domainOverride, token);
@@ -2729,7 +2731,7 @@ export class PromptService {
 
   /** Teacher only. Returns course modules for module selector. */
   async getModules(ctx: LtiContext): Promise<Array<{ id: number; name: string; position: number }>> {
-    const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken);
+    const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken, ctx);
     if (!token) return [];
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
     return this.canvas.listModules(ctx.courseId, domainOverride, token);

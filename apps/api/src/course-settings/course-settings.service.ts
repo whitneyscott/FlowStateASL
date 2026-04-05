@@ -5,7 +5,8 @@ import { Repository } from 'typeorm';
 import { appendLtiLog, getLastCanvasApiResponse } from '../common/last-error.store';
 import { CanvasService, CanvasTokenExpiredError } from '../canvas/canvas.service';
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
-import { resolveCanvasApiBaseUrl } from '../common/utils/canvas-base-url.util';
+import { canvasApiBaseFromLtiContext, resolveCanvasApiBaseUrl } from '../common/utils/canvas-base-url.util';
+import { resolveStaticCanvasApiToken } from '../common/utils/canvas-static-api-token.util';
 import { CourseSettingsEntity } from './entities/course-settings.entity';
 
 const FLASHCARD_SETTINGS_ASSIGNMENT_TITLE = 'Flashcard Settings';
@@ -574,26 +575,36 @@ export class CourseSettingsService {
 
   /**
    * For LTI-backed student flows (Prompter config read, submit, upload): prefer the user's
-   * Canvas OAuth token when present; otherwise use static CANVAS_API_TOKEN / CANVAS_ACCESS_TOKEN
-   * so students without OAuth can still use the REST path (with as_user_id on the server).
+   * Canvas OAuth token when present; otherwise pick a static token from env by Canvas host
+   * (CANVAS_API_TOKEN_LOCAL / CANVAS_API_TOKEN_FFT / CANVAS_API_TOKEN_TJC, then legacy names).
    * Do not use for teacher-only writes (putConfig, create assignment) — those require OAuth.
    */
-  getCanvasTokenForLtiBackedOps(oauthToken?: string | null): string | null {
+  getCanvasTokenForLtiBackedOps(
+    oauthToken?: string | null,
+    ltiHostHints?: Partial<Pick<LtiContext, 'canvasBaseUrl' | 'canvasDomain' | 'platformIss'>>,
+  ): string | null {
     const o = oauthToken?.trim() || null;
     if (o) return o;
-    const staticToken =
-      (this.config.get<string>('CANVAS_API_TOKEN') ?? this.config.get<string>('CANVAS_ACCESS_TOKEN'))?.trim() || null;
-    return staticToken ?? null;
+    const restBase = canvasApiBaseFromLtiContext(
+      ltiHostHints ?? {},
+      this.config.get<string>('CANVAS_API_BASE_URL'),
+    );
+    return resolveStaticCanvasApiToken(this.config, restBase);
   }
 
   /**
-   * Token for file upload operations (e.g. Prompter video). Mirrors PHP: prefer static
-   * CANVAS_API_TOKEN / CANVAS_ACCESS_TOKEN when set; fallback to OAuth. Static token has
-   * permission to initiate upload and attach files on behalf of students.
+   * Token for file upload operations (e.g. Prompter video). Prefer static token (host-matched);
+   * fallback to OAuth. Static token has permission to initiate upload and attach files on behalf of students.
    */
-  getTokenForFileUpload(oauthToken?: string | null): string | null {
-    const staticToken =
-      (this.config.get<string>('CANVAS_API_TOKEN') ?? this.config.get<string>('CANVAS_ACCESS_TOKEN'))?.trim() || null;
+  getTokenForFileUpload(
+    oauthToken?: string | null,
+    ltiHostHints?: Partial<Pick<LtiContext, 'canvasBaseUrl' | 'canvasDomain' | 'platformIss'>>,
+  ): string | null {
+    const restBase = canvasApiBaseFromLtiContext(
+      ltiHostHints ?? {},
+      this.config.get<string>('CANVAS_API_BASE_URL'),
+    );
+    const staticToken = resolveStaticCanvasApiToken(this.config, restBase);
     return staticToken ?? (oauthToken?.trim() || null) ?? null;
   }
 
