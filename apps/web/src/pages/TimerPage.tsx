@@ -98,7 +98,11 @@ export default function TimerPage({ context }: TimerPageProps) {
     params.get('assignmentId')?.trim() ??
     params.get('assignment_id')?.trim() ??
     '';
-  const effectiveAssignmentId = assignmentId || urlAssignmentId || null;
+  /** From LTI/URL only — used for initial GET /config so we do not refetch when resolvedAssignmentId arrives. */
+  const ltiOrUrlAssignmentId = assignmentId || urlAssignmentId || null;
+  /** Submission target: launch/query id, else id resolved server-side from Prompt Manager Settings blob. */
+  const effectiveAssignmentId =
+    ltiOrUrlAssignmentId || (config?.resolvedAssignmentId?.trim() ?? '') || null;
   const teacherViewingTimer = context ? isPrompterTeacher(context.roles) : false;
 
   const appendDeckDebugLog = useCallback((message: string, extra?: Record<string, unknown>) => {
@@ -273,11 +277,14 @@ export default function TimerPage({ context }: TimerPageProps) {
     setLoading(true);
     try {
       setLastFunction('GET /api/prompt/config');
-      const data = await promptApi.getPromptConfig(effectiveAssignmentId);
+      const data = await promptApi.getPromptConfig(ltiOrUrlAssignmentId);
       setLastApiResult('GET /api/prompt/config', 200, true);
       setConfig(data ?? null);
+      const targetAssignmentId =
+        (data?.resolvedAssignmentId?.trim() ?? '') || ltiOrUrlAssignmentId || null;
       appendDeckDebugLog('loadConfig: received config', {
-        effectiveAssignmentId: effectiveAssignmentId ?? '(none)',
+        ltiLaunchAssignmentId: ltiOrUrlAssignmentId ?? '(none)',
+        targetAssignmentId: targetAssignmentId ?? '(none)',
         promptMode: data?.promptMode ?? '(none)',
         hasVideoPromptConfig: !!data?.videoPromptConfig,
       });
@@ -292,7 +299,7 @@ export default function TimerPage({ context }: TimerPageProps) {
         const rawTotal = Number(data.videoPromptConfig.totalCards);
         const totalCards = Number.isFinite(rawTotal) && rawTotal > 0 ? Math.floor(rawTotal) : 10;
         appendDeckDebugLog('deck flow: live build start', {
-          effectiveAssignmentId: effectiveAssignmentId ?? '(none)',
+          targetAssignmentId: targetAssignmentId ?? '(none)',
           selectedDeckCount: data.videoPromptConfig.selectedDecks.length,
           totalCards,
         });
@@ -301,7 +308,7 @@ export default function TimerPage({ context }: TimerPageProps) {
           const result = await promptApi.buildDeckPrompts(
             data.videoPromptConfig.selectedDecks,
             totalCards,
-            effectiveAssignmentId
+            targetAssignmentId
           );
           const livePrompts = Array.isArray(result.prompts) ? result.prompts : [];
           if (livePrompts.length > 0) {
@@ -374,7 +381,7 @@ export default function TimerPage({ context }: TimerPageProps) {
         setShowManualTokenModal(true);
       }
       appendDeckDebugLog('loadConfig: failed', {
-        effectiveAssignmentId: effectiveAssignmentId ?? '(none)',
+        ltiLaunchAssignmentId: ltiOrUrlAssignmentId ?? '(none)',
         error: String(e),
       });
       setConfig(null);
@@ -384,7 +391,7 @@ export default function TimerPage({ context }: TimerPageProps) {
     }
   }, [
     context?.courseId,
-    effectiveAssignmentId,
+    ltiOrUrlAssignmentId,
     setLastFunction,
     setLastApiResult,
     setLastApiError,

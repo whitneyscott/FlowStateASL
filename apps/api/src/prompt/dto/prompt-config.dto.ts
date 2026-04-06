@@ -12,6 +12,12 @@ export interface VideoPromptConfig {
 }
 
 export interface PromptConfigJson {
+  /**
+   * Set only on GET config responses: Canvas assignment id used for submissions,
+   * after resolving from Prompt Manager Settings (map, module, single config, etc.).
+   * Not persisted in the settings blob; clients use for ?assignmentId= and logging.
+   */
+  resolvedAssignmentId?: string;
   minutes?: number;
   prompts?: string[];
   accessCode?: string;

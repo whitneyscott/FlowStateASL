@@ -1035,7 +1035,7 @@ export class PromptService {
               : {}),
         };
         if (!hydrated.promptMode) hydrated.promptMode = 'text';
-        return hydrated;
+        return { ...hydrated, resolvedAssignmentId: assignmentId };
       }
     } catch (err) {
       appendLtiLog('prompt', 'getConfig: assignment hydration failed (non-fatal)', {
@@ -1044,7 +1044,7 @@ export class PromptService {
       });
     }
 
-    return config ?? null;
+    return config ? { ...config, resolvedAssignmentId: assignmentId } : null;
   }
 
   async putConfig(ctx: LtiContext, dto: PutPromptConfigDto): Promise<void> {

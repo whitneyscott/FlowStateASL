@@ -68,6 +68,8 @@ export interface VideoPromptConfig {
 }
 
 export interface PromptConfig {
+  /** From GET /config: submission target after server resolution from Prompt Manager Settings. */
+  resolvedAssignmentId?: string;
   minutes?: number;
   prompts?: string[];
   accessCode?: string;
