@@ -2,6 +2,26 @@ import { resolveLtiContextValue } from './lti-context-value.util';
 
 const NUMERIC_CANVAS_ID = /^\d+$/;
 
+const LTI_NUMERIC_USER_PARAM_KEYS = [
+  'custom_canvas_user_id',
+  /** Canvas UI "Custom Field" named `user_id` → POST param `custom_user_id` (LTI 1.1). */
+  'custom_user_id',
+  'canvas_user_id',
+] as const;
+
+/**
+ * Reads a numeric Canvas user id from common LTI 1.1 POST keys ($Canvas.user.id substitutions).
+ */
+export function resolveCanvasNumericUserIdFromLtiParams(
+  body: Record<string, string | undefined>,
+): string | undefined {
+  for (const k of LTI_NUMERIC_USER_PARAM_KEYS) {
+    const v = resolveLtiContextValue(body[k]);
+    if (v && NUMERIC_CANVAS_ID.test(v)) return v;
+  }
+  return undefined;
+}
+
 /**
  * Canvas REST API user id from LTI: prefer custom Canvas user id ($Canvas.user.id / custom_canvas_user_id).
  * Do not use an opaque LTI 1.3 `sub` in submission URLs.

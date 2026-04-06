@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { timingSafeEqual } from 'crypto';
+import { resolveCanvasNumericUserIdFromLtiParams } from '../common/utils/canvas-api-user.util';
 import { resolveLtiContextValue } from '../common/utils/lti-context-value.util';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const oauthSignature = require('oauth-signature');
@@ -115,7 +116,7 @@ export class Lti11LaunchVerifyService {
         .trim();
     const roles =
       (flat.custom_roles ?? flat.roles ?? flat.ext_roles ?? flat.canvas_membership_roles ?? '').toString().trim();
-    const canvasUserIdRaw = resolveLtiContextValue((flat.custom_canvas_user_id ?? '').toString());
+    const canvasUserIdRaw = resolveCanvasNumericUserIdFromLtiParams(flat) ?? '';
     const ltiPrincipal = (flat.user_id ?? flat.lis_person_sourcedid ?? '').toString().trim();
     const ltiSub = (ltiPrincipal || canvasUserIdRaw).trim();
     const canvasUserId =

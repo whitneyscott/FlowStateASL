@@ -231,7 +231,7 @@ export class PromptService {
     const self = await this.canvas.getCurrentCanvasUserId(domainOverride, token);
     if (self) return self;
     throw new Error(
-      'Canvas user id required. For LTI 1.3 add Custom Field user_id = $Canvas.user.id on the Developer Key; for LTI 1.1 ensure custom_canvas_user_id is sent, or complete Canvas OAuth as the submitting user.',
+      'Canvas user id required. LTI 1.1: Custom Field user_id=$Canvas.user.id (custom_user_id) or cartridge custom_canvas_user_id; LTI 1.3: user_id on Developer Key; or Canvas OAuth as the submitting user.',
     );
   }
 
@@ -2051,10 +2051,10 @@ export class PromptService {
         selfNumeric: selfNumeric ?? '(none)',
         canvasUserId: ctx.canvasUserId ?? '(none)',
         ltiSub: ltiSub || '(none)',
-        hint: 'Add LTI 1.3 Custom Field user_id=$Canvas.user.id (→ custom.user_id), or use student Canvas OAuth so /api/v1/users/self resolves.',
+        hint: 'LTI 1.1: add Custom Field user_id=$Canvas.user.id (POST as custom_user_id) or custom_canvas_user_id in XML; LTI 1.3: user_id in JWT custom claims; or student Canvas OAuth for /api/v1/users/self.',
       });
       throw new Error(
-        'Canvas file upload API requires a numeric Canvas user id in the URL. The launch is using an opaque LTI user id. Fix: add Custom Field user_id = $Canvas.user.id on the LTI tool (JWT custom.user_id), or complete Canvas OAuth as the student so we can read id from /api/v1/users/self.',
+        'Canvas file upload API requires a numeric Canvas user id in the URL. The launch is using an opaque LTI user id. Fix: in Canvas, add a tool Custom Field named user_id with value $Canvas.user.id (sends custom_user_id for LTI 1.1), or use custom_canvas_user_id in the cartridge, or complete Canvas OAuth as the student so /api/v1/users/self resolves.',
       );
     }
 

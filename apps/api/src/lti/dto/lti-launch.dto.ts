@@ -5,6 +5,8 @@ export interface LtiLaunchDto {
   custom_assignment_id?: string;
   custom_canvas_assignment_id?: string;
   custom_canvas_user_id?: string;
+  /** Canvas UI custom field named `user_id` → LTI POST key `custom_user_id`. */
+  custom_user_id?: string;
   custom_roles?: string;
   resource_link_id?: string;
   custom_resource_link_id?: string;
