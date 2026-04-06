@@ -173,7 +173,7 @@ export class SubmissionService {
     if (!hasOurDeck) {
       throw new Error(
         `Verification failed: saved data not found for deck(s) ${deckIdsToSave.join(', ')}. ` +
-        `Assignment ${progressAssignmentId}, user ${ctx.userId}. Canvas may not persist submission body via POST.`,
+        `Assignment ${progressAssignmentId}, user ${ctx.userId}. Canvas may not persist submission body via PUT.`,
       );
     }
   }
