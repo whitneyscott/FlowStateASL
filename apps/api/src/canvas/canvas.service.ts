@@ -2319,11 +2319,11 @@ export class CanvasService {
       submissionCanvasUserId,
       tokenUserId: tokenUserId || '(unknown)',
       tokenIsLauncherOauth,
-      writeMode: 'PUT_submissions_user_id_body',
+      writeMode: 'PUT_then_POST_if_no_submission_row',
       submission_types: types ?? '(unknown)',
       tokenPreview: token ? `${token.slice(0, 4)}...${token.slice(-4)}` : 'MISSING',
     });
-    await this.putSubmissionBody(
+    const putOk = await this.putSubmissionBodyAllowMissing(
       ctx.courseId,
       assignmentId,
       submissionCanvasUserId,
@@ -2331,10 +2331,66 @@ export class CanvasService {
       domainOverride,
       token,
     );
-    appendLtiLog('canvas', 'writeSubmissionBody: PUT submission body succeeded', {
+    if (putOk) {
+      appendLtiLog('canvas', 'writeSubmissionBody: PUT submission body succeeded', {
+        assignmentId,
+        submissionCanvasUserId,
+      });
+      return;
+    }
+    appendLtiLog('canvas', 'writeSubmissionBody: PUT 404 (no row); POST create online_text_entry', {
       assignmentId,
       submissionCanvasUserId,
     });
+    const actAsUser =
+      !!submissionCanvasUserId && !!tokenUserId && submissionCanvasUserId !== tokenUserId;
+    await this.createSubmissionWithBody(
+      ctx.courseId,
+      assignmentId,
+      actAsUser ? submissionCanvasUserId : '',
+      bodyContent,
+      domainOverride,
+      token,
+      actAsUser,
+    );
+    appendLtiLog('canvas', 'writeSubmissionBody: POST create submission succeeded', {
+      assignmentId,
+      submissionCanvasUserId,
+      actAsUser,
+    });
+  }
+
+  /**
+   * PUT submission body. Returns true if updated, false if Canvas returns 404 (no submission yet).
+   * Throws on other errors.
+   */
+  async putSubmissionBodyAllowMissing(
+    courseId: string,
+    assignmentId: string,
+    userId: string,
+    bodyText: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<boolean> {
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}`;
+    const body = { submission: { body: bodyText } };
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: this.getAuthHeaders(tokenOverride),
+      body: JSON.stringify(body),
+    });
+    if (res.ok) return true;
+    if (res.status === 404) {
+      appendLtiLog('canvas', 'putSubmissionBodyAllowMissing: 404 (no submission row yet)', {
+        courseId,
+        assignmentId,
+        userId,
+      });
+      return false;
+    }
+    const text = await res.text();
+    throw new Error(`Canvas put submission body failed: ${res.status} ${text}`);
   }
 
   async putSubmissionBody(
@@ -2345,17 +2401,18 @@ export class CanvasService {
     domainOverride?: string,
     tokenOverride?: string | null,
   ): Promise<void> {
-    const base = this.getBaseUrl(domainOverride);
-    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}`;
-    const body = { submission: { body: bodyText } };
-    const res = await fetch(url, {
-      method: 'PUT',
-      headers: this.getAuthHeaders(tokenOverride),
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Canvas put submission body failed: ${res.status} ${text}`);
+    const ok = await this.putSubmissionBodyAllowMissing(
+      courseId,
+      assignmentId,
+      userId,
+      bodyText,
+      domainOverride,
+      tokenOverride,
+    );
+    if (!ok) {
+      throw new Error(
+        'Canvas put submission body failed: 404 — no submission row for this user yet; use POST create or submit first',
+      );
     }
   }
 
