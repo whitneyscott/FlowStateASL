@@ -570,6 +570,7 @@ export class LtiController {
       courseId: data.courseId,
       assignmentId: data.assignmentId ?? '',
       userId: data.ltiSub,
+      canvasUserId: data.canvasUserId,
       resourceLinkId: data.resourceLinkId ?? '',
       moduleId: data.moduleId ?? '',
       toolType: data.toolType ?? 'flashcards',

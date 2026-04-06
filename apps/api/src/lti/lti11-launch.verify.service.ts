@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { timingSafeEqual } from 'crypto';
+import { resolveLtiContextValue } from '../common/utils/lti-context-value.util';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const oauthSignature = require('oauth-signature');
 
@@ -10,7 +11,10 @@ export interface Lti11VerifyResult {
   canvasApiDomain: string;
   canvasBaseUrl: string;
   roles: string;
+  /** LTI user identity for session/DB: prefer platform user_id, else Canvas custom id. */
   ltiSub: string;
+  /** Canvas REST user id when provided ($Canvas.user.id → custom_canvas_user_id). */
+  canvasUserId?: string;
   consumerKey: string;
   /** Additional LTI 1.1 fields for building LtiContext. */
   assignmentId?: string;
@@ -111,8 +115,12 @@ export class Lti11LaunchVerifyService {
         .trim();
     const roles =
       (flat.custom_roles ?? flat.roles ?? flat.ext_roles ?? flat.canvas_membership_roles ?? '').toString().trim();
-    const ltiSub =
-      (flat.user_id ?? flat.lis_person_sourcedid ?? flat.custom_canvas_user_id ?? '').toString().trim();
+    const canvasUserIdRaw = resolveLtiContextValue((flat.custom_canvas_user_id ?? '').toString());
+    const ltiPrincipal = (flat.user_id ?? flat.lis_person_sourcedid ?? '').toString().trim();
+    const ltiSub = (ltiPrincipal || canvasUserIdRaw).trim();
+    const canvasUserId =
+      canvasUserIdRaw ||
+      (ltiPrincipal && /^\d+$/.test(ltiPrincipal) ? ltiPrincipal : undefined);
 
     if (!courseId || !ltiSub) {
       return { ok: false, error: 'Missing courseId (custom_canvas_course_id/context_id) or user_id' };
@@ -146,6 +154,7 @@ export class Lti11LaunchVerifyService {
         canvasBaseUrl,
         roles,
         ltiSub,
+        canvasUserId,
         consumerKey,
         assignmentId,
         resourceLinkId,

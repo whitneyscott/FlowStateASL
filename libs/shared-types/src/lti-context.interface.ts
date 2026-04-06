@@ -2,6 +2,8 @@ export interface LtiContext {
   courseId: string;
   assignmentId: string;
   userId: string;
+  /** Numeric Canvas user id from custom ($Canvas.user.id). Use for Canvas REST; keep `userId` as LTI identity when opaque (1.3 sub). */
+  canvasUserId?: string;
   resourceLinkId: string;
   moduleId: string;
   toolType: 'flashcards' | 'prompter';

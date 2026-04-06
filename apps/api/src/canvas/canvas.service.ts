@@ -6,6 +6,7 @@ import {
   canvasApiBaseFromLtiContext,
   resolveCanvasApiBaseUrl,
 } from '../common/utils/canvas-base-url.util';
+import { resolveCanvasApiUserId, toCanvasFileIdInt } from '../common/utils/canvas-api-user.util';
 
 export class CanvasUploadChunkError extends Error {
   constructor(
@@ -328,9 +329,10 @@ export class CanvasService {
     appendLtiLog('canvas', 'attachFileToSubmission', { courseId, assignmentId, userId, fileId });
     const base = this.getBaseUrl(domainOverride);
     const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}`;
+    const fid = toCanvasFileIdInt(fileId);
     const body = {
       submission: {
-        file_ids: [Number(fileId)],
+        file_ids: [fid],
       },
     };
     const res = await fetch(url, {
@@ -381,7 +383,7 @@ export class CanvasService {
           submission_type: data.submission_type ?? '(none)',
           attachmentCount: attIds.length,
           attachmentIds: attIds.slice(0, 8),
-          uploadedFileIdInResponse: attIds.includes(Number(fileId)),
+          uploadedFileIdInResponse: attIds.includes(fid),
           attachmentNamesSample: (data.attachments ?? [])
             .slice(0, 3)
             .map((a) => ({ id: a.id, name: a.display_name ?? '(no name)' })),
@@ -414,7 +416,7 @@ export class CanvasService {
     const body = {
       comment: {
         text_comment: textComment,
-        file_ids: [Number(fileId)],
+        file_ids: [toCanvasFileIdInt(fileId)],
       },
     };
     appendLtiLog('canvas', 'attachFileToSubmissionComment', {
@@ -462,7 +464,7 @@ export class CanvasService {
     const body = {
       submission: {
         submission_type: 'online_upload',
-        file_ids: [Number(fileId)],
+        file_ids: [toCanvasFileIdInt(fileId)],
         ...(options?.bodyHtml ? { body: options.bodyHtml } : {}),
       },
     };
@@ -2264,9 +2266,8 @@ export class CanvasService {
 
   /**
    * Write submission body for an assignment. Uses tokenOverride (OAuth or service token).
-   * When the token holder is not the submitting student, uses as_user_id (service account / PHP parity).
-   * Callers pass token from session or CourseSettingsService.getCanvasTokenForLtiBackedOps.
-   * Tools that need to merge with existing must call getSubmission first, then writeSubmissionBody with the final body.
+   * When the assignment allows online text entry, uses POST .../submissions (online_text_entry).
+   * Skips when the assignment disallows online text (e.g. file-only); callers may use comments + file upload instead.
    */
   async writeSubmissionBody(
     ctx: LtiContext,
@@ -2295,27 +2296,27 @@ export class CanvasService {
       });
       return;
     }
-    const studentCanvasId = ((ctx.canvasUserId ?? '').trim() || ctx.userId).trim();
+    const canvasApiUserId = resolveCanvasApiUserId(ctx);
     const tokenUserId = await this.getCurrentCanvasUserId(domainOverride, token);
     appendLtiLog('canvas', 'writeSubmissionBody (Step 10)', {
       assignmentId,
       bodyLength: bodyContent?.length ?? 0,
-      studentCanvasId,
+      ltiUserId: ctx.userId,
+      canvasApiUserId: canvasApiUserId ?? '(omitted; self-submit via token)',
       tokenUserId: tokenUserId ?? '(unknown)',
-      writeMode: 'targeted_put_submission_body',
+      writeMode: 'POST_submissions_online_text_entry',
       submission_types: types ?? '(unknown)',
       tokenPreview: token ? `${token.slice(0, 4)}...${token.slice(-4)}` : 'MISSING',
     });
-    await this.putSubmissionBody(
+    await this.createSubmissionWithBody(
       ctx.courseId,
       assignmentId,
-      studentCanvasId,
+      canvasApiUserId ?? '',
       bodyContent,
       domainOverride,
       token,
     );
-    appendLtiLog('canvas', 'writeSubmissionBody: targeted PUT succeeded', {
-      studentCanvasId,
+    appendLtiLog('canvas', 'writeSubmissionBody: POST submissions succeeded', {
       assignmentId,
     });
   }

@@ -9,6 +9,7 @@ import { CourseSettingsService } from '../course-settings/course-settings.servic
 import { LtiAgsService } from '../lti/lti-ags.service';
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
 import { canvasApiBaseFromLtiContext } from '../common/utils/canvas-base-url.util';
+import { resolveCanvasApiUserId } from '../common/utils/canvas-api-user.util';
 import { ConfigService } from '@nestjs/config';
 import type { SubmitFlashcardDto } from './dto/submit-flashcard.dto';
 
@@ -107,7 +108,12 @@ export class SubmissionService {
         ctx.platformIss,
       );
     const numericUserId = await this.canvas.getCurrentCanvasUserId(canvasOverride, token);
-    const apiUserId = numericUserId ?? ctx.canvasUserId ?? ctx.userId;
+    const apiUserId = resolveCanvasApiUserId(ctx) ?? numericUserId;
+    if (!apiUserId) {
+      throw new Error(
+        'Cannot resolve Canvas user id for progress save. Add LTI custom user_id ($Canvas.user.id) or ensure OAuth returns /users/self.',
+      );
+    }
     const existing = await this.canvas.getSubmission(
       ctx.courseId,
       progressAssignmentId,
@@ -167,7 +173,7 @@ export class SubmissionService {
     if (!hasOurDeck) {
       throw new Error(
         `Verification failed: saved data not found for deck(s) ${deckIdsToSave.join(', ')}. ` +
-        `Assignment ${progressAssignmentId}, user ${ctx.userId}. Canvas may not persist submission body via PUT.`,
+        `Assignment ${progressAssignmentId}, user ${ctx.userId}. Canvas may not persist submission body via POST.`,
       );
     }
   }

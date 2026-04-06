@@ -23,6 +23,7 @@ import { PromptFallbackStore } from './prompt-fallback.store';
 import { PromptVideoTitleStore } from './prompt-video-title.store';
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
 import { canvasApiBaseFromLtiContext } from '../common/utils/canvas-base-url.util';
+import { resolveCanvasApiUserId } from '../common/utils/canvas-api-user.util';
 import type { PromptConfigJson, PutPromptConfigDto } from './dto/prompt-config.dto';
 import { randomUUID } from 'crypto';
 
@@ -213,6 +214,26 @@ export class PromptService {
     @InjectRepository(SproutPlaylistVideoEntity)
     private readonly sproutPlaylistVideoRepo: Repository<SproutPlaylistVideoEntity>,
   ) {}
+
+  /** Canvas REST paths need the numeric Canvas user id (custom), not an opaque LTI 1.3 sub. */
+  private async resolveCanvasUserIdForRestApi(
+    ctx: LtiContext,
+    token: string,
+    domainOverride?: string,
+  ): Promise<string> {
+    const fromCtx = resolveCanvasApiUserId(ctx);
+    if (fromCtx) return fromCtx;
+    if (!token.trim()) {
+      throw new Error(
+        'Canvas token required when LTI custom user_id is missing. For LTI 1.3 add Custom Field user_id = $Canvas.user.id on the Developer Key.',
+      );
+    }
+    const self = await this.canvas.getCurrentCanvasUserId(domainOverride, token);
+    if (self) return self;
+    throw new Error(
+      'Canvas user id required. For LTI 1.3 add Custom Field user_id = $Canvas.user.id on the Developer Key; for LTI 1.1 ensure custom_canvas_user_id is sent, or complete Canvas OAuth as the submitting user.',
+    );
+  }
 
   /** Total seconds allowed on a deck card (prompt timer). */
   private deckCardTotalSeconds(videoDurationSec: number | null | undefined): number {
@@ -1915,7 +1936,7 @@ export class PromptService {
     const ctxWithToken: LtiContext = { ...ctx, canvasAccessToken: token };
     await this.canvas.writeSubmissionBody(ctxWithToken, assignmentId, bodyString, token);
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
-    const userId = (ctx.canvasUserId ?? '').trim() || ctx.userId;
+    const userId = await this.resolveCanvasUserIdForRestApi(ctx, token, domainOverride);
 
     // Phase 1: Assignment-based prompt ledger write (append-only row per prompt event).
     // TODO SECURITY PHASE 2: Add signed server token validation before writing ledger row.
@@ -2009,7 +2030,11 @@ export class PromptService {
 
     let studentUserId: string | undefined;
     let studentIdSource: string | undefined;
-    if (usingStudentOAuth && selfNumeric && isCanvasNumericUserId(selfNumeric)) {
+    const fromResolver = resolveCanvasApiUserId(ctx);
+    if (fromResolver && isCanvasNumericUserId(fromResolver)) {
+      studentUserId = fromResolver;
+      studentIdSource = customId ? 'lti.custom.user_id' : 'lti.numeric_principal';
+    } else if (usingStudentOAuth && selfNumeric && isCanvasNumericUserId(selfNumeric)) {
       studentUserId = selfNumeric;
       studentIdSource = 'users/self';
     } else if (isCanvasNumericUserId(customId)) {
@@ -2218,9 +2243,10 @@ export class PromptService {
       throw new Error('Deep Linking context required (messageType LtiDeepLinkingRequest and deepLinkReturnUrl)');
     }
 
-    // Use Canvas numeric user id when present so teacher viewer (Canvas submissions user_id)
-    // can resolve in-memory mappings reliably.
-    const submitUserId = (ctx.canvasUserId ?? '').trim() || ctx.userId;
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
+    const canvasToken =
+      (await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken, ctx)) ?? '';
+    const submitUserId = await this.resolveCanvasUserIdForRestApi(ctx, canvasToken, domainOverride);
 
     // In dev: create SproutVideo title first; use it as content item title so Canvas stores it for lookup. Do not wait for upload.
     const videoTitle =
@@ -2237,8 +2263,6 @@ export class PromptService {
     });
     if (process.env.NODE_ENV !== 'production' && videoTitle) {
       this.promptVideoTitleStore.set(ctx.courseId, ctx.assignmentId ?? '', submitUserId, videoTitle);
-      const canvasToken = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken, ctx);
-      const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
       const folderId = await this.getPromptSubmissionsFolderId(ctx.courseId, domainOverride, canvasToken);
       if (folderId) {
         const courseId = ctx.courseId;
@@ -2750,9 +2774,12 @@ export class PromptService {
     if (!token) return null;
     const assignmentId = ctx.assignmentId?.trim();
     if (!assignmentId) return null;
-    const userId = ctx.canvasUserId ?? ctx.userId;
-    if (!userId) return null;
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
+    let userId = resolveCanvasApiUserId(ctx);
+    if (!userId) {
+      userId = (await this.canvas.getCurrentCanvasUserId(domainOverride, token)) ?? undefined;
+    }
+    if (!userId) return null;
     const sub = await this.canvas.getSubmissionFull(
       ctx.courseId,
       assignmentId,

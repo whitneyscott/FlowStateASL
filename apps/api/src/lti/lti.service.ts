@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
 import { resolveLtiContextValue } from '../common/utils/lti-context-value.util';
+import { resolveCanvasApiUserId } from '../common/utils/canvas-api-user.util';
 
 declare module 'express-session' {
   interface SessionData {
@@ -84,11 +85,12 @@ export class LtiService {
     // user_id (opaque) and custom_canvas_user_id (numeric), we must keep both (upload reads canvasUserId).
     const ltiPrincipal = (body.user_id ?? body.lis_person_sourcedid ?? '').toString().trim();
     const customCanvasUserResolved = resolveLtiContextValue(body.custom_canvas_user_id);
-    const canvasUserId =
-      customCanvasUserResolved && /^\d+$/.test(customCanvasUserResolved)
-        ? customCanvasUserResolved
-        : undefined;
     const userId = ltiPrincipal || customCanvasUserResolved || '';
+    const canvasUserId =
+      resolveCanvasApiUserId({
+        userId,
+        canvasUserId: customCanvasUserResolved || undefined,
+      }) || undefined;
     const resourceLinkId =
       (body.resource_link_id ?? body.custom_resource_link_id ?? body.custom_custom_resource_link_id ?? '').trim();
     const moduleId = resolveLtiContextValue(
