@@ -42,6 +42,38 @@ export class CanvasService {
     };
   }
 
+  private redactHeadersForLog(headers: Record<string, string>): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(headers)) {
+      out[k] = k.toLowerCase() === 'authorization' ? 'Bearer <redacted>' : v;
+    }
+    return out;
+  }
+
+  private responseHeadersToObject(res: Response): Record<string, string> {
+    const o: Record<string, string> = {};
+    res.headers.forEach((v, k) => {
+      o[k] = k.toLowerCase() === 'authorization' ? '(redacted)' : v;
+    });
+    return o;
+  }
+
+  /** Full HTTP request/response for video upload pipeline (Bridge). Token values never logged. */
+  private appendVideoSubmissionFlowHttpLog(
+    step: string,
+    detail: {
+      requestMethod: string;
+      requestUrl: string;
+      requestHeaders: Record<string, string>;
+      requestBodyDescription?: string;
+      responseStatus: number;
+      responseHeaders: Record<string, string>;
+      responseBody: string;
+    },
+  ): void {
+    appendLtiLog('canvas', `videoSubmissionFlow:${step}`, detail);
+  }
+
   private getBaseUrl(override?: string): string {
     const resolved = resolveCanvasApiBaseUrl({
       canvasBaseUrl: override,
@@ -203,48 +235,40 @@ export class CanvasService {
     domainOverride?: string,
     tokenOverride?: string | null,
   ): Promise<{ uploadUrl: string; uploadParams: Record<string, string> }> {
-    appendLtiLog('canvas', 'initiateSubmissionFileUploadForUser', {
-      assignmentId,
-      userId,
-      filename,
-      size,
-      contentType,
-    });
     const base = this.getBaseUrl(domainOverride);
     const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${encodeURIComponent(userId)}/files`;
+    const authH = this.getAuthHeaders(tokenOverride);
+    const reqHeaders = { Authorization: authH.Authorization };
     const form = new FormData();
     form.append('name', filename);
     form.append('size', String(size));
     form.append('content_type', contentType);
     const res = await fetch(url, {
       method: 'POST',
-      headers: { Authorization: this.getAuthHeaders(tokenOverride).Authorization },
+      headers: reqHeaders,
       body: form,
     });
+    const responseText = await res.text();
+    this.appendVideoSubmissionFlowHttpLog('initiateSubmissionFileUploadForUser', {
+      requestMethod: 'POST',
+      requestUrl: url,
+      requestHeaders: this.redactHeadersForLog(reqHeaders),
+      requestBodyDescription: `multipart/form-data fields: name, size, content_type (${contentType}); file not yet sent`,
+      responseStatus: res.status,
+      responseHeaders: this.responseHeadersToObject(res),
+      responseBody: responseText,
+    });
     if (!res.ok) {
-      const text = await res.text();
-      appendLtiLog('canvas', 'initiateSubmissionFileUploadForUser FAIL', { status: res.status, text: text.slice(0, 200) });
-      throw new Error(`Canvas initiate submission file upload failed: ${res.status} ${text}`);
+      appendLtiLog('canvas', 'initiateSubmissionFileUploadForUser FAIL', { status: res.status, text: responseText.slice(0, 200) });
+      throw new Error(`Canvas initiate submission file upload failed: ${res.status} ${responseText}`);
     }
-    const data = (await res.json()) as {
+    const data = JSON.parse(responseText) as {
       upload_url?: string;
       upload_params?: Record<string, string>;
     };
     if (!data.upload_url || !data.upload_params) {
       throw new Error('Canvas did not return upload_url and upload_params');
     }
-    let uploadHost = '(parse-failed)';
-    try {
-      uploadHost = new URL(data.upload_url).host;
-    } catch {
-      /* ignore */
-    }
-    const paramKeys = Object.keys(data.upload_params ?? {}).sort();
-    appendLtiLog('canvas', 'initiateSubmissionFileUploadForUser OK', {
-      uploadHost,
-      uploadParamKeys: paramKeys,
-      hasFilenameParam: paramKeys.some((k) => /filename|name/i.test(k)),
-    });
     return {
       uploadUrl: data.upload_url,
       uploadParams: data.upload_params,
@@ -257,7 +281,6 @@ export class CanvasService {
     buffer: Buffer,
     options?: { resumeFromOffset?: number; tokenOverride?: string | null },
   ): Promise<{ fileId: string }> {
-    appendLtiLog('canvas', 'uploadFileToCanvas', { bufferSize: buffer.length });
     const start = options?.resumeFromOffset ?? 0;
     const total = buffer.length;
     let lastSuccessOffset = start;
@@ -274,6 +297,19 @@ export class CanvasService {
         body: form,
         redirect: 'manual',
       });
+      const postText = await res.text();
+      const paramKeys = Object.keys(uploadParams).sort().join(',');
+      this.appendVideoSubmissionFlowHttpLog('uploadFileToCanvas:POST_upload_url', {
+        requestMethod: 'POST',
+        requestUrl: uploadUrl,
+        requestHeaders: {
+          'Content-Type': 'multipart/form-data (boundary set automatically by fetch; not echoed here)',
+        },
+        requestBodyDescription: `multipart: upload_params [${paramKeys}], file=${total} bytes application/octet-stream`,
+        responseStatus: res.status,
+        responseHeaders: this.responseHeadersToObject(res),
+        responseBody: postText,
+      });
 
       if (res.status >= 300 && res.status < 400) {
         const location = res.headers.get('location');
@@ -283,13 +319,21 @@ export class CanvasService {
           method: 'GET',
           headers: { Authorization: authHeaders.Authorization },
         });
+        const confirmText = await confirmRes.text();
+        this.appendVideoSubmissionFlowHttpLog('uploadFileToCanvas:GET_confirm_redirect', {
+          requestMethod: 'GET',
+          requestUrl: location,
+          requestHeaders: this.redactHeadersForLog({ Authorization: authHeaders.Authorization }),
+          responseStatus: confirmRes.status,
+          responseHeaders: this.responseHeadersToObject(confirmRes),
+          responseBody: confirmText,
+        });
         if (!confirmRes.ok) {
           throw new Error(`Confirm success failed: ${confirmRes.status}`);
         }
-        const confirmData = (await confirmRes.json()) as { id?: string };
+        const confirmData = JSON.parse(confirmText) as { id?: string };
         const fileId = String(confirmData.id ?? '');
         if (!fileId) throw new Error('No file id in confirm response');
-        appendLtiLog('canvas', 'uploadFileToCanvas OK (redirect path)', { fileId });
         return { fileId };
       }
 
@@ -300,10 +344,9 @@ export class CanvasService {
         );
       }
 
-      const data = (await res.json()) as { id?: string };
+      const data = JSON.parse(postText) as { id?: string };
       const fileId = String(data.id ?? '');
       if (!fileId) throw new Error('No file id in response');
-      appendLtiLog('canvas', 'uploadFileToCanvas OK', { fileId });
       return { fileId };
     } catch (e) {
       if (e instanceof CanvasUploadChunkError) throw e;
@@ -326,7 +369,6 @@ export class CanvasService {
     domainOverride?: string,
     tokenOverride?: string | null,
   ): Promise<void> {
-    appendLtiLog('canvas', 'attachFileToSubmission', { courseId, assignmentId, userId, fileId });
     const base = this.getBaseUrl(domainOverride);
     const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}`;
     const fid = toCanvasFileIdInt(fileId);
@@ -335,30 +377,34 @@ export class CanvasService {
         file_ids: [fid],
       },
     };
+    const authHeaders = this.getAuthHeaders(tokenOverride);
+    const bodyStr = JSON.stringify(body);
     const res = await fetch(url, {
       method: 'PUT',
-      headers: this.getAuthHeaders(tokenOverride),
-      body: JSON.stringify(body),
+      headers: authHeaders,
+      body: bodyStr,
+    });
+    const raw = await res.text();
+    this.appendVideoSubmissionFlowHttpLog('attachFileToSubmission:PUT', {
+      requestMethod: 'PUT',
+      requestUrl: url,
+      requestHeaders: this.redactHeadersForLog({
+        Authorization: authHeaders.Authorization,
+        'Content-Type': authHeaders['Content-Type'] ?? 'application/json',
+      }),
+      requestBodyDescription: bodyStr,
+      responseStatus: res.status,
+      responseHeaders: this.responseHeadersToObject(res),
+      responseBody: raw,
     });
     if (!res.ok) {
-      const text = await res.text();
       appendLtiLog('canvas', 'attachFileToSubmission FAIL', {
         status: res.status,
         requestPath: `/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}`,
-        text: text.slice(0, 800),
+        text: raw.slice(0, 800),
       });
-      throw new Error(`Canvas attach file to submission failed: ${res.status} ${text}`);
+      throw new Error(`Canvas attach file to submission failed: ${res.status} ${raw}`);
     }
-    const raw = await res.text();
-    const rawPreview = raw?.trim() ? raw.slice(0, 1800) : '';
-    appendLtiLog('canvas', 'attachFileToSubmission response raw (preview)', {
-      courseId,
-      assignmentId,
-      userId,
-      fileId,
-      length: raw?.length ?? 0,
-      preview: rawPreview || '(empty)',
-    });
     let attachSummary: Record<string, unknown> = {};
     try {
       if (raw?.trim()) {

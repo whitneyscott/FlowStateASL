@@ -37,6 +37,9 @@ const PROMPT_LEDGER_ASSIGNMENT_TITLE = 'ASL Express Prompt Ledger';
 const DECK_DEFAULT_TOTAL_SECONDS_UNKNOWN = 4;
 const DECK_KNOWN_VIDEO_EXTRA_SECONDS = 1;
 
+/** Dedupes `getConfig: deck mode snapshot` when the same course/session hits config repeatedly with identical deck fields. */
+let lastDeckModeSnapshotLogKey = '';
+
 /** Canvas submission and file-upload API paths require a numeric user id, not LTI `sub` (opaque). */
 function isCanvasNumericUserId(id: string): boolean {
   return id.length > 0 && /^\d+$/.test(id);
@@ -590,23 +593,15 @@ export class PromptService {
     const assignmentId = (ctx.assignmentId ?? '').trim();
     const resourceLinkId = (ctx.resourceLinkId ?? '').trim();
     if (!courseId || !assignmentId || !resourceLinkId) {
-      appendLtiLog('prompt-decks', 'real launch mapping skipped', {
-        reason: 'missing_required_ids',
-        courseId: courseId || '(none)',
-        assignmentId: assignmentId || '(none)',
-        resourceLinkId: resourceLinkId || '(none)',
-      });
+      // Suppressed: routine when launching from module without assignment id in LTI.
+      // appendLtiLog('prompt-decks', 'real launch mapping skipped', { reason: 'missing_required_ids', ... });
       return;
     }
 
     const token = this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken, ctx);
     if (!token) {
-      appendLtiLog('prompt-decks', 'real launch mapping skipped', {
-        reason: 'no_canvas_token_available',
-        courseId,
-        assignmentId,
-        resourceLinkId,
-      });
+      // Suppressed: routine during student launch before token available.
+      // appendLtiLog('prompt-decks', 'real launch mapping skipped', { reason: 'no_canvas_token_available', ... });
       return;
     }
 
@@ -859,9 +854,8 @@ export class PromptService {
 
   async getConfig(ctx: LtiContext): Promise<PromptConfigJson | null> {
     const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken, ctx);
-    appendLtiLog('prompt-decks', 'getConfig: token check', {
-      hasToken: !!token,
-    });
+    // Suppressed: noisy repeat — hasToken is obvious from success/failure of getConfig.
+    // appendLtiLog('prompt-decks', 'getConfig: token check', { hasToken: !!token });
     if (!token) {
       return null;
     }
@@ -1007,14 +1001,18 @@ export class PromptService {
         }
       }
     }
-    appendLtiLog('prompt-decks', 'getConfig: deck mode snapshot', {
-      assignmentId,
-      promptMode: config?.promptMode ?? '(none)',
-      selectedDeckCount: config?.videoPromptConfig?.selectedDecks?.length ?? 0,
-      hasStoredBanks: Array.isArray(config?.videoPromptConfig?.storedPromptBanks),
-      storedBankCount: config?.videoPromptConfig?.storedPromptBanks?.length ?? 0,
-      staticFallbackCount: config?.videoPromptConfig?.staticFallbackPrompts?.length ?? 0,
-    });
+    const deckSnapKey = `${assignmentId}|${config?.promptMode ?? ''}|${config?.videoPromptConfig?.selectedDecks?.length ?? 0}|${config?.videoPromptConfig?.storedPromptBanks?.length ?? 0}|${config?.videoPromptConfig?.staticFallbackPrompts?.length ?? 0}`;
+    if (deckSnapKey !== lastDeckModeSnapshotLogKey) {
+      lastDeckModeSnapshotLogKey = deckSnapKey;
+      appendLtiLog('prompt-decks', 'getConfig: deck mode snapshot', {
+        assignmentId,
+        promptMode: config?.promptMode ?? '(none)',
+        selectedDeckCount: config?.videoPromptConfig?.selectedDecks?.length ?? 0,
+        hasStoredBanks: Array.isArray(config?.videoPromptConfig?.storedPromptBanks),
+        storedBankCount: config?.videoPromptConfig?.storedPromptBanks?.length ?? 0,
+        staticFallbackCount: config?.videoPromptConfig?.staticFallbackPrompts?.length ?? 0,
+      });
+    }
 
     // Hydrate key assignment-backed fields directly from Canvas so UI reflects current assignment state.
     // Keep blob values as fallback when Canvas read is unavailable.
@@ -1700,10 +1698,8 @@ export class PromptService {
     prompts: Array<{ title: string; videoId?: string; duration: number }>;
     warning?: string;
   }> {
-    appendLtiLog('prompt-decks', 'buildDeckPromptList start', {
-      selectedDeckCount: selectedDecks?.length ?? 0,
-      totalCards,
-    });
+    // Suppressed: noisy on every deck build — controller logs request/result when needed.
+    // appendLtiLog('prompt-decks', 'buildDeckPromptList start', { selectedDeckCount:..., totalCards });
     if (!selectedDecks || selectedDecks.length === 0) {
       return { prompts: [], warning: 'No decks selected' };
     }
@@ -1836,12 +1832,7 @@ export class PromptService {
       duration: this.deckCardTotalSeconds(resolveVideoSeconds(s)),
     }));
 
-    appendLtiLog('prompt-decks', 'buildDeckPromptList result', {
-      selectedDeckCount: selectedDecks.length,
-      totalRequested: totalToSelect,
-      promptCount: prompts.length,
-      warning: warning ?? '(none)',
-    });
+    // appendLtiLog('prompt-decks', 'buildDeckPromptList result', { ... });
 
     return { prompts, warning };
   }
