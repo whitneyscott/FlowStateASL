@@ -215,42 +215,21 @@ export class PromptService {
     private readonly sproutPlaylistVideoRepo: Repository<SproutPlaylistVideoEntity>,
   ) {}
 
-  /**
-   * Numeric Canvas user id for submission REST paths (upload, body, ledger).
-   * When the API token is the launcher's OAuth token, that token defines the submitting user.
-   * LTI custom user_id can disagree (mis-sent or wrong tool field) and breaks attach/body without as_user_id.
-   */
+  /** Canvas REST paths need the numeric Canvas user id (custom), not an opaque LTI 1.3 sub. */
   private async resolveCanvasUserIdForRestApi(
     ctx: LtiContext,
     token: string,
     domainOverride?: string,
   ): Promise<string> {
-    const oauth = (ctx.canvasAccessToken ?? '').trim();
-    const tokenIsLauncherOauth = oauth.length > 0 && oauth === token.trim();
-    const fromLti = resolveCanvasApiUserId(ctx)?.trim() || '';
-    const self = (await this.canvas.getCurrentCanvasUserId(domainOverride, token))?.trim() || '';
-
-    if (tokenIsLauncherOauth) {
-      if (self && isCanvasNumericUserId(self)) {
-        if (fromLti && fromLti !== self) {
-          appendLtiLog('prompt', 'resolveCanvasUserIdForRestApi: OAuth holder overrides LTI custom id', {
-            fromLti,
-            oauthHolder: self,
-          });
-        }
-        return self;
-      }
-      if (fromLti && isCanvasNumericUserId(fromLti)) return fromLti;
-    } else {
-      if (fromLti && isCanvasNumericUserId(fromLti)) return fromLti;
-    }
-
+    const fromCtx = resolveCanvasApiUserId(ctx);
+    if (fromCtx) return fromCtx;
     if (!token.trim()) {
       throw new Error(
         'Canvas token required when LTI custom user_id is missing. For LTI 1.3 add Custom Field user_id = $Canvas.user.id on the Developer Key.',
       );
     }
-    if (self && isCanvasNumericUserId(self)) return self;
+    const self = await this.canvas.getCurrentCanvasUserId(domainOverride, token);
+    if (self) return self;
     throw new Error(
       'Canvas user id required. LTI 1.1: Custom Field user_id=$Canvas.user.id (custom_user_id) or cartridge custom_canvas_user_id; LTI 1.3: user_id on Developer Key; or Canvas OAuth as the submitting user.',
     );
@@ -2043,20 +2022,35 @@ export class PromptService {
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
     const oauth = ctx.canvasAccessToken?.trim() || '';
     const usingStudentOAuth = !!oauth && token === oauth;
-    let studentUserId: string;
-    let studentIdSource: string;
-    try {
-      studentUserId = await this.resolveCanvasUserIdForRestApi(ctx, token, domainOverride);
-      studentIdSource =
-        usingStudentOAuth && resolveCanvasApiUserId(ctx)?.trim() !== studentUserId
-          ? 'users/self (oauth over LTI)'
-          : 'resolveCanvasUserIdForRestApi';
-    } catch (e) {
+    const selfNumeric = usingStudentOAuth
+      ? await this.canvas.getCurrentCanvasUserId(domainOverride, token)
+      : null;
+    const customId = (ctx.canvasUserId ?? '').trim();
+    const ltiSub = (ctx.userId ?? '').trim();
+
+    let studentUserId: string | undefined;
+    let studentIdSource: string | undefined;
+    const fromResolver = resolveCanvasApiUserId(ctx);
+    if (fromResolver && isCanvasNumericUserId(fromResolver)) {
+      studentUserId = fromResolver;
+      studentIdSource = customId ? 'lti.custom.user_id' : 'lti.numeric_principal';
+    } else if (usingStudentOAuth && selfNumeric && isCanvasNumericUserId(selfNumeric)) {
+      studentUserId = selfNumeric;
+      studentIdSource = 'users/self';
+    } else if (isCanvasNumericUserId(customId)) {
+      studentUserId = customId;
+      studentIdSource = 'lti.custom.user_id';
+    } else if (isCanvasNumericUserId(ltiSub)) {
+      studentUserId = ltiSub;
+      studentIdSource = 'lti.sub';
+    }
+
+    if (!studentUserId) {
       appendLtiLog('prompt-upload', 'uploadVideo FAIL: no numeric Canvas user id for submission file path', {
         usingStudentOAuth,
+        selfNumeric: selfNumeric ?? '(none)',
         canvasUserId: ctx.canvasUserId ?? '(none)',
-        ltiSub: (ctx.userId ?? '').trim() || '(none)',
-        error: String(e),
+        ltiSub: ltiSub || '(none)',
         hint: 'LTI 1.1: add Custom Field user_id=$Canvas.user.id (POST as custom_user_id) or custom_canvas_user_id in XML; LTI 1.3: user_id in JWT custom claims; or student Canvas OAuth for /api/v1/users/self.',
       });
       throw new Error(
@@ -2064,7 +2058,10 @@ export class PromptService {
       );
     }
 
-    const tokenHolderNumeric = await this.canvas.getCurrentCanvasUserId(domainOverride, token);
+    const tokenHolderNumeric =
+      usingStudentOAuth && selfNumeric
+        ? selfNumeric
+        : await this.canvas.getCurrentCanvasUserId(domainOverride, token);
     appendLtiLog('prompt-upload', 'uploadVideo: token actor vs submission user', {
       tokenHolderCanvasId: tokenHolderNumeric ?? '(unknown)',
       studentUserId,

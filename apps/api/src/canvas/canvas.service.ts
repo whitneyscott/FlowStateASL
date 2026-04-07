@@ -2270,8 +2270,8 @@ export class CanvasService {
    * PUT .../submissions/:user_id (body). This matches PHP parity and avoids 403s where POST create
    * submission is rejected for the token (e.g. some roles / LTI + REST combinations).
    *
-   * Target user id: if the token is the launcher's OAuth token, prefer /users/self (actual submitter);
-   * otherwise LTI custom Canvas user id, then token user. Static tokens without LTI custom id cannot
+   * Target user id: LTI custom Canvas user id when present; else, if the token is the launcher's
+   * OAuth token, Canvas /users/self (student self-submit). Static tokens without LTI custom id cannot
    * infer the student — callers must send user_id=$Canvas.user.id on the Developer Key.
    */
   async writeSubmissionBody(
@@ -2305,16 +2305,7 @@ export class CanvasService {
     const tokenUserId = (await this.getCurrentCanvasUserId(domainOverride, token))?.trim() || '';
     const sessionOauth = (ctx.canvasAccessToken ?? '').trim();
     const tokenIsLauncherOauth = sessionOauth.length > 0 && token === sessionOauth;
-    /** OAuth launcher: token defines submitter. LTI custom id can be wrong and yields empty attachments without as_user_id. */
-    const submissionCanvasUserId = tokenIsLauncherOauth
-      ? tokenUserId || fromLti
-      : fromLti || tokenUserId;
-    if (tokenIsLauncherOauth && fromLti && tokenUserId && fromLti !== tokenUserId) {
-      appendLtiLog('canvas', 'writeSubmissionBody: OAuth token holder takes precedence over LTI custom user id', {
-        fromLti,
-        tokenUserId,
-      });
-    }
+    const submissionCanvasUserId = fromLti || (tokenIsLauncherOauth ? tokenUserId : '');
     if (!submissionCanvasUserId) {
       throw new Error(
         'Cannot resolve Canvas user id for submission body. Add LTI Custom Field user_id = $Canvas.user.id on the Developer Key, or complete Canvas OAuth as the submitting student so /users/self applies.',
