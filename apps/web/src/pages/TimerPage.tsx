@@ -175,11 +175,16 @@ export default function TimerPage({ context }: TimerPageProps) {
           return;
         }
         if (!isDeepLink) {
-          // Upload video before prompt JSON: Canvas often has no submission row until a file is attached;
-          // PUT/POST submission body fails (404/403) if we submit text first on online_upload assignments.
+          // PHP parity: submit_prompt_first.php then upload_handler.php — submission row must exist before file attach.
+          lastEndpoint = 'POST /api/prompt/submit';
+          console.log('[TimerPage:doSubmit] Step 2: submitPrompt (create submission row; submit_prompt_first.php)');
+          setLastFunction('POST /api/prompt/submit');
+          await promptApi.submitPrompt(promptSnapshot, effectiveAssignmentId, deckTimeline);
+          setLastApiResult('POST /api/prompt/submit', 200, true);
+          console.log('[TimerPage:doSubmit] submitPrompt OK');
           if (blob) {
             lastEndpoint = 'POST /api/prompt/upload-video';
-            console.log('[TimerPage:doSubmit] Step 2: uploadVideo (before text — creates submission row)', {
+            console.log('[TimerPage:doSubmit] Step 3: uploadVideo (attach to row; upload_handler.php)', {
               blobSize: blob.size,
             });
             setLastFunction('POST /api/prompt/upload-video');
@@ -194,12 +199,6 @@ export default function TimerPage({ context }: TimerPageProps) {
               body: JSON.stringify({ tag: 'prompt-upload', message: verifyLine }),
             }).catch(() => {});
           }
-          lastEndpoint = 'POST /api/prompt/submit';
-          console.log('[TimerPage:doSubmit] Step 3: submitPrompt (body / metadata to Canvas)');
-          setLastFunction('POST /api/prompt/submit');
-          await promptApi.submitPrompt(promptSnapshot, effectiveAssignmentId, deckTimeline);
-          setLastApiResult('POST /api/prompt/submit', 200, true);
-          console.log('[TimerPage:doSubmit] submitPrompt OK');
         }
         setPhase('done');
         console.log('[TimerPage:doSubmit] DONE');
