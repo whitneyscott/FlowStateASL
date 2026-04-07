@@ -15,6 +15,7 @@ import { SubmissionModule } from './submission/submission.module';
 import { CourseSettingsModule } from './course-settings/course-settings.module';
 import { PromptModule } from './prompt/prompt.module';
 import { QuizModule } from './quiz/quiz.module';
+import { HealthModule } from './health/health.module';
 import { PromptConfigEntity } from './assessment/entities/prompt-config.entity';
 import { BlockedAttemptEntity } from './assessment/entities/blocked-attempt.entity';
 import { AssessmentSessionEntity } from './assessment/entities/assessment-session.entity';
@@ -77,6 +78,7 @@ const webRoot = join(__dirname, '..', '..', 'web');
     FlashcardModule,
     LtiModule,
     DebugModule,
+    HealthModule,
     SubmissionModule,
     CourseSettingsModule,
     PromptModule,

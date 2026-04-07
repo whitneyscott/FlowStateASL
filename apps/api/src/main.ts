@@ -14,6 +14,7 @@ import { AppModule } from './app.module';
 import session from 'express-session';
 import { DebugExceptionFilter } from './common/debug-exception.filter';
 import { renderDebugPage } from './common/debug-page';
+import { getBuildMetadata } from './common/build-metadata';
 
 async function bootstrap() {
   const expressApp = express();
@@ -127,8 +128,13 @@ async function bootstrap() {
   await app.listen(port, '0.0.0.0');
 
   const staticRoot = isProduction ? join(__dirname, '..', '..', 'web') : 'N/A';
+  const build = getBuildMetadata();
   console.log(`Listening on port ${port}`);
   console.log(`Static root path: ${staticRoot}`);
+  console.log(
+    `[Build] git=${build.gitCommitShort ?? 'unknown'} full=${build.gitCommit ?? '(none)'} source=${build.source ?? '(set RENDER_GIT_COMMIT or GIT_COMMIT)'}`,
+  );
+  console.log('[Build] Verify deploy: GET /api/health (fields: gitCommit, gitCommitShort, gitCommitSource)');
 }
 
 bootstrap();
