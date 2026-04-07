@@ -358,8 +358,10 @@ export class CanvasService {
   }
 
   /**
-   * Attach uploaded file to an existing student submission row (PHP parity).
-   * Uses PUT /submissions/:user_id with submission[file_ids].
+   * Submit the uploaded file as an online_upload submission in one request.
+   * POST /courses/:course_id/assignments/:assignment_id/submissions with
+   * submission_type, user_id, and file_ids — not PUT with file_ids alone (which
+   * targets comment attachment behavior and can leave workflow_state unsubmitted).
    */
   async attachFileToSubmission(
     courseId: string,
@@ -370,23 +372,29 @@ export class CanvasService {
     tokenOverride?: string | null,
   ): Promise<void> {
     const base = this.getBaseUrl(domainOverride);
-    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}`;
+    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions`;
     const fid = toCanvasFileIdInt(fileId);
+    const uid = Number.parseInt(String(userId).trim(), 10);
+    if (!Number.isFinite(uid)) {
+      throw new Error(`Invalid Canvas user id for submission POST: ${userId}`);
+    }
     const body = {
       submission: {
+        submission_type: 'online_upload' as const,
+        user_id: uid,
         file_ids: [fid],
       },
     };
     const authHeaders = this.getAuthHeaders(tokenOverride);
     const bodyStr = JSON.stringify(body);
     const res = await fetch(url, {
-      method: 'PUT',
+      method: 'POST',
       headers: authHeaders,
       body: bodyStr,
     });
     const raw = await res.text();
-    this.appendVideoSubmissionFlowHttpLog('attachFileToSubmission:PUT', {
-      requestMethod: 'PUT',
+    this.appendVideoSubmissionFlowHttpLog('attachFileToSubmission:POST', {
+      requestMethod: 'POST',
       requestUrl: url,
       requestHeaders: this.redactHeadersForLog({
         Authorization: authHeaders.Authorization,
@@ -400,7 +408,7 @@ export class CanvasService {
     if (!res.ok) {
       appendLtiLog('canvas', 'attachFileToSubmission FAIL', {
         status: res.status,
-        requestPath: `/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}`,
+        requestPath: `/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions`,
         text: raw.slice(0, 800),
       });
       throw new Error(`Canvas attach file to submission failed: ${res.status} ${raw}`);

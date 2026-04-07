@@ -2086,7 +2086,7 @@ export class PromptService {
     const { fileId } = await this.canvas.uploadFileToCanvas(uploadUrl, uploadParams, buffer, {
       tokenOverride: token,
     });
-    appendLtiLog('prompt-upload', 'uploadVideo: attachFileToSubmission (PHP parity)', {
+    appendLtiLog('prompt-upload', 'uploadVideo: attachFileToSubmission (POST online_upload + file_ids)', {
       fileId,
       assignmentId,
       studentUserId,
