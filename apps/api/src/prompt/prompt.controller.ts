@@ -444,8 +444,6 @@ export class PromptController {
     const requestedTotal = Number(body.totalCards);
     const totalCards =
       Number.isFinite(requestedTotal) && requestedTotal > 0 ? Math.floor(requestedTotal) : 10;
-    // Suppressed: noisy repeat during deck session.
-    // appendLtiLog('prompt-decks', 'buildDeckPrompts request', { ... });
 
     if (selectedDecks.length === 0) {
       appendLtiLog('prompt-decks', 'buildDeckPrompts short-circuit: no valid decks selected', {
@@ -456,7 +454,14 @@ export class PromptController {
 
     try {
       const result = await this.prompt.buildDeckPromptList(selectedDecks, totalCards);
-      // appendLtiLog('prompt-decks', 'buildDeckPrompts result', { ... });
+      const prompts = Array.isArray(result.prompts) ? result.prompts : [];
+      appendLtiLog('prompt-decks', 'deck flow: source selected', {
+        source: 'live',
+        assignmentId: ctx.assignmentId ?? '(none)',
+        promptCount: prompts.length,
+        preview: prompts.slice(0, 3).map((p) => p.title),
+        warning: result.warning ?? '(none)',
+      });
       return result;
     } catch (err) {
       appendLtiLog('prompt-decks', 'buildDeckPrompts failed', { error: String(err) });

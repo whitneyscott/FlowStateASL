@@ -105,16 +105,6 @@ export default function TimerPage({ context }: TimerPageProps) {
     ltiOrUrlAssignmentId || (config?.resolvedAssignmentId?.trim() ?? '') || null;
   const teacherViewingTimer = context ? isPrompterTeacher(context.roles) : false;
 
-  const appendDeckDebugLog = useCallback((message: string, extra?: Record<string, unknown>) => {
-    const line = extra ? `${message} ${JSON.stringify(extra)}` : message;
-    fetch('/api/debug/lti-log', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tag: 'prompt-decks', message: `[client] ${line}` }),
-    }).catch(() => {});
-  }, []);
-
   const doSubmit = useCallback(
     async (
       promptSnapshot: string,
@@ -134,11 +124,6 @@ export default function TimerPage({ context }: TimerPageProps) {
       let lastEndpoint = 'POST /api/prompt/save-prompt';
       try {
         console.log('[TimerPage:doSubmit] Step 1: savePrompt');
-        appendDeckDebugLog('doSubmit: start', {
-          effectiveAssignmentId: effectiveAssignmentId ?? '(none)',
-          hasBlob: !!blob,
-          promptLength: promptSnapshot?.length ?? 0,
-        });
         setLastFunction('POST /api/prompt/save-prompt');
         await promptApi.savePrompt(promptSnapshot, effectiveAssignmentId);
         setLastApiResult('POST /api/prompt/save-prompt', 200, true);
@@ -191,24 +176,12 @@ export default function TimerPage({ context }: TimerPageProps) {
             const result = await promptApi.uploadVideo(blob, `asl_submission_${Date.now()}.webm`, effectiveAssignmentId);
             setLastApiResult('POST /api/prompt/upload-video', 200, true);
             console.log('[TimerPage:doSubmit] uploadVideo OK', result);
-            const verifyLine = `[client] upload-video response fileId=${result.fileId} verify=${JSON.stringify(result.verify ?? {})} assignmentId=${result.assignmentId ?? ''} studentUserId=${result.studentUserId ?? ''}`;
-            fetch('/api/debug/lti-log', {
-              method: 'POST',
-              credentials: 'include',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ tag: 'prompt-upload', message: verifyLine }),
-            }).catch(() => {});
           }
         }
         setPhase('done');
         console.log('[TimerPage:doSubmit] DONE');
       } catch (e) {
         console.error('[TimerPage:doSubmit] FAILED', { lastEndpoint, error: e });
-        appendDeckDebugLog('doSubmit: failed', {
-          endpoint: lastEndpoint,
-          error: String(e),
-          effectiveAssignmentId: effectiveAssignmentId ?? '(none)',
-        });
         setSubmitError(e instanceof Error ? e.message : 'Submit failed');
         setLastApiError(lastEndpoint, 0, String(e));
       }
@@ -219,7 +192,6 @@ export default function TimerPage({ context }: TimerPageProps) {
       setLastApiResult,
       setLastApiError,
       effectiveAssignmentId,
-      appendDeckDebugLog,
     ]
   );
 
@@ -281,12 +253,6 @@ export default function TimerPage({ context }: TimerPageProps) {
       setConfig(data ?? null);
       const targetAssignmentId =
         (data?.resolvedAssignmentId?.trim() ?? '') || ltiOrUrlAssignmentId || null;
-      appendDeckDebugLog('loadConfig: received config', {
-        ltiLaunchAssignmentId: ltiOrUrlAssignmentId ?? '(none)',
-        targetAssignmentId: targetAssignmentId ?? '(none)',
-        promptMode: data?.promptMode ?? '(none)',
-        hasVideoPromptConfig: !!data?.videoPromptConfig,
-      });
 
       const isDeckAssignment =
         data?.promptMode === 'decks' &&
@@ -297,11 +263,6 @@ export default function TimerPage({ context }: TimerPageProps) {
       if (data?.promptMode === 'decks' && data?.videoPromptConfig?.selectedDecks && data.videoPromptConfig.selectedDecks.length > 0) {
         const rawTotal = Number(data.videoPromptConfig.totalCards);
         const totalCards = Number.isFinite(rawTotal) && rawTotal > 0 ? Math.floor(rawTotal) : 10;
-        appendDeckDebugLog('deck flow: live build start', {
-          targetAssignmentId: targetAssignmentId ?? '(none)',
-          selectedDeckCount: data.videoPromptConfig.selectedDecks.length,
-          totalCards,
-        });
         try {
           setLastFunction('POST /api/prompt/build-deck-prompts');
           const result = await promptApi.buildDeckPrompts(
@@ -313,58 +274,31 @@ export default function TimerPage({ context }: TimerPageProps) {
           if (livePrompts.length > 0) {
             setLastApiResult('POST /api/prompt/build-deck-prompts', 200, true);
             setDeckPrompts(livePrompts);
-            appendDeckDebugLog('deck flow: source selected', {
-              source: 'live',
-              count: livePrompts.length,
-              preview: livePrompts.slice(0, 3).map((p) => p.title),
-            });
           } else {
             throw new Error(result.warning || 'live build returned zero prompts');
           }
         } catch (e) {
           console.error('Failed to build deck prompts:', e);
-          appendDeckDebugLog('deck flow: live build failed', { error: String(e) });
           const storedBanks = data.videoPromptConfig?.storedPromptBanks ?? [];
           const nonEmptyBanks = storedBanks.filter((bank) => Array.isArray(bank) && bank.length > 0);
           if (nonEmptyBanks.length > 0) {
             const idx = Math.floor(Math.random() * nonEmptyBanks.length);
             const chosenBank = nonEmptyBanks[idx];
             setDeckPrompts(chosenBank);
-            appendDeckDebugLog('deck flow: source selected', {
-              source: 'bank',
-              bankIndex: idx,
-              bankCount: nonEmptyBanks.length,
-              count: chosenBank.length,
-              preview: chosenBank.slice(0, 3).map((p) => p.title),
-            });
           } else {
             const staticTitles = (data.videoPromptConfig?.staticFallbackPrompts ?? []).filter(Boolean);
             if (staticTitles.length > 0) {
               setDeckPrompts(
                 staticTitles.map((title) => ({ title, duration: DECK_FALLBACK_TOTAL_SECONDS })),
               );
-              appendDeckDebugLog('deck flow: source selected', {
-                source: 'static',
-                count: staticTitles.length,
-                preview: staticTitles.slice(0, 3),
-              });
             } else {
               setDeckPrompts([]);
               setLastApiError('POST /api/prompt/build-deck-prompts', 0, String(e));
-              appendDeckDebugLog('deck flow: no prompts available', {
-                source: 'none',
-                error: String(e),
-              });
             }
           }
         }
       } else {
         setDeckPrompts([]);
-        appendDeckDebugLog('deck flow: skipped', {
-          reason: 'prompt_mode_not_decks_or_no_selected_decks',
-          promptMode: data?.promptMode ?? '(none)',
-          selectedDeckCount: data?.videoPromptConfig?.selectedDecks?.length ?? 0,
-        });
       }
 
       if (!data?.accessCode?.trim()) {
@@ -379,10 +313,6 @@ export default function TimerPage({ context }: TimerPageProps) {
       if (e instanceof promptApi.NeedsManualTokenError) {
         setShowManualTokenModal(true);
       }
-      appendDeckDebugLog('loadConfig: failed', {
-        ltiLaunchAssignmentId: ltiOrUrlAssignmentId ?? '(none)',
-        error: String(e),
-      });
       setConfig(null);
       setStudentDeckFlow(false);
     } finally {
@@ -394,7 +324,6 @@ export default function TimerPage({ context }: TimerPageProps) {
     setLastFunction,
     setLastApiResult,
     setLastApiError,
-    appendDeckDebugLog,
   ]);
 
   useEffect(() => {
@@ -510,11 +439,6 @@ export default function TimerPage({ context }: TimerPageProps) {
 
     const nextPrompt = deckMode ? nextDeckIndexAfterAdvance(promptIndex, deckPrompts.length) : undefined;
     if (nextPrompt !== undefined) {
-      appendDeckDebugLog('deck flow: advance card (continuous recording)', {
-        fromIndex: promptIndex,
-        toIndex: nextPrompt,
-        totalCards: deckPrompts.length,
-      });
       const elapsed = (performance.now() - recordStartPerfRef.current) / 1000;
       const title = deckPrompts[nextPrompt]?.title ?? '';
       deckBoundaryListRef.current.push({
@@ -541,7 +465,6 @@ export default function TimerPage({ context }: TimerPageProps) {
     promptIndex,
     deckPrompts,
     finishAndSubmit,
-    appendDeckDebugLog,
   ]);
 
   useEffect(() => {

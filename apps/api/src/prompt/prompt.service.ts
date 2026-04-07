@@ -37,9 +37,6 @@ const PROMPT_LEDGER_ASSIGNMENT_TITLE = 'ASL Express Prompt Ledger';
 const DECK_DEFAULT_TOTAL_SECONDS_UNKNOWN = 4;
 const DECK_KNOWN_VIDEO_EXTRA_SECONDS = 1;
 
-/** Dedupes `getConfig: deck mode snapshot` when the same course/session hits config repeatedly with identical deck fields. */
-let lastDeckModeSnapshotLogKey = '';
-
 /** Canvas submission and file-upload API paths require a numeric user id, not LTI `sub` (opaque). */
 function isCanvasNumericUserId(id: string): boolean {
   return id.length > 0 && /^\d+$/.test(id);
@@ -1001,18 +998,14 @@ export class PromptService {
         }
       }
     }
-    const deckSnapKey = `${assignmentId}|${config?.promptMode ?? ''}|${config?.videoPromptConfig?.selectedDecks?.length ?? 0}|${config?.videoPromptConfig?.storedPromptBanks?.length ?? 0}|${config?.videoPromptConfig?.staticFallbackPrompts?.length ?? 0}`;
-    if (deckSnapKey !== lastDeckModeSnapshotLogKey) {
-      lastDeckModeSnapshotLogKey = deckSnapKey;
-      appendLtiLog('prompt-decks', 'getConfig: deck mode snapshot', {
-        assignmentId,
-        promptMode: config?.promptMode ?? '(none)',
-        selectedDeckCount: config?.videoPromptConfig?.selectedDecks?.length ?? 0,
-        hasStoredBanks: Array.isArray(config?.videoPromptConfig?.storedPromptBanks),
-        storedBankCount: config?.videoPromptConfig?.storedPromptBanks?.length ?? 0,
-        staticFallbackCount: config?.videoPromptConfig?.staticFallbackPrompts?.length ?? 0,
-      });
-    }
+    appendLtiLog('prompt-decks', 'getConfig: deck mode snapshot', {
+      assignmentId,
+      promptMode: config?.promptMode ?? '(none)',
+      selectedDeckCount: config?.videoPromptConfig?.selectedDecks?.length ?? 0,
+      hasStoredBanks: Array.isArray(config?.videoPromptConfig?.storedPromptBanks),
+      storedBankCount: config?.videoPromptConfig?.storedPromptBanks?.length ?? 0,
+      staticFallbackCount: config?.videoPromptConfig?.staticFallbackPrompts?.length ?? 0,
+    });
 
     // Hydrate key assignment-backed fields directly from Canvas so UI reflects current assignment state.
     // Keep blob values as fallback when Canvas read is unavailable.
@@ -2005,7 +1998,7 @@ export class PromptService {
     appendLtiLog('prompt-upload', 'uploadVideo ENTER', { filename, size: buffer.length });
     const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken, ctx);
     if (!token) {
-      appendLtiLog('prompt-upload', 'uploadVideo FAIL: no token');
+      appendLtiLog('prompt-upload', 'upload-video FAIL: no token');
       throw new Error(
         'Canvas token required for video upload (OAuth or host-matched static Canvas token in .env)',
       );
@@ -2037,7 +2030,7 @@ export class PromptService {
     }
 
     if (!studentUserId) {
-      appendLtiLog('prompt-upload', 'uploadVideo FAIL: no numeric Canvas user id for submission file path', {
+      appendLtiLog('prompt-upload', 'upload-video FAIL: no numeric Canvas user id for submission file path', {
         usingStudentOAuth,
         selfNumeric: selfNumeric ?? '(none)',
         canvasUserId: ctx.canvasUserId ?? '(none)',
@@ -2086,7 +2079,7 @@ export class PromptService {
     const { fileId } = await this.canvas.uploadFileToCanvas(uploadUrl, uploadParams, buffer, {
       tokenOverride: token,
     });
-    appendLtiLog('prompt-upload', 'uploadVideo: attachFileToSubmission (POST online_upload + file_ids)', {
+    appendLtiLog('prompt-upload', 'uploadVideo: attachFileToSubmission', {
       fileId,
       assignmentId,
       studentUserId,

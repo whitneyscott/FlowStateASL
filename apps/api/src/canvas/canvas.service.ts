@@ -58,20 +58,56 @@ export class CanvasService {
     return o;
   }
 
-  /** Full HTTP request/response for video upload pipeline (Bridge). Token values never logged. */
+  /**
+   * Video upload pipeline HTTP summary for Bridge (no full response bodies or headers).
+   * Parses JSON when possible for fileId / workflow_state / submission id.
+   */
   private appendVideoSubmissionFlowHttpLog(
     step: string,
     detail: {
       requestMethod: string;
       requestUrl: string;
-      requestHeaders: Record<string, string>;
       requestBodyDescription?: string;
       responseStatus: number;
-      responseHeaders: Record<string, string>;
       responseBody: string;
     },
   ): void {
-    appendLtiLog('canvas', `videoSubmissionFlow:${step}`, detail);
+    const summary = this.summarizeVideoSubmissionFlowResponse(detail.responseBody);
+    appendLtiLog('canvas', `videoSubmissionFlow:${step}`, {
+      requestMethod: detail.requestMethod,
+      requestUrl: detail.requestUrl,
+      requestBodyDescription: detail.requestBodyDescription,
+      responseStatus: detail.responseStatus,
+      ...summary,
+    });
+  }
+
+  /** Extract small fields from Canvas JSON responses; never log raw body. */
+  private summarizeVideoSubmissionFlowResponse(raw: string): Record<string, unknown> {
+    const text = (raw ?? '').trim();
+    if (!text) return { responseParsed: false };
+    try {
+      const data = JSON.parse(text) as Record<string, unknown>;
+      const out: Record<string, unknown> = { responseParsed: true };
+      const idVal = data.id;
+      const idStr =
+        typeof idVal === 'number' || typeof idVal === 'string' ? String(idVal) : undefined;
+      const looksLikeSubmission =
+        data.workflow_state != null ||
+        data.submission_type != null ||
+        (Array.isArray(data.attachments) && data.attachments.length > 0);
+      if (idStr) {
+        if (looksLikeSubmission) out.submissionId = idStr;
+        else out.fileId = idStr;
+      }
+      if (data.workflow_state != null) out.workflow_state = data.workflow_state;
+      if (data.submission_type != null) out.submission_type = data.submission_type;
+      if (data.upload_url != null) out.hasUploadUrl = true;
+      if (data.upload_params != null) out.hasUploadParams = true;
+      return out;
+    } catch {
+      return { responseParsed: false, responseBodyLength: text.length };
+    }
   }
 
   private getBaseUrl(override?: string): string {
@@ -252,10 +288,8 @@ export class CanvasService {
     this.appendVideoSubmissionFlowHttpLog('initiateSubmissionFileUploadForUser', {
       requestMethod: 'POST',
       requestUrl: url,
-      requestHeaders: this.redactHeadersForLog(reqHeaders),
       requestBodyDescription: `multipart/form-data fields: name, size, content_type (${contentType}); file not yet sent`,
       responseStatus: res.status,
-      responseHeaders: this.responseHeadersToObject(res),
       responseBody: responseText,
     });
     if (!res.ok) {
@@ -302,12 +336,8 @@ export class CanvasService {
       this.appendVideoSubmissionFlowHttpLog('uploadFileToCanvas:POST_upload_url', {
         requestMethod: 'POST',
         requestUrl: uploadUrl,
-        requestHeaders: {
-          'Content-Type': 'multipart/form-data (boundary set automatically by fetch; not echoed here)',
-        },
         requestBodyDescription: `multipart: upload_params [${paramKeys}], file=${total} bytes application/octet-stream`,
         responseStatus: res.status,
-        responseHeaders: this.responseHeadersToObject(res),
         responseBody: postText,
       });
 
@@ -323,9 +353,7 @@ export class CanvasService {
         this.appendVideoSubmissionFlowHttpLog('uploadFileToCanvas:GET_confirm_redirect', {
           requestMethod: 'GET',
           requestUrl: location,
-          requestHeaders: this.redactHeadersForLog({ Authorization: authHeaders.Authorization }),
           responseStatus: confirmRes.status,
-          responseHeaders: this.responseHeadersToObject(confirmRes),
           responseBody: confirmText,
         });
         if (!confirmRes.ok) {
@@ -396,13 +424,8 @@ export class CanvasService {
     this.appendVideoSubmissionFlowHttpLog('attachFileToSubmission:POST', {
       requestMethod: 'POST',
       requestUrl: url,
-      requestHeaders: this.redactHeadersForLog({
-        Authorization: authHeaders.Authorization,
-        'Content-Type': authHeaders['Content-Type'] ?? 'application/json',
-      }),
       requestBodyDescription: bodyStr,
       responseStatus: res.status,
-      responseHeaders: this.responseHeadersToObject(res),
       responseBody: raw,
     });
     if (!res.ok) {
