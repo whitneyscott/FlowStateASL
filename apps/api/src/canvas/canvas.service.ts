@@ -6,7 +6,7 @@ import {
   canvasApiBaseFromLtiContext,
   resolveCanvasApiBaseUrl,
 } from '../common/utils/canvas-base-url.util';
-import { resolveCanvasApiUserId, toCanvasFileIdInt } from '../common/utils/canvas-api-user.util';
+import { toCanvasFileIdInt } from '../common/utils/canvas-api-user.util';
 
 export class CanvasUploadChunkError extends Error {
   constructor(
@@ -2265,14 +2265,9 @@ export class CanvasService {
   }
 
   /**
-   * Write submission body for an assignment. Uses tokenOverride (OAuth or service token).
-   * When the assignment allows online text entry, updates the **target student's** submission row via
-   * PUT .../submissions/:user_id (body). This matches PHP parity and avoids 403s where POST create
-   * submission is rejected for the token (e.g. some roles / LTI + REST combinations).
-   *
-   * Target user id: LTI custom Canvas user id when present; else, if the token is the launcher's
-   * OAuth token, Canvas /users/self (student self-submit). Static tokens without LTI custom id cannot
-   * infer the student — callers must send user_id=$Canvas.user.id on the Developer Key.
+   * Create initial online text submission (PHP submit_prompt_first.php parity).
+   * POST .../assignments/:assignmentId/submissions with urlencoded submission[submission_type] + submission[body].
+   * No as_user_id; uses the configured API token (teacher) only.
    */
   async writeSubmissionBody(
     ctx: LtiContext,
@@ -2301,63 +2296,27 @@ export class CanvasService {
       });
       return;
     }
-    const fromLti = resolveCanvasApiUserId(ctx)?.trim() || '';
     const tokenUserId = (await this.getCurrentCanvasUserId(domainOverride, token))?.trim() || '';
-    const sessionOauth = (ctx.canvasAccessToken ?? '').trim();
-    const tokenIsLauncherOauth = sessionOauth.length > 0 && token === sessionOauth;
-    const submissionCanvasUserId = fromLti || (tokenIsLauncherOauth ? tokenUserId : '');
-    if (!submissionCanvasUserId) {
-      throw new Error(
-        'Cannot resolve Canvas user id for submission body. Add LTI Custom Field user_id = $Canvas.user.id on the Developer Key, or complete Canvas OAuth as the submitting student so /users/self applies.',
-      );
-    }
-    appendLtiLog('canvas', 'writeSubmissionBody (Step 10)', {
+    appendLtiLog('canvas', 'writeSubmissionBody (submit_prompt_first parity)', {
       assignmentId,
       bodyLength: bodyContent?.length ?? 0,
       ltiUserId: ctx.userId,
-      fromLti: fromLti || '(none)',
-      submissionCanvasUserId,
       tokenUserId: tokenUserId || '(unknown)',
-      tokenIsLauncherOauth,
-      writeMode: 'PUT_then_POST_if_no_submission_row',
+      writeMode: 'POST_online_text_entry',
+      as_user_id: false,
       submission_types: types ?? '(unknown)',
       tokenPreview: token ? `${token.slice(0, 4)}...${token.slice(-4)}` : 'MISSING',
     });
-    const putOk = await this.putSubmissionBodyAllowMissing(
-      ctx.courseId,
-      assignmentId,
-      submissionCanvasUserId,
-      bodyContent,
-      domainOverride,
-      token,
-    );
-    if (putOk) {
-      appendLtiLog('canvas', 'writeSubmissionBody: PUT submission body succeeded', {
-        assignmentId,
-        submissionCanvasUserId,
-      });
-      return;
-    }
-    appendLtiLog('canvas', 'writeSubmissionBody: PUT 404 (no row); POST create online_text_entry', {
-      assignmentId,
-      submissionCanvasUserId,
-    });
-    const actAsUser =
-      !!submissionCanvasUserId && !!tokenUserId && submissionCanvasUserId !== tokenUserId;
     await this.createSubmissionWithBody(
       ctx.courseId,
       assignmentId,
-      actAsUser ? submissionCanvasUserId : '',
+      '',
       bodyContent,
       domainOverride,
       token,
-      actAsUser,
+      false,
     );
-    appendLtiLog('canvas', 'writeSubmissionBody: POST create submission succeeded', {
-      assignmentId,
-      submissionCanvasUserId,
-      actAsUser,
-    });
+    appendLtiLog('canvas', 'writeSubmissionBody: POST online_text_entry succeeded', { assignmentId });
   }
 
   /**
