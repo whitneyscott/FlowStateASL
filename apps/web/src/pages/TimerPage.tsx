@@ -173,7 +173,15 @@ export default function TimerPage({ context }: TimerPageProps) {
               blobSize: blob.size,
             });
             setLastFunction('POST /api/prompt/upload-video');
-            const result = await promptApi.uploadVideo(blob, `asl_submission_${Date.now()}.webm`, effectiveAssignmentId);
+            const result = await promptApi.uploadVideo(
+              blob,
+              `asl_submission_${Date.now()}.webm`,
+              effectiveAssignmentId,
+              {
+                promptSnapshotHtml: promptSnapshot,
+                deckTimeline,
+              },
+            );
             setLastApiResult('POST /api/prompt/upload-video', 200, true);
             console.log('[TimerPage:doSubmit] uploadVideo OK', result);
           }

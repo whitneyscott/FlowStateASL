@@ -87,6 +87,16 @@ function getPromptFromComments(
     }
   }
   if (!comments?.length) return 'No prompt recorded.';
+  for (const c of comments) {
+    const txt = (c.comment ?? '').trim();
+    if (!txt) continue;
+    try {
+      const parsed = JSON.parse(txt) as { promptSnapshotHtml?: string };
+      if (parsed.promptSnapshotHtml?.trim()) return parsed.promptSnapshotHtml.trim();
+    } catch {
+      // not JSON — try next comment or fall through to legacy heuristics
+    }
+  }
   let lastIdx = -1;
   for (let i = 0; i < comments.length; i++) {
     const txt = (comments[i].comment ?? '').trim();

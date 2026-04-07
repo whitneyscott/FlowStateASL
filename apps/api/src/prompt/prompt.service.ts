@@ -1976,10 +1976,35 @@ export class PromptService {
     });
   }
 
+  /**
+   * Parse prompt snapshot HTML from submission comments when stored as JSON
+   * ({ promptSnapshotHtml, submittedAt, deckTimeline? }) after video upload.
+   */
+  private extractPromptSnapshotFromSubmissionComments(
+    submissionComments: Array<{ id?: number; comment?: string }> | undefined,
+  ): string | undefined {
+    if (!submissionComments?.length) return undefined;
+    for (const c of submissionComments) {
+      const raw = (c.comment ?? '').trim();
+      if (!raw) continue;
+      try {
+        const parsed = JSON.parse(raw) as { promptSnapshotHtml?: string };
+        if (parsed.promptSnapshotHtml?.trim()) return parsed.promptSnapshotHtml.trim();
+      } catch {
+        // not JSON — skip
+      }
+    }
+    return undefined;
+  }
+
   async uploadVideo(
     ctx: LtiContext,
     buffer: Buffer,
     filename: string,
+    options?: {
+      promptSnapshotHtml?: string;
+      deckTimeline?: Array<{ title: string; startSec: number }>;
+    },
   ): Promise<{
     fileId: string;
     courseId: string;
@@ -2092,6 +2117,39 @@ export class PromptService {
       domainOverride,
       token,
     );
+
+    const promptSnapshotTrimmed = (options?.promptSnapshotHtml ?? '').trim();
+    if (promptSnapshotTrimmed) {
+      const commentPayload: Record<string, unknown> = {
+        promptSnapshotHtml: promptSnapshotTrimmed,
+        submittedAt: new Date().toISOString(),
+      };
+      if (options?.deckTimeline?.length) {
+        commentPayload.deckTimeline = options.deckTimeline;
+      }
+      const commentText = JSON.stringify(commentPayload);
+      try {
+        await this.canvas.putSubmissionTextComment(
+          ctx.courseId,
+          assignmentId,
+          studentUserId,
+          commentText,
+          domainOverride,
+          token,
+        );
+        appendLtiLog('prompt-submit', 'post-upload: prompt snapshot stored as submission comment', {
+          assignmentId,
+          studentUserId,
+          commentJsonLength: commentText.length,
+        });
+      } catch (commentErr) {
+        appendLtiLog('prompt-submit', 'post-upload: prompt snapshot comment failed (non-fatal)', {
+          assignmentId,
+          studentUserId,
+          error: String(commentErr),
+        });
+      }
+    }
 
     const readVerify = (
       sub: Awaited<ReturnType<CanvasService['getSubmissionFull']>>,
@@ -2548,6 +2606,15 @@ export class PromptService {
     }
     const withQuizPrompts = await Promise.all(
       baseRows.map(async (row) => {
+        const commentPrompt = this.extractPromptSnapshotFromSubmissionComments(row.submissionComments);
+        if (commentPrompt) {
+          appendLtiLog('viewer', 'getSubmissions: prompt source selected', {
+            userId: row.userId,
+            assignmentId,
+            source: 'submission_comment',
+          });
+          return { ...row, promptHtml: commentPrompt };
+        }
         const ledgerPrompt = ledgerPromptByUser.get(row.userId);
         if (ledgerPrompt) {
           appendLtiLog('viewer', 'getSubmissions: prompt source selected', {
@@ -2778,21 +2845,25 @@ export class PromptService {
       if (tok) videoUrl = `/api/prompt/submission/${encodeURIComponent(tok)}`;
     }
     videoUrl = this.toViewerVideoUrl(videoUrl, ctx) ?? videoUrl;
-    let promptHtml: string | undefined;
-    try {
-      promptHtml = (await this.quiz.getPromptForAssignment(ctx, userId, assignmentId)) ?? undefined;
-    } catch {
-      // ignore
+    const mappedComments =
+      sub.submission_comments
+        ?.filter((c) => c.id != null && c.comment != null)
+        .map((c) => ({ id: c.id!, comment: c.comment! })) ?? [];
+    const fromComment = this.extractPromptSnapshotFromSubmissionComments(mappedComments);
+    let promptHtml: string | undefined = fromComment;
+    if (!promptHtml) {
+      try {
+        promptHtml = (await this.quiz.getPromptForAssignment(ctx, userId, assignmentId)) ?? undefined;
+      } catch {
+        // ignore
+      }
     }
     return {
       userId,
       body: sub.body,
       score: sub.score,
       grade: sub.grade,
-      submissionComments:
-        sub.submission_comments
-          ?.filter((c) => c.id != null && c.comment != null)
-          .map((c) => ({ id: c.id!, comment: c.comment! })) ?? [],
+      submissionComments: mappedComments,
       videoUrl,
       attempt: sub.attempt ?? 1,
       rubricAssessment: sub.rubric_assessment as Record<string, unknown> | undefined,

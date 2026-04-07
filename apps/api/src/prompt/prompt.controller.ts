@@ -171,10 +171,34 @@ export class PromptController {
     if (!file?.buffer) {
       throw new BadRequestException('No video file provided');
     }
+    const body = req.body as { promptSnapshotHtml?: string; deckTimeline?: string };
+    const promptSnapshotHtml = (body?.promptSnapshotHtml ?? '').toString().trim();
+    let deckTimeline: Array<{ title: string; startSec: number }> | undefined;
+    const rawDeck = body?.deckTimeline;
+    if (typeof rawDeck === 'string' && rawDeck.trim()) {
+      try {
+        const parsed = JSON.parse(rawDeck) as unknown;
+        if (Array.isArray(parsed)) {
+          const rows = parsed
+            .map((e) => ({
+              title: String((e as { title?: unknown })?.title ?? ''),
+              startSec: Number((e as { startSec?: unknown })?.startSec),
+            }))
+            .filter((r) => Number.isFinite(r.startSec));
+          if (rows.length > 0) deckTimeline = rows;
+        }
+      } catch {
+        // ignore invalid deckTimeline JSON
+      }
+    }
     const result = await this.prompt.uploadVideo(
       ctx,
       Buffer.from(file.buffer),
       file.originalname || `asl_submission_${Date.now()}.webm`,
+      {
+        ...(promptSnapshotHtml ? { promptSnapshotHtml } : {}),
+        ...(deckTimeline?.length ? { deckTimeline } : {}),
+      },
     );
     appendLtiLog('prompt-upload', 'POST /api/prompt/upload-video 201 response (client can read verify in JSON body)', {
       fileId: result.fileId,

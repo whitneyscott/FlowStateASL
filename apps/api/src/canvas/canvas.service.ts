@@ -525,6 +525,48 @@ export class CanvasService {
     });
   }
 
+  /**
+   * Add a text-only submission comment (e.g. prompt snapshot JSON after video upload).
+   * PUT .../submissions/:userId with comment[text_comment] only.
+   */
+  async putSubmissionTextComment(
+    courseId: string,
+    assignmentId: string,
+    userId: string,
+    textComment: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<void> {
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${encodeURIComponent(userId)}`;
+    const body = {
+      comment: {
+        text_comment: textComment,
+      },
+    };
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: this.getAuthHeaders(tokenOverride),
+      body: JSON.stringify(body),
+    });
+    const raw = await res.text();
+    if (!res.ok) {
+      appendLtiLog('canvas', 'putSubmissionTextComment FAIL', {
+        status: res.status,
+        assignmentId,
+        userId,
+        preview: raw.slice(0, 400),
+      });
+      throw new Error(`Canvas submission text comment failed: ${res.status} ${raw.slice(0, 200)}`);
+    }
+    appendLtiLog('canvas', 'putSubmissionTextComment OK', {
+      courseId,
+      assignmentId,
+      userId,
+      textLength: textComment.length,
+    });
+  }
+
   async submitAssignmentWithFile(
     courseId: string,
     assignmentId: string,
