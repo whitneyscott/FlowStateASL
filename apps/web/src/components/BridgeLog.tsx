@@ -18,10 +18,15 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
     window.location.pathname.includes('/prompter') ||
     window.location.pathname.includes('/config') ||
     window.location.pathname.includes('/viewer');
-  /** Allow forcing Bridge Log with ?debug=1 in any environment. */
+  /** Allow forcing Bridge Log with ?debug=1 (teachers only; students never see Bridge). */
   const debugParamEnabled = searchParams.get('debug') === '1';
-  const forcePrompterDebug = context?.toolType === 'prompter' || isPrompterPath;
-  const developerUi = isDeveloperMode || debugParamEnabled || forcePrompterDebug;
+  const isTeacherRole =
+    /instructor|administrator|faculty|teacher|staff|contentdeveloper|teachingassistant|ta/i.test(
+      context?.roles || '',
+    );
+  /** Students must not see Bridge; teachers see it on prompter routes or when dev / ?debug=1. */
+  const developerUi =
+    isTeacherRole && (isDeveloperMode || debugParamEnabled || isPrompterPath);
   const canClearLog = isDeveloperMode || debugParamEnabled;
   const [lastServerError, setLastServerError] = useState<{ endpoint: string; message: string } | null>(null);
   const [ltiLog, setLtiLog] = useState<string[]>([]);
