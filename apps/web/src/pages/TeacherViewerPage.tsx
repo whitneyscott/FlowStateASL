@@ -547,6 +547,14 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     );
   }, [activeDeckPrompt, deckTimeline]);
 
+  const rubricPromptIndexMap = useMemo(
+    () =>
+      rubric.map((criterion, idx) =>
+        rubricCriterionDeckIndex(criterion, idx, rubric.length, deckTimeline.length),
+      ),
+    [rubric, deckTimeline],
+  );
+
   useEffect(() => {
     const layout = document.getElementById('viewer-layout');
     const leftSidebar = leftSidebarRef.current;
@@ -693,13 +701,6 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   }
 
   const promptUsed = getPromptFromComments(current?.body, current?.submissionComments, current?.promptHtml);
-  const rubricPromptIndexMap = useMemo(
-    () =>
-      rubric.map((criterion, idx) =>
-        rubricCriterionDeckIndex(criterion, idx, rubric.length, deckTimeline.length),
-      ),
-    [rubric, deckTimeline.length],
-  );
   const hasSubmissionNoVideo = current && !current.videoUrl;
   const noSubmissionsInGradingMode = gradingMode && submissions.length === 0;
 
