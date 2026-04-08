@@ -48,28 +48,38 @@ const webRoot = join(__dirname, '..', '..', 'web');
         ]
       : []),
     TypeOrmModule.forRootAsync({
-      useFactory: (config: ConfigService) => ({
-        type: 'postgres',
-        url: config.get('DATABASE_URL'),
-        ssl:
-          config.get('NODE_ENV') === 'production'
-            ? { rejectUnauthorized: false }
-            : false,
-        entities: [
-          PromptConfigEntity,
-          BlockedAttemptEntity,
-          AssessmentSessionEntity,
-          FlashcardConfigEntity,
-          CourseSettingsEntity,
-          SproutPlaylistEntity,
-          SproutPlaylistVideoEntity,
-          SyncMetadataEntity,
-          AssignmentPromptEntity,
-          StudentResetEntity,
-        ],
-        migrations: [__dirname + '/migrations/*{.ts,.js}'],
-        migrationsRun: false,
-      }),
+      useFactory: (config: ConfigService) => {
+        const dbPoolMax = Number.parseInt(config.get<string>('DB_POOL_MAX') ?? '20', 10);
+        const dbConnectTimeout = Number.parseInt(config.get<string>('DB_CONNECT_TIMEOUT_MS') ?? '10000', 10);
+        return {
+          type: 'postgres',
+          url: config.get('DATABASE_URL'),
+          ssl:
+            config.get('NODE_ENV') === 'production'
+              ? { rejectUnauthorized: false }
+              : false,
+          entities: [
+            PromptConfigEntity,
+            BlockedAttemptEntity,
+            AssessmentSessionEntity,
+            FlashcardConfigEntity,
+            CourseSettingsEntity,
+            SproutPlaylistEntity,
+            SproutPlaylistVideoEntity,
+            SyncMetadataEntity,
+            AssignmentPromptEntity,
+            StudentResetEntity,
+          ],
+          migrations: [__dirname + '/migrations/*{.ts,.js}'],
+          migrationsRun: false,
+          retryAttempts: 2,
+          retryDelay: 1500,
+          extra: {
+            max: Number.isFinite(dbPoolMax) ? dbPoolMax : 20,
+            connectionTimeoutMillis: Number.isFinite(dbConnectTimeout) ? dbConnectTimeout : 10000,
+          },
+        };
+      },
       inject: [ConfigService],
     }),
     DataModule,

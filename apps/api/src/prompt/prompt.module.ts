@@ -2,8 +2,7 @@ import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { PromptController } from './prompt.controller';
 import { PromptService } from './prompt.service';
-import { PromptFallbackStore } from './prompt-fallback.store';
-import { PromptVideoTitleStore } from './prompt-video-title.store';
+import { UploadResilienceService } from './upload-resilience.service';
 import { DataModule } from '../data/data.module';
 import { CanvasModule } from '../canvas/canvas.module';
 import { CourseSettingsModule } from '../course-settings/course-settings.module';
@@ -23,7 +22,7 @@ import { SproutPlaylistVideoEntity } from '../sproutvideo/entities/sprout-playli
     TypeOrmModule.forFeature([SproutPlaylistVideoEntity]),
   ],
   controllers: [PromptController],
-  providers: [PromptService, PromptFallbackStore, PromptVideoTitleStore],
+  providers: [PromptService, UploadResilienceService],
   exports: [PromptService],
 })
 export class PromptModule {}

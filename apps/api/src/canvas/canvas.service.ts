@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { openAsBlob } from 'node:fs';
 import { appendLtiLog, setLastCanvasApiResponse } from '../common/last-error.store';
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
 import {
@@ -28,6 +29,8 @@ export class CanvasTokenExpiredError extends Error {
 
 @Injectable()
 export class CanvasService {
+  private readonly circuitState = new Map<string, { failures: number; openUntil: number }>();
+
   constructor(private readonly config: ConfigService) {}
 
   private getAuthHeaders(tokenOverride?: string | null): Record<string, string> {
@@ -56,6 +59,76 @@ export class CanvasService {
       o[k] = k.toLowerCase() === 'authorization' ? '(redacted)' : v;
     });
     return o;
+  }
+
+  private get canvasTimeoutMs(): number {
+    const raw = this.config.get<string>('CANVAS_HTTP_TIMEOUT_MS');
+    const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 15000;
+  }
+
+  private get circuitFailureThreshold(): number {
+    const raw = this.config.get<string>('CANVAS_CIRCUIT_FAILURES');
+    const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 4;
+  }
+
+  private get circuitOpenMs(): number {
+    const raw = this.config.get<string>('CANVAS_CIRCUIT_OPEN_MS');
+    const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 30000;
+  }
+
+  private circuitKeyForUrl(url: string): string {
+    try {
+      return new URL(url).host.toLowerCase();
+    } catch {
+      return 'canvas';
+    }
+  }
+
+  private recordCanvasSuccess(key: string): void {
+    this.circuitState.set(key, { failures: 0, openUntil: 0 });
+  }
+
+  private recordCanvasFailure(key: string): void {
+    const now = Date.now();
+    const prev = this.circuitState.get(key) ?? { failures: 0, openUntil: 0 };
+    const failures = prev.failures + 1;
+    const openUntil = failures >= this.circuitFailureThreshold ? now + this.circuitOpenMs : 0;
+    this.circuitState.set(key, { failures, openUntil });
+  }
+
+  private assertCircuitClosed(url: string): void {
+    const key = this.circuitKeyForUrl(url);
+    const state = this.circuitState.get(key);
+    if (state && state.openUntil > Date.now()) {
+      throw new Error(`CANVAS_CIRCUIT_OPEN: Canvas temporarily unavailable for ${key}`);
+    }
+  }
+
+  private async canvasFetch(url: string, init: RequestInit): Promise<Response> {
+    this.assertCircuitClosed(url);
+    const key = this.circuitKeyForUrl(url);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.canvasTimeoutMs);
+    try {
+      const res = await fetch(url, { ...init, signal: controller.signal });
+      if (res.status >= 500) {
+        this.recordCanvasFailure(key);
+      } else {
+        this.recordCanvasSuccess(key);
+      }
+      return res;
+    } catch (err) {
+      this.recordCanvasFailure(key);
+      if ((err as Error)?.name === 'AbortError') {
+        throw new Error(`CANVAS_TIMEOUT: request timed out after ${this.canvasTimeoutMs}ms`);
+      }
+      throw err;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   /**
@@ -192,7 +265,7 @@ export class CanvasService {
     form.append('name', filename);
     form.append('size', String(size));
     form.append('content_type', contentType);
-    const res = await fetch(url, {
+    const res = await this.canvasFetch(url, {
       method: 'POST',
       headers: { Authorization: this.getAuthHeaders(tokenOverride).Authorization },
       body: form,
@@ -234,7 +307,7 @@ export class CanvasService {
     form.append('name', filename);
     form.append('size', String(size));
     form.append('content_type', contentType);
-    const res = await fetch(url, {
+    const res = await this.canvasFetch(url, {
       method: 'POST',
       headers: { Authorization: this.getAuthHeaders(tokenOverride).Authorization },
       body: form,
@@ -279,7 +352,7 @@ export class CanvasService {
     form.append('name', filename);
     form.append('size', String(size));
     form.append('content_type', contentType);
-    const res = await fetch(url, {
+    const res = await this.canvasFetch(url, {
       method: 'POST',
       headers: reqHeaders,
       body: form,
@@ -312,21 +385,27 @@ export class CanvasService {
   async uploadFileToCanvas(
     uploadUrl: string,
     uploadParams: Record<string, string>,
-    buffer: Buffer,
+    input: Buffer | { filePath: string; size: number },
     options?: { resumeFromOffset?: number; tokenOverride?: string | null },
   ): Promise<{ fileId: string }> {
     const start = options?.resumeFromOffset ?? 0;
-    const total = buffer.length;
+    const usingFilePath = !Buffer.isBuffer(input);
+    const total = Buffer.isBuffer(input) ? input.length : input.size;
     let lastSuccessOffset = start;
 
     const form = new FormData();
     for (const [k, v] of Object.entries(uploadParams)) {
       form.append(k, v);
     }
-    form.append('file', new Blob([buffer], { type: 'application/octet-stream' }));
+    if (Buffer.isBuffer(input)) {
+      form.append('file', new Blob([input], { type: 'application/octet-stream' }));
+    } else {
+      const blob = await openAsBlob(input.filePath, { type: 'application/octet-stream' });
+      form.append('file', blob, 'upload.webm');
+    }
 
     try {
-      const res = await fetch(uploadUrl, {
+      const res = await this.canvasFetch(uploadUrl, {
         method: 'POST',
         body: form,
         redirect: 'manual',
@@ -336,7 +415,7 @@ export class CanvasService {
       this.appendVideoSubmissionFlowHttpLog('uploadFileToCanvas:POST_upload_url', {
         requestMethod: 'POST',
         requestUrl: uploadUrl,
-        requestBodyDescription: `multipart: upload_params [${paramKeys}], file=${total} bytes application/octet-stream`,
+        requestBodyDescription: `multipart: upload_params [${paramKeys}], file=${total} bytes application/octet-stream, source=${usingFilePath ? 'filepath' : 'buffer'}`,
         responseStatus: res.status,
         responseBody: postText,
       });
@@ -345,7 +424,7 @@ export class CanvasService {
         const location = res.headers.get('location');
         if (!location) throw new Error('Redirect without Location');
         const authHeaders = this.getAuthHeaders(options?.tokenOverride);
-        const confirmRes = await fetch(location, {
+        const confirmRes = await this.canvasFetch(location, {
           method: 'GET',
           headers: { Authorization: authHeaders.Authorization },
         });
@@ -415,7 +494,7 @@ export class CanvasService {
     };
     const authHeaders = this.getAuthHeaders(tokenOverride);
     const bodyStr = JSON.stringify(body);
-    const res = await fetch(url, {
+    const res = await this.canvasFetch(url, {
       method: 'POST',
       headers: authHeaders,
       body: bodyStr,
@@ -503,7 +582,7 @@ export class CanvasService {
       fileId,
       textCommentPreview: textComment.slice(0, 80),
     });
-    const res = await fetch(url, {
+    const res = await this.canvasFetch(url, {
       method: 'PUT',
       headers: this.getAuthHeaders(tokenOverride),
       body: JSON.stringify(body),
@@ -544,7 +623,7 @@ export class CanvasService {
         text_comment: textComment,
       },
     };
-    const res = await fetch(url, {
+    const res = await this.canvasFetch(url, {
       method: 'PUT',
       headers: this.getAuthHeaders(tokenOverride),
       body: JSON.stringify(body),

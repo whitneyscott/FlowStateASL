@@ -121,6 +121,10 @@ export default function TimerPage({ context }: TimerPageProps) {
       setSubmitError(null);
       setPhase(blob ? 'upload' : 'done');
       const isDeepLink = context?.messageType === 'LtiDeepLinkingRequest';
+      const submitAttemptKey =
+        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
       let lastEndpoint = 'POST /api/prompt/save-prompt';
       try {
         console.log('[TimerPage:doSubmit] Step 1: savePrompt');
@@ -138,7 +142,7 @@ export default function TimerPage({ context }: TimerPageProps) {
           let html: string;
           if (typeof result === 'object' && result?.dev) {
             const dev = result.dev;
-            console.log('[SproutVideo]', dev.message);
+            console.log('[TimerPage:doSubmit]', dev.message);
             console.log('[TimerPage:doSubmit] Video title for submission:', {
               contentItemTitle: dev.contentItemTitle ?? '(not returned)',
               videoTitle: dev.videoTitle ?? '(not returned)',
@@ -164,7 +168,9 @@ export default function TimerPage({ context }: TimerPageProps) {
           lastEndpoint = 'POST /api/prompt/submit';
           console.log('[TimerPage:doSubmit] Step 2: submitPrompt (create submission row; submit_prompt_first.php)');
           setLastFunction('POST /api/prompt/submit');
-          await promptApi.submitPrompt(promptSnapshot, effectiveAssignmentId, deckTimeline);
+          await promptApi.submitPrompt(promptSnapshot, effectiveAssignmentId, deckTimeline, {
+            idempotencyKey: `submit-${submitAttemptKey}`,
+          });
           setLastApiResult('POST /api/prompt/submit', 200, true);
           console.log('[TimerPage:doSubmit] submitPrompt OK');
           if (blob) {
@@ -180,6 +186,7 @@ export default function TimerPage({ context }: TimerPageProps) {
               {
                 promptSnapshotHtml: promptSnapshot,
                 deckTimeline,
+                idempotencyKey: `upload-${submitAttemptKey}`,
               },
             );
             setLastApiResult('POST /api/prompt/upload-video', 200, true);

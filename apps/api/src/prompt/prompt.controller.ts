@@ -15,9 +15,15 @@ import {
   UseInterceptors,
   UploadedFile,
   BadRequestException,
+  ServiceUnavailableException,
+  PayloadTooLargeException,
+  HttpException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Request, Response } from 'express';
+import { mkdirSync } from 'node:fs';
+import { unlink } from 'node:fs/promises';
+import { join } from 'node:path';
 import { LtiLaunchGuard } from '../lti/guards/lti-launch.guard';
 import { TeacherRoleGuard } from '../common/guards/teacher-role.guard';
 import { CanvasTokenExpiredError } from '../canvas/canvas.service';
@@ -38,6 +44,10 @@ import {
 import { ResetAttemptDto } from './dto/reset-attempt.dto';
 import { LtiDeepLinkFileStore } from '../lti/lti-deep-link-file.store';
 import { appendLtiLog } from '../common/last-error.store';
+import { UploadResilienceService } from './upload-resilience.service';
+
+const TMP_UPLOAD_DIR = join(process.cwd(), 'tmp', 'uploads');
+mkdirSync(TMP_UPLOAD_DIR, { recursive: true });
 
 @Controller('prompt')
 @UseGuards(LtiLaunchGuard)
@@ -45,6 +55,7 @@ export class PromptController {
   constructor(
     private readonly prompt: PromptService,
     private readonly deepLinkFileStore: LtiDeepLinkFileStore,
+    private readonly uploadResilience: UploadResilienceService,
   ) {}
 
   private getCtx(req: Request): LtiContext {
@@ -155,21 +166,55 @@ export class PromptController {
       deckTimelineCount: dto.deckTimeline?.length ?? 0,
     });
     const ctx = this.getCtxWithAssignment(req);
-    await this.prompt.submit(ctx, dto.promptSnapshotHtml, dto.deckTimeline);
-    return { status: 'success' };
+    const idemHeader = (req.headers['x-idempotency-key'] ?? '').toString().trim();
+    const idemKey = idemHeader || `submit:${ctx.courseId}:${ctx.assignmentId ?? '(none)'}:${ctx.userId}:${dto.promptSnapshotHtml?.length ?? 0}`;
+    const existing = this.uploadResilience.getIdempotentResult<{ status: 'success' }>(idemKey);
+    if (existing?.state === 'completed') {
+      appendLtiLog('prompt-submit', 'submit idempotency replay: completed result returned', { idemKey });
+      return { status: 'success', idempotentReplay: true };
+    }
+    if (existing?.state === 'running' || existing?.state === 'queued') {
+      throw new BadRequestException('Submit already in progress for this idempotency key.');
+    }
+    this.uploadResilience.markInProgress(idemKey);
+    try {
+      await this.prompt.submit(ctx, dto.promptSnapshotHtml, dto.deckTimeline);
+      this.uploadResilience.markCompleted(idemKey, { status: 'success' });
+      return { status: 'success' };
+    } catch (err) {
+      this.uploadResilience.markFailed(idemKey, err);
+      throw err;
+    }
   }
 
   @Post('upload-video')
   @HttpCode(HttpStatus.CREATED)
-  @UseInterceptors(FileInterceptor('video'))
+  @UseInterceptors(
+    FileInterceptor('video', {
+      dest: TMP_UPLOAD_DIR,
+      limits: {
+        fileSize: Number(process.env.UPLOAD_MAX_FILE_BYTES ?? 80 * 1024 * 1024),
+      },
+    }),
+  )
   async uploadVideo(
     @Req() req: Request,
-    @UploadedFile() file: { buffer?: Buffer; originalname?: string } | undefined,
+    @UploadedFile() file: { buffer?: Buffer; originalname?: string; path?: string; size?: number } | undefined,
   ) {
-    appendLtiLog('prompt', 'POST /upload-video received', { hasFile: !!file?.buffer, size: file?.buffer?.length ?? 0, filename: file?.originalname ?? '(none)' });
+    appendLtiLog('prompt', 'POST /upload-video received', {
+      hasFile: !!(file?.path || file?.buffer),
+      size: file?.size ?? file?.buffer?.length ?? 0,
+      filename: file?.originalname ?? '(none)',
+    });
     const ctx = this.getCtxWithAssignment(req);
-    if (!file?.buffer) {
+    if (!file?.path && !file?.buffer) {
       throw new BadRequestException('No video file provided');
+    }
+    const uploadSize = Number(file?.size ?? file?.buffer?.length ?? 0);
+    try {
+      this.uploadResilience.assertFileSizeOrThrow(uploadSize);
+    } catch (err) {
+      throw new PayloadTooLargeException(err instanceof Error ? err.message : 'Upload too large');
     }
     const body = req.body as { promptSnapshotHtml?: string; deckTimeline?: string };
     const promptSnapshotHtml = (body?.promptSnapshotHtml ?? '').toString().trim();
@@ -191,15 +236,76 @@ export class PromptController {
         // ignore invalid deckTimeline JSON
       }
     }
-    const result = await this.prompt.uploadVideo(
-      ctx,
-      Buffer.from(file.buffer),
-      file.originalname || `asl_submission_${Date.now()}.webm`,
-      {
-        ...(promptSnapshotHtml ? { promptSnapshotHtml } : {}),
-        ...(deckTimeline?.length ? { deckTimeline } : {}),
-      },
-    );
+    const idemHeader = (req.headers['x-idempotency-key'] ?? '').toString().trim();
+    const idemKey = idemHeader || `upload:${ctx.courseId}:${ctx.assignmentId ?? '(none)'}:${ctx.userId}:${uploadSize}`;
+    const existing = this.uploadResilience.getIdempotentResult<{
+      fileId: string;
+      courseId: string;
+      assignmentId: string;
+      studentUserId: string;
+      studentIdSource: string | undefined;
+      verify: unknown;
+    }>(idemKey);
+    if (existing?.state === 'completed' && existing.result) {
+      appendLtiLog('prompt-upload', 'uploadVideo idempotency replay: completed result returned', { idemKey });
+      const replay = existing.result;
+      return {
+        status: 'success',
+        fileId: replay.fileId,
+        courseId: replay.courseId,
+        assignmentId: replay.assignmentId,
+        studentUserId: replay.studentUserId,
+        studentIdSource: replay.studentIdSource,
+        verify: replay.verify,
+        idempotentReplay: true,
+      };
+    }
+    if (existing?.state === 'running' || existing?.state === 'queued') {
+      throw new BadRequestException('Upload already in progress for this idempotency key.');
+    }
+    this.uploadResilience.markInProgress(idemKey);
+    const filename = file.originalname || `asl_submission_${Date.now()}.webm`;
+    const runUpload = async () => {
+      const result = await this.prompt.uploadVideo(
+        ctx,
+        {
+          ...(file.path ? { filePath: file.path } : {}),
+          ...(file.buffer ? { buffer: Buffer.from(file.buffer) } : {}),
+          size: uploadSize,
+        },
+        filename,
+        {
+          ...(promptSnapshotHtml ? { promptSnapshotHtml } : {}),
+          ...(deckTimeline?.length ? { deckTimeline } : {}),
+        },
+      );
+      this.uploadResilience.markCompleted(idemKey, result);
+      return result;
+    };
+    let result: Awaited<ReturnType<PromptService['uploadVideo']>>;
+    if (this.uploadResilience.isMemoryPressured()) {
+      appendLtiLog('prompt-upload', 'upload queue: memory pressure detected (enqueue mode)', {
+        queueDepth: this.uploadResilience.queueDepth(),
+        maxQueueDepth: this.uploadResilience.maxQueueDepth,
+      });
+    }
+    try {
+      result = await this.uploadResilience.enqueue(idemKey, runUpload);
+    } catch (err) {
+      this.uploadResilience.markFailed(idemKey, err);
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('QUEUE_FULL')) {
+        throw new HttpException('Server busy, please try again in 30 seconds.', HttpStatus.TOO_MANY_REQUESTS);
+      }
+      if (msg.includes('MEMORY_PRESSURE')) {
+        throw new ServiceUnavailableException('Server temporarily unavailable, please try again shortly.');
+      }
+      throw err;
+    } finally {
+      if (file.path) {
+        await unlink(file.path).catch(() => undefined);
+      }
+    }
     appendLtiLog('prompt-upload', 'POST /api/prompt/upload-video 201 response (client can read verify in JSON body)', {
       fileId: result.fileId,
       courseId: result.courseId,

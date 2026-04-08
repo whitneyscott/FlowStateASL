@@ -14,7 +14,12 @@ function apiInit(init?: RequestInit): RequestInit {
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, apiInit(init));
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((data as { message?: string }).message ?? `HTTP ${res.status}`);
+  if (!res.ok) {
+    if (res.status === 503) {
+      throw new Error('Server temporarily unavailable, please try again shortly.');
+    }
+    throw new Error((data as { message?: string }).message ?? `HTTP ${res.status}`);
+  }
   return data as T;
 }
 
@@ -51,7 +56,12 @@ async function fetchJsonWithOAuthRedirect<T>(url: string, init?: RequestInit): P
   if (res.status === 401 && body.needsManualToken) {
     throw new NeedsManualTokenError(body.message);
   }
-  if (!res.ok) throw new Error(body.message ?? `HTTP ${res.status}`);
+  if (!res.ok) {
+    if (res.status === 503) {
+      throw new Error('Server temporarily unavailable, please try again shortly.');
+    }
+    throw new Error(body.message ?? `HTTP ${res.status}`);
+  }
   return data as T;
 }
 
@@ -183,6 +193,7 @@ export async function submitPrompt(
   promptSnapshotHtml: string,
   assignmentId?: string | null,
   deckTimeline?: DeckTimelineEntry[],
+  options?: { idempotencyKey?: string },
 ): Promise<void> {
   const body: Record<string, unknown> = { promptSnapshotHtml };
   if (deckTimeline?.length) {
@@ -190,7 +201,10 @@ export async function submitPrompt(
   }
   const res = await fetch(withAssignmentId(base + '/submit', assignmentId), apiInit({
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(options?.idempotencyKey ? { 'x-idempotency-key': options.idempotencyKey } : {}),
+    },
     body: JSON.stringify(body),
   }));
   if (!res.ok) throw new Error(await getErrorMessage(res));
@@ -219,7 +233,7 @@ export async function uploadVideo(
   blob: Blob,
   filename: string,
   assignmentId?: string | null,
-  options?: { promptSnapshotHtml?: string; deckTimeline?: DeckTimelineEntry[] },
+  options?: { promptSnapshotHtml?: string; deckTimeline?: DeckTimelineEntry[]; idempotencyKey?: string },
 ): Promise<PromptUploadVideoResult> {
   const form = new FormData();
   form.append('video', blob, filename);
@@ -230,7 +244,11 @@ export async function uploadVideo(
   if (options?.deckTimeline?.length) {
     form.append('deckTimeline', JSON.stringify(options.deckTimeline));
   }
-  const res = await fetch(withAssignmentId(base + '/upload-video', assignmentId), apiInit({ method: 'POST', body: form }));
+  const res = await fetch(withAssignmentId(base + '/upload-video', assignmentId), apiInit({
+    method: 'POST',
+    headers: options?.idempotencyKey ? { 'x-idempotency-key': options.idempotencyKey } : undefined,
+    body: form,
+  }));
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error((data as { message?: string }).message ?? `HTTP ${res.status}`);
   return data as PromptUploadVideoResult;
@@ -281,8 +299,6 @@ export interface PromptSubmission {
   grade?: string;
   submissionComments?: Array<{ id: number; comment: string }>;
   videoUrl?: string;
-  /** When in-memory video is missing (dev), SproutVideo embed URL for iframe fallback. */
-  fallbackVideoUrl?: string;
   attempt?: number;
   rubricAssessment?: Record<string, unknown>;
   /** Prompt from quiz storage (preferred when present). */

@@ -66,12 +66,6 @@ function activeDeckPromptAt(t: number, segments: DeckTimelineEntry[]): DeckTimel
   return null;
 }
 
-/** Build SproutVideo embed HTML the same way as FlashcardsPage (iframe with sproutvideo-player class). */
-function buildSproutVideoEmbedHtml(embedUrl: string): string {
-  const src = embedUrl.replace(/"/g, '&quot;');
-  return `<iframe src="${src}" class="sproutvideo-player" width="640" height="360" frameborder="0" allowfullscreen></iframe>`;
-}
-
 function getPromptFromComments(
   body: string | undefined,
   comments: Array<{ comment: string }> | undefined,
@@ -189,16 +183,6 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   }, [current?.userId]);
 
   useEffect(() => {
-    if (isDev && current?.userId && (current as promptApi.PromptSubmission).fallbackVideoUrl) {
-      console.log('[TeacherViewer] Showing SproutVideo fallback for this submission', {
-        userId: current.userId,
-        userName: current.userName,
-        fallbackVideoUrlPreview: ((current as promptApi.PromptSubmission).fallbackVideoUrl ?? '').slice(0, 70) + '...',
-      });
-    }
-  }, [current?.userId, (current as promptApi.PromptSubmission | undefined)?.fallbackVideoUrl]);
-
-  useEffect(() => {
     if (!current) return;
     const raw = current?.rubricAssessment ?? {};
     const assess: Record<string, { ratingId: string; points: number }> = {};
@@ -225,11 +209,9 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
       const subsList = Array.isArray(subs) ? subs : [];
       setSubmissions(subsList);
       if (isDev && subsList.length > 0) {
-        const withFallback = subsList.filter((s) => (s as { fallbackVideoUrl?: string }).fallbackVideoUrl);
         console.log('[TeacherViewer] getSubmissions result', {
           total: subsList.length,
-          withSproutVideoFallback: withFallback.length,
-          fallbackByUser: withFallback.map((s) => ({ userId: s.userId, userName: s.userName, hasFallback: !!(s as { fallbackVideoUrl?: string }).fallbackVideoUrl })),
+          withVideoUrl: subsList.filter((s) => !!s.videoUrl).length,
         });
       }
       setAssignment(assign ?? null);
@@ -521,34 +503,6 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     v.addEventListener('timeupdate', onTimeUpdate);
     return () => v.removeEventListener('timeupdate', onTimeUpdate);
   }, [current]);
-
-  // Log selected submission video state to Bridge Debug Log (dev only)
-  useEffect(() => {
-    if (!isDev || !gradingMode) return;
-    const sub = current as promptApi.PromptSubmission | undefined;
-    if (!sub) return;
-    const hasVideoUrl = !!sub.videoUrl;
-    const hasFallback = !!sub.fallbackVideoUrl;
-    const noVideoButHasSubmission = sub && !sub.videoUrl;
-    const showSprout =
-      hasFallback && (isDev || videoLoadFailed || !sub.videoUrl);
-    const displayPath = showSprout
-      ? 'SproutVideo iframe'
-      : hasVideoUrl
-        ? 'video'
-        : hasFallback
-          ? 'SproutVideo iframe'
-          : noVideoButHasSubmission
-            ? 'processing'
-            : 'no video';
-    const message = `selected submission userId=${sub.userId} userName=${sub.userName ?? '(none)'} videoUrl=${hasVideoUrl ? 'yes' : 'no'} fallbackVideoUrl=${hasFallback ? 'yes' : 'no'} display=${displayPath}`;
-    fetch('/api/debug/lti-log', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message }),
-    }).catch(() => {});
-  }, [gradingMode, current, videoLoadFailed]);
 
   const activeFeedback = feedbackEntries.filter((f) => Math.abs(currentTime - f.time) <= 2);
   const formatTime = (s: number) => {
@@ -866,41 +820,13 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
           <div className="prompter-viewer-video-wrap">
             {noSubmissionsInGradingMode ? (
               <p className="prompter-viewer-no-video">No submissions for this assignment.</p>
-            ) : (current?.videoUrl || current?.fallbackVideoUrl) ? (
-              /* In dev, prefer SproutVideo when available so teacher can view even if in-memory is gone. */
-              (isDev && current.fallbackVideoUrl) || (videoLoadFailed && current.fallbackVideoUrl) || (!current?.videoUrl && current?.fallbackVideoUrl) ? (
-                current?.fallbackVideoUrl ? (
-                  <>
-                    {isDev && current.fallbackVideoUrl && (
-                      <p className="prompter-viewer-dev-badge" aria-hidden>Dev: SproutVideo submission</p>
-                    )}
-                    <div className="prompter-viewer-sprout-wrap" title="Submission video (SproutVideo)">
-                      <div
-                        className="prompter-viewer-sprout-inner"
-                        dangerouslySetInnerHTML={{ __html: buildSproutVideoEmbedHtml(current.fallbackVideoUrl) }}
-                      />
-                    </div>
-                  </>
-                ) : (
-                  current?.videoUrl ? (
-                    <video
-                      ref={videoRef}
-                      src={current.videoUrl}
-                      controls
-                      onError={() => setVideoLoadFailed(true)}
-                    />
-                  ) : (
-                    <p className="prompter-viewer-no-video">No video</p>
-                  )
-                )
-              ) : (
-                <video
-                  ref={videoRef}
-                  src={current.videoUrl!}
-                  controls
-                  onError={() => setVideoLoadFailed(true)}
-                />
-              )
+            ) : current?.videoUrl ? (
+              <video
+                ref={videoRef}
+                src={current.videoUrl}
+                controls
+                onError={() => setVideoLoadFailed(true)}
+              />
             ) : hasSubmissionNoVideo ? (
               <div className="prompter-viewer-processing">
                 <p>Your submission is being processed. Video will appear shortly. Refresh the page to check.</p>
