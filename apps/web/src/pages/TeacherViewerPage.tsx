@@ -34,26 +34,61 @@ interface DeckTimelineEntry {
   startSec: number;
 }
 
+function deckTimelineFromParsedJson(parsed: { deckTimeline?: unknown }): DeckTimelineEntry[] {
+  const raw = parsed.deckTimeline;
+  if (!Array.isArray(raw) || raw.length === 0) return [];
+  const out: DeckTimelineEntry[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const o = item as { title?: unknown; startSec?: unknown };
+    const title = String(o.title ?? '');
+    const startSec = Number(o.startSec);
+    if (!Number.isFinite(startSec)) continue;
+    out.push({ title, startSec });
+  }
+  out.sort((a, b) => a.startSec - b.startSec);
+  return out;
+}
+
+/** Legacy: deck timeline sometimes lived only in submission body JSON (before video overwrote body). */
 function parseDeckTimelineFromBody(body: string | undefined): DeckTimelineEntry[] {
   if (!body?.trim()) return [];
   try {
-    const parsed = JSON.parse(body) as { deckTimeline?: unknown };
-    const raw = parsed.deckTimeline;
-    if (!Array.isArray(raw) || raw.length === 0) return [];
-    const out: DeckTimelineEntry[] = [];
-    for (const item of raw) {
-      if (!item || typeof item !== 'object') continue;
-      const o = item as { title?: unknown; startSec?: unknown };
-      const title = String(o.title ?? '');
-      const startSec = Number(o.startSec);
-      if (!Number.isFinite(startSec)) continue;
-      out.push({ title, startSec });
-    }
-    out.sort((a, b) => a.startSec - b.startSec);
-    return out;
+    return deckTimelineFromParsedJson(JSON.parse(body) as { deckTimeline?: unknown });
   } catch {
     return [];
   }
+}
+
+/**
+ * Current flow: after video upload, prompt + deckTimeline are often only in a JSON submission comment
+ * (same payload as promptSnapshotHtml), because Canvas replaces online_text_entry body on upload.
+ */
+function parseDeckTimelineFromSubmissionComments(
+  comments: Array<{ comment?: string }> | undefined,
+): DeckTimelineEntry[] {
+  if (!comments?.length) return [];
+  for (const c of comments) {
+    const txt = (c.comment ?? '').trim();
+    if (!txt) continue;
+    try {
+      const parsed = JSON.parse(txt) as { deckTimeline?: unknown };
+      const rows = deckTimelineFromParsedJson(parsed);
+      if (rows.length > 0) return rows;
+    } catch {
+      // not JSON — skip
+    }
+  }
+  return [];
+}
+
+function resolveDeckTimeline(
+  body: string | undefined,
+  comments: Array<{ comment?: string }> | undefined,
+): DeckTimelineEntry[] {
+  const fromBody = parseDeckTimelineFromBody(body);
+  if (fromBody.length > 0) return fromBody;
+  return parseDeckTimelineFromSubmissionComments(comments);
 }
 
 function activeDeckPromptAt(t: number, segments: DeckTimelineEntry[]): DeckTimelineEntry | null {
@@ -535,7 +570,10 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     return `${m}:${sec < 10 ? '0' : ''}${sec}`;
   };
 
-  const deckTimeline = useMemo(() => parseDeckTimelineFromBody(current?.body), [current?.body]);
+  const deckTimeline = useMemo(
+    () => resolveDeckTimeline(current?.body, current?.submissionComments),
+    [current?.body, current?.submissionComments],
+  );
   const activeDeckPrompt = useMemo(
     () => activeDeckPromptAt(currentTime, deckTimeline),
     [currentTime, deckTimeline],
