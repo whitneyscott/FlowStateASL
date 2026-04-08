@@ -66,6 +66,30 @@ function activeDeckPromptAt(t: number, segments: DeckTimelineEntry[]): DeckTimel
   return null;
 }
 
+function rubricCriterionDeckIndex(
+  criterion: RubricCriterion,
+  criterionIdx: number,
+  rubricLength: number,
+  deckLength: number,
+): number | null {
+  if (deckLength <= 0) return null;
+  const desc = String(criterion.description ?? '').trim();
+  const cardMatch = /\b(?:card|prompt|item)\s*(\d{1,3})\b/i.exec(desc);
+  if (cardMatch) {
+    const n = Number.parseInt(cardMatch[1], 10);
+    if (Number.isFinite(n) && n >= 1 && n <= deckLength) return n - 1;
+  }
+  const leadingMatch = /^\s*(\d{1,3})\s*[\)\].:-]/.exec(desc);
+  if (leadingMatch) {
+    const n = Number.parseInt(leadingMatch[1], 10);
+    if (Number.isFinite(n) && n >= 1 && n <= deckLength) return n - 1;
+  }
+  if (rubricLength === deckLength && criterionIdx >= 0 && criterionIdx < deckLength) {
+    return criterionIdx;
+  }
+  return null;
+}
+
 function getPromptFromComments(
   body: string | undefined,
   comments: Array<{ comment: string }> | undefined,
@@ -669,6 +693,13 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   }
 
   const promptUsed = getPromptFromComments(current?.body, current?.submissionComments, current?.promptHtml);
+  const rubricPromptIndexMap = useMemo(
+    () =>
+      rubric.map((criterion, idx) =>
+        rubricCriterionDeckIndex(criterion, idx, rubric.length, deckTimeline.length),
+      ),
+    [rubric, deckTimeline.length],
+  );
   const hasSubmissionNoVideo = current && !current.videoUrl;
   const noSubmissionsInGradingMode = gradingMode && submissions.length === 0;
 
@@ -688,15 +719,32 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
           {rubric.length > 0 && (
             <div className="prompter-viewer-rubric-container">
               <div className="prompter-viewer-feedback-title">Rubric</div>
-              {rubric.map((c) => {
+              {rubric.map((c, rowIdx) => {
                 const critId = String(c.id ?? '');
                 const assess = rubricAssessment[critId] ?? rubricAssessment[String(c.id)];
                 const selectedRatingId = assess?.rating_id;
+                const mappedDeckIdx = rubricPromptIndexMap[rowIdx];
+                const mappedDeckPrompt = mappedDeckIdx != null ? deckTimeline[mappedDeckIdx] : undefined;
+                const mappedDeckActive = mappedDeckIdx != null && mappedDeckIdx === activeDeckIndex;
                 return (
                   <div key={critId} className="prompter-viewer-rubric-criterion" data-criterion-id={critId}>
                     <div className="prompter-viewer-rubric-criterion-title">
                       {c.description ?? 'Criterion'} ({c.points ?? 0} pts)
                     </div>
+                    {mappedDeckPrompt && (
+                      <div
+                        className={`prompter-viewer-rubric-card-prompt ${mappedDeckActive ? 'active' : ''}`}
+                        title="Mapped deck prompt for this rubric row"
+                      >
+                        <div className="prompter-viewer-rubric-card-prompt-time">
+                          {formatTime(Math.floor(mappedDeckPrompt.startSec))}
+                        </div>
+                        <div
+                          className="prompter-viewer-rubric-card-prompt-text"
+                          dangerouslySetInnerHTML={{ __html: mappedDeckPrompt.title || '—' }}
+                        />
+                      </div>
+                    )}
                     {c.ratings?.length ? (
                       <div className="prompter-viewer-rubric-ratings">
                         {c.ratings.map((r) => {

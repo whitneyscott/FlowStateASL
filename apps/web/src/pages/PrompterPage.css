@@ -1163,6 +1163,32 @@
   font-size: 13px;
 }
 
+.prompter-viewer-rubric-card-prompt {
+  margin: 8px 0 10px;
+  padding: 8px;
+  border: 1px solid #d7e7fb;
+  border-radius: 6px;
+  background: #f6faff;
+}
+
+.prompter-viewer-rubric-card-prompt.active {
+  border-color: var(--prompter-canvas-blue);
+  background: #eaf3ff;
+}
+
+.prompter-viewer-rubric-card-prompt-time {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--prompter-canvas-blue);
+  margin-bottom: 4px;
+}
+
+.prompter-viewer-rubric-card-prompt-text {
+  font-size: 12px;
+  line-height: 1.35;
+  color: #223;
+}
+
 .prompter-viewer-rubric-ratings {
   display: flex;
   flex-wrap: wrap;
