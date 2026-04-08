@@ -1966,6 +1966,18 @@ export class PromptService {
     options?: {
       promptSnapshotHtml?: string;
       deckTimeline?: Array<{ title: string; startSec: number }>;
+      captureProfile?: {
+        profileId?: string;
+        requestedWidth?: number;
+        requestedHeight?: number;
+        requestedFps?: number;
+        actualWidth?: number;
+        actualHeight?: number;
+        actualFps?: number;
+        mimeType?: string;
+        videoBitsPerSecond?: number;
+        audioBitsPerSecond?: number;
+      };
     },
   ): Promise<{
     fileId: string;
@@ -1989,6 +2001,7 @@ export class PromptService {
       filename,
       size: video.size,
       source: video.filePath ? 'filepath' : 'buffer',
+      captureProfile: options?.captureProfile ?? null,
     });
     const token = await this.courseSettings.getCanvasTokenForLtiBackedOps(ctx.canvasAccessToken, ctx);
     if (!token) {

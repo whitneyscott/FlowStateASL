@@ -45,6 +45,65 @@ interface DeckPromptItem {
   duration: number;
 }
 
+interface CaptureProfile {
+  id: 'p720' | 'p540' | 'p480';
+  requestedWidth: number;
+  requestedHeight: number;
+  requestedFps: number;
+  videoBitsPerSecond: number;
+  audioBitsPerSecond: number;
+}
+
+interface CaptureProfileTelemetry {
+  profileId?: string;
+  requestedWidth?: number;
+  requestedHeight?: number;
+  requestedFps?: number;
+  actualWidth?: number;
+  actualHeight?: number;
+  actualFps?: number;
+  mimeType?: string;
+  videoBitsPerSecond?: number;
+  audioBitsPerSecond?: number;
+}
+
+const CAPTURE_PROFILE_LADDER: CaptureProfile[] = [
+  { id: 'p720', requestedWidth: 1280, requestedHeight: 720, requestedFps: 30, videoBitsPerSecond: 1_800_000, audioBitsPerSecond: 96_000 },
+  { id: 'p540', requestedWidth: 960, requestedHeight: 540, requestedFps: 24, videoBitsPerSecond: 1_300_000, audioBitsPerSecond: 80_000 },
+  { id: 'p480', requestedWidth: 854, requestedHeight: 480, requestedFps: 24, videoBitsPerSecond: 950_000, audioBitsPerSecond: 64_000 },
+];
+
+const RECORDER_MIME_CANDIDATES = [
+  'video/webm;codecs=vp9,opus',
+  'video/webm;codecs=vp8,opus',
+  'video/webm',
+];
+
+const RECORDER_TIMESLICE_MS = 1000;
+const CLIENT_UPLOAD_SOFT_WARN_BYTES = 65 * 1024 * 1024;
+
+function pickSupportedMimeType(): string {
+  for (const mime of RECORDER_MIME_CANDIDATES) {
+    if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(mime)) return mime;
+  }
+  return '';
+}
+
+function toMb(sizeBytes: number): string {
+  return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function mapSubmitErrorForStudent(message: string): string {
+  const lower = message.toLowerCase();
+  if (lower.includes('server busy')) return 'Many students are submitting right now. Wait about 30 seconds, then try again.';
+  if (lower.includes('temporarily unavailable')) return 'Server is temporarily unavailable. Please wait a moment, then retry.';
+  if (lower.includes('timed out') || lower.includes('timeout')) return 'Upload timed out. Please retry, or re-record if your connection is unstable.';
+  if (lower.includes('too large') || lower.includes('upload_too_large')) {
+    return `Video file is too large. Please keep it under ${Math.round(promptApi.DEFAULT_UPLOAD_MAX_BYTES / (1024 * 1024))} MB.`;
+  }
+  return message;
+}
+
 function recordSecondsForDeckCard(item: DeckPromptItem | undefined): number {
   const d = item?.duration;
   if (typeof d === 'number' && Number.isFinite(d) && d > 0) {
@@ -69,8 +128,10 @@ export default function TimerPage({ context }: TimerPageProps) {
   const [recording, setRecording] = useState(false);
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitInfo, setSubmitInfo] = useState<string | null>(null);
   const [preflightReady, setPreflightReady] = useState(false);
   const [preflightError, setPreflightError] = useState<string | null>(null);
+  const [captureProfile, setCaptureProfile] = useState<CaptureProfileTelemetry | null>(null);
   
   // Deck mode state
   const [deckPrompts, setDeckPrompts] = useState<DeckPromptItem[]>([]);
@@ -85,6 +146,7 @@ export default function TimerPage({ context }: TimerPageProps) {
   const chunksRef = useRef<Blob[]>([]);
   const submitOnStopRef = useRef(false);
   const pendingPromptRef = useRef('');
+  const lastDeckTimelineRef = useRef<promptApi.DeckTimelineEntry[] | undefined>(undefined);
   /** MediaRecorder `onstart` time; used to mark deck card boundaries in the real recording timeline. */
   const recordStartPerfRef = useRef(0);
   const deckBoundaryListRef = useRef<Array<{ title: string; startSec: number }>>([]);
@@ -119,6 +181,19 @@ export default function TimerPage({ context }: TimerPageProps) {
         messageType: context?.messageType,
       });
       setSubmitError(null);
+      setSubmitInfo(null);
+      if (blob && blob.size > promptApi.DEFAULT_UPLOAD_MAX_BYTES) {
+        setSubmitError(
+          `Video is ${toMb(blob.size)}, which is above the upload limit (${Math.round(promptApi.DEFAULT_UPLOAD_MAX_BYTES / (1024 * 1024))} MB). Please record a shorter/lower-quality clip and submit again.`,
+        );
+        setPhase('record');
+        return;
+      }
+      if (blob && blob.size > CLIENT_UPLOAD_SOFT_WARN_BYTES) {
+        setSubmitInfo(
+          `Large upload detected (${toMb(blob.size)}). Keep this tab open during submission.`,
+        );
+      }
       setPhase(blob ? 'upload' : 'done');
       const isDeepLink = context?.messageType === 'LtiDeepLinkingRequest';
       const submitAttemptKey =
@@ -187,6 +262,7 @@ export default function TimerPage({ context }: TimerPageProps) {
                 promptSnapshotHtml: promptSnapshot,
                 deckTimeline,
                 idempotencyKey: `upload-${submitAttemptKey}`,
+                captureProfile: captureProfile ?? undefined,
               },
             );
             setLastApiResult('POST /api/prompt/upload-video', 200, true);
@@ -197,12 +273,19 @@ export default function TimerPage({ context }: TimerPageProps) {
         console.log('[TimerPage:doSubmit] DONE');
       } catch (e) {
         console.error('[TimerPage:doSubmit] FAILED', { lastEndpoint, error: e });
-        setSubmitError(e instanceof Error ? e.message : 'Submit failed');
+        const rawMessage = e instanceof Error ? e.message : 'Submit failed';
+        setSubmitError(mapSubmitErrorForStudent(rawMessage));
+        if (blob) {
+          setSubmitInfo(
+            `Retry tip: keep your browser tab open and avoid switching networks while uploading ${toMb(blob.size)}.`,
+          );
+        }
         setLastApiError(lastEndpoint, 0, String(e));
       }
     },
     [
       context?.messageType,
+      captureProfile,
       setLastFunction,
       setLastApiResult,
       setLastApiError,
@@ -225,20 +308,59 @@ export default function TimerPage({ context }: TimerPageProps) {
     if (phase !== 'preflight') return;
     setPreflightReady(false);
     setPreflightError(null);
+    setSubmitInfo(null);
     let cancelled = false;
-    navigator.mediaDevices
-      .getUserMedia({ video: true, audio: true })
-      .then((stream) => {
-        if (cancelled) {
-          stream.getTracks().forEach((t) => t.stop());
+    const openCameraWithFallback = async () => {
+      let lastError: unknown;
+      for (const profile of CAPTURE_PROFILE_LADDER) {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              width: { ideal: profile.requestedWidth, max: profile.requestedWidth },
+              height: { ideal: profile.requestedHeight, max: profile.requestedHeight },
+              frameRate: { ideal: profile.requestedFps, max: profile.requestedFps },
+            },
+            audio: true,
+          });
+          if (cancelled) {
+            stream.getTracks().forEach((t) => t.stop());
+            return;
+          }
+          const trackSettings = stream.getVideoTracks()[0]?.getSettings();
+          const telemetry: CaptureProfileTelemetry = {
+            profileId: profile.id,
+            requestedWidth: profile.requestedWidth,
+            requestedHeight: profile.requestedHeight,
+            requestedFps: profile.requestedFps,
+            actualWidth: Number(trackSettings?.width ?? 0) || undefined,
+            actualHeight: Number(trackSettings?.height ?? 0) || undefined,
+            actualFps: Number(trackSettings?.frameRate ?? 0) || undefined,
+            videoBitsPerSecond: profile.videoBitsPerSecond,
+            audioBitsPerSecond: profile.audioBitsPerSecond,
+            mimeType: pickSupportedMimeType() || 'browser-default',
+          };
+          console.log('[TimerPage:preflight] capture profile selected', telemetry);
+          streamRef.current = stream;
+          setCaptureProfile(telemetry);
+          setPreflightReady(true);
           return;
+        } catch (err) {
+          lastError = err;
+          console.warn('[TimerPage:preflight] capture profile failed, trying fallback', {
+            profileId: profile.id,
+            error: String(err),
+          });
         }
-        streamRef.current = stream;
-        setPreflightReady(true);
-      })
-      .catch(() => {
-        if (!cancelled) setPreflightError('Camera/mic access denied.');
-      });
+      }
+      if (!cancelled) {
+        setCaptureProfile(null);
+        setPreflightError('Camera/mic access denied or unavailable for recording.');
+        if (lastError) {
+          console.error('[TimerPage:preflight] all capture profile attempts failed', lastError);
+        }
+      }
+    };
+    void openCameraWithFallback();
     return () => {
       cancelled = true;
     };
@@ -433,6 +555,17 @@ export default function TimerPage({ context }: TimerPageProps) {
     stopRecording();
   }, [deckMode, displayPrompts, promptIndex, stopRecording]);
 
+  const retryLastSubmit = useCallback(() => {
+    if (!recordedBlob) {
+      setSubmitError('No recording available to retry. Please record again.');
+      setPhase('record');
+      return;
+    }
+    const promptSnapshot = pendingPromptRef.current.trim();
+    const deckTimeline = lastDeckTimelineRef.current;
+    void doSubmit(promptSnapshot, recordedBlob, deckTimeline);
+  }, [recordedBlob, doSubmit]);
+
   useEffect(() => {
     if (phase === 'record') {
       autoFinishFiredRef.current = false;
@@ -493,13 +626,26 @@ export default function TimerPage({ context }: TimerPageProps) {
     if (phase !== 'record' || !streamRef.current || recorderRef.current) return;
     const stream = streamRef.current;
     chunksRef.current = [];
-    const recorder = new MediaRecorder(stream);
+    const selectedProfile = CAPTURE_PROFILE_LADDER.find((p) => p.id === captureProfile?.profileId);
+    const mimeType = pickSupportedMimeType();
+    const recorderOptions: MediaRecorderOptions = {
+      ...(mimeType ? { mimeType } : {}),
+      ...(selectedProfile?.videoBitsPerSecond ? { videoBitsPerSecond: selectedProfile.videoBitsPerSecond } : {}),
+      ...(selectedProfile?.audioBitsPerSecond ? { audioBitsPerSecond: selectedProfile.audioBitsPerSecond } : {}),
+    };
+    const recorder = new MediaRecorder(stream, recorderOptions);
     recorder.onstart = () => {
       recordStartPerfRef.current = performance.now();
       deckBoundaryListRef.current = [];
       if (deckPrompts.length > 0) {
         deckBoundaryListRef.current.push({ title: deckPrompts[0]?.title ?? '', startSec: 0 });
       }
+      setCaptureProfile((prev) => ({
+        ...(prev ?? {}),
+        mimeType: recorder.mimeType || prev?.mimeType || mimeType || 'browser-default',
+        videoBitsPerSecond: selectedProfile?.videoBitsPerSecond,
+        audioBitsPerSecond: selectedProfile?.audioBitsPerSecond,
+      }));
     };
     recorder.ondataavailable = (e) => {
       if (e.data.size) chunksRef.current.push(e.data);
@@ -510,6 +656,7 @@ export default function TimerPage({ context }: TimerPageProps) {
         blobSize: blob.size,
         chunksCount: chunksRef.current.length,
         submitOnStop: submitOnStopRef.current,
+        captureProfile,
       });
       setRecordedBlob(blob);
       if (submitOnStopRef.current) {
@@ -519,14 +666,15 @@ export default function TimerPage({ context }: TimerPageProps) {
           deckBoundaryListRef.current.length > 0
             ? deckBoundaryListRef.current.map((e) => ({ title: e.title, startSec: e.startSec }))
             : undefined;
+        lastDeckTimelineRef.current = deckTimeline;
         console.log('[TimerPage:recorder.onstop] Calling doSubmit...');
         doSubmit(promptSnapshot, blob, deckTimeline);
       }
     };
-    recorder.start();
+    recorder.start(RECORDER_TIMESLICE_MS);
     recorderRef.current = recorder;
     setRecording(true);
-  }, [phase, doSubmit, deckPrompts]);
+  }, [phase, doSubmit, deckPrompts, captureProfile]);
 
   if (!context) {
     return (
@@ -670,6 +818,13 @@ export default function TimerPage({ context }: TimerPageProps) {
               <p className="prompter-info-message">Requesting camera access...</p>
             )}
           </div>
+          {preflightReady && captureProfile && (
+            <p className="prompter-info-message">
+              Recording profile: {captureProfile.actualWidth ?? captureProfile.requestedWidth}x
+              {captureProfile.actualHeight ?? captureProfile.requestedHeight} @
+              {Math.round(captureProfile.actualFps ?? captureProfile.requestedFps ?? 30)}fps
+            </p>
+          )}
           <button
             type="button"
             onClick={startPreflight}
@@ -729,6 +884,7 @@ export default function TimerPage({ context }: TimerPageProps) {
             </div>
           </div>
           {submitError && <p className="prompter-error-message prompter-error-message-mt">{submitError}</p>}
+          {submitInfo && <p className="prompter-info-message">{submitInfo}</p>}
         </div>
       </div>
     );
@@ -738,8 +894,17 @@ export default function TimerPage({ context }: TimerPageProps) {
     return (
       <div className="prompter-page">
         <div className="prompter-card">
-          <p className="prompter-info-message">Uploading video...</p>
+          <p className="prompter-info-message">Uploading video to Canvas...</p>
+          {recordedBlob && (
+            <p className="prompter-info-message">Upload size: {toMb(recordedBlob.size)}</p>
+          )}
           {submitError && <p className="prompter-error-message prompter-error-message-mt">{submitError}</p>}
+          {submitInfo && <p className="prompter-info-message">{submitInfo}</p>}
+          {submitError && (
+            <button type="button" onClick={retryLastSubmit} className="prompter-btn-ready">
+              Retry upload
+            </button>
+          )}
         </div>
       </div>
     );

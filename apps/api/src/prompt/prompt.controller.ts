@@ -216,8 +216,22 @@ export class PromptController {
     } catch (err) {
       throw new PayloadTooLargeException(err instanceof Error ? err.message : 'Upload too large');
     }
-    const body = req.body as { promptSnapshotHtml?: string; deckTimeline?: string };
+    const body = req.body as { promptSnapshotHtml?: string; deckTimeline?: string; captureProfile?: string };
     const promptSnapshotHtml = (body?.promptSnapshotHtml ?? '').toString().trim();
+    let captureProfile:
+      | {
+          profileId?: string;
+          requestedWidth?: number;
+          requestedHeight?: number;
+          requestedFps?: number;
+          actualWidth?: number;
+          actualHeight?: number;
+          actualFps?: number;
+          mimeType?: string;
+          videoBitsPerSecond?: number;
+          audioBitsPerSecond?: number;
+        }
+      | undefined;
     let deckTimeline: Array<{ title: string; startSec: number }> | undefined;
     const rawDeck = body?.deckTimeline;
     if (typeof rawDeck === 'string' && rawDeck.trim()) {
@@ -236,6 +250,32 @@ export class PromptController {
         // ignore invalid deckTimeline JSON
       }
     }
+    const rawCapture = body?.captureProfile;
+    if (typeof rawCapture === 'string' && rawCapture.trim()) {
+      try {
+        const parsed = JSON.parse(rawCapture) as Record<string, unknown>;
+        captureProfile = {
+          profileId: typeof parsed.profileId === 'string' ? parsed.profileId : undefined,
+          requestedWidth: Number.isFinite(Number(parsed.requestedWidth)) ? Number(parsed.requestedWidth) : undefined,
+          requestedHeight: Number.isFinite(Number(parsed.requestedHeight)) ? Number(parsed.requestedHeight) : undefined,
+          requestedFps: Number.isFinite(Number(parsed.requestedFps)) ? Number(parsed.requestedFps) : undefined,
+          actualWidth: Number.isFinite(Number(parsed.actualWidth)) ? Number(parsed.actualWidth) : undefined,
+          actualHeight: Number.isFinite(Number(parsed.actualHeight)) ? Number(parsed.actualHeight) : undefined,
+          actualFps: Number.isFinite(Number(parsed.actualFps)) ? Number(parsed.actualFps) : undefined,
+          mimeType: typeof parsed.mimeType === 'string' ? parsed.mimeType : undefined,
+          videoBitsPerSecond:
+            Number.isFinite(Number(parsed.videoBitsPerSecond)) ? Number(parsed.videoBitsPerSecond) : undefined,
+          audioBitsPerSecond:
+            Number.isFinite(Number(parsed.audioBitsPerSecond)) ? Number(parsed.audioBitsPerSecond) : undefined,
+        };
+      } catch {
+        // ignore invalid captureProfile JSON
+      }
+    }
+    appendLtiLog('prompt-upload', 'upload capture profile telemetry', {
+      uploadSize,
+      captureProfile: captureProfile ?? null,
+    });
     const idemHeader = (req.headers['x-idempotency-key'] ?? '').toString().trim();
     const idemKey = idemHeader || `upload:${ctx.courseId}:${ctx.assignmentId ?? '(none)'}:${ctx.userId}:${uploadSize}`;
     const existing = this.uploadResilience.getIdempotentResult<{
@@ -277,6 +317,7 @@ export class PromptController {
         {
           ...(promptSnapshotHtml ? { promptSnapshotHtml } : {}),
           ...(deckTimeline?.length ? { deckTimeline } : {}),
+          ...(captureProfile ? { captureProfile } : {}),
         },
       );
       this.uploadResilience.markCompleted(idemKey, result);

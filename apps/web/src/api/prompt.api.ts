@@ -5,6 +5,7 @@
 import { ltiTokenHeaders } from './lti-token';
 
 const base = '/api/prompt';
+export const DEFAULT_UPLOAD_MAX_BYTES = 80 * 1024 * 1024;
 
 function apiInit(init?: RequestInit): RequestInit {
   const headers = { ...ltiTokenHeaders(), ...(init?.headers as Record<string, string>) };
@@ -24,6 +25,10 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 async function getErrorMessage(res: Response): Promise<string> {
+  if (res.status === 429) return 'Server is busy with other uploads. Please wait about 30 seconds and try again.';
+  if (res.status === 503) return 'Server temporarily unavailable, please try again shortly.';
+  if (res.status === 504) return 'Upload timed out. Please try again in a moment.';
+  if (res.status === 413) return `Video is too large. Please keep it under ${Math.round(DEFAULT_UPLOAD_MAX_BYTES / (1024 * 1024))} MB.`;
   const contentType = res.headers.get('content-type') ?? '';
   if (contentType.includes('application/json')) {
     const data = await res.json().catch(() => ({}));
@@ -233,7 +238,23 @@ export async function uploadVideo(
   blob: Blob,
   filename: string,
   assignmentId?: string | null,
-  options?: { promptSnapshotHtml?: string; deckTimeline?: DeckTimelineEntry[]; idempotencyKey?: string },
+  options?: {
+    promptSnapshotHtml?: string;
+    deckTimeline?: DeckTimelineEntry[];
+    idempotencyKey?: string;
+    captureProfile?: {
+      profileId?: string;
+      requestedWidth?: number;
+      requestedHeight?: number;
+      requestedFps?: number;
+      actualWidth?: number;
+      actualHeight?: number;
+      actualFps?: number;
+      mimeType?: string;
+      videoBitsPerSecond?: number;
+      audioBitsPerSecond?: number;
+    };
+  },
 ): Promise<PromptUploadVideoResult> {
   const form = new FormData();
   form.append('video', blob, filename);
@@ -244,13 +265,19 @@ export async function uploadVideo(
   if (options?.deckTimeline?.length) {
     form.append('deckTimeline', JSON.stringify(options.deckTimeline));
   }
+  if (options?.captureProfile) {
+    form.append('captureProfile', JSON.stringify(options.captureProfile));
+  }
   const res = await fetch(withAssignmentId(base + '/upload-video', assignmentId), apiInit({
     method: 'POST',
     headers: options?.idempotencyKey ? { 'x-idempotency-key': options.idempotencyKey } : undefined,
     body: form,
   }));
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((data as { message?: string }).message ?? `HTTP ${res.status}`);
+  if (!res.ok) {
+    const fallbackMessage = (data as { message?: string }).message ?? (await getErrorMessage(res));
+    throw new Error(fallbackMessage || `HTTP ${res.status}`);
+  }
   return data as PromptUploadVideoResult;
 }
 
