@@ -60,6 +60,32 @@ function decryptCanvasTokenSecret(stored: string, key: Buffer): string | null {
   }
 }
 
+export type CanvasStoredTokenShape = 'empty' | 'encrypted' | 'legacy_plaintext';
+
+/** Classify DB column value shape (does not log or return raw secrets). */
+export function getCanvasStoredTokenShape(stored: string | null | undefined): CanvasStoredTokenShape {
+  const s = (stored ?? '').trim();
+  if (!s) return 'empty';
+  if (s.startsWith(VERSION_PREFIX)) return 'encrypted';
+  return 'legacy_plaintext';
+}
+
+/**
+ * Resolve stored token with decrypt outcome for diagnostics.
+ * `decryptFailed` is true only when value is fsenc1:, key is present, and GCM decrypt/tag verify fails.
+ */
+export function resolveStoredCanvasApiTokenDiagnostic(
+  stored: string | null | undefined,
+  key: Buffer | null,
+): { plain: string | null; decryptFailed: boolean } {
+  const s = (stored ?? '').trim();
+  if (!s) return { plain: null, decryptFailed: false };
+  if (!s.startsWith(VERSION_PREFIX)) return { plain: s, decryptFailed: false };
+  if (!key) return { plain: null, decryptFailed: false };
+  const plain = decryptCanvasTokenSecret(s, key);
+  return { plain, decryptFailed: plain === null };
+}
+
 /**
  * Turn a DB value into a usable Canvas API token string.
  * - Encrypted values (fsenc1:…) require key; decryption failure → null
@@ -69,15 +95,5 @@ export function resolveStoredCanvasApiToken(
   stored: string | null | undefined,
   key: Buffer | null,
 ): string | null {
-  const s = (stored ?? '').trim();
-  if (!s) {
-    return null;
-  }
-  if (!s.startsWith(VERSION_PREFIX)) {
-    return s;
-  }
-  if (!key) {
-    return null;
-  }
-  return decryptCanvasTokenSecret(s, key);
+  return resolveStoredCanvasApiTokenDiagnostic(stored, key).plain;
 }

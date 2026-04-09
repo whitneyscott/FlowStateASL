@@ -10,7 +10,9 @@ import { canvasApiBaseFromLtiContext, resolveCanvasApiBaseUrl } from '../common/
 import {
   deriveCanvasTokenAesKey,
   encryptCanvasTokenSecret,
+  getCanvasStoredTokenShape,
   resolveStoredCanvasApiToken,
+  resolveStoredCanvasApiTokenDiagnostic,
 } from '../common/utils/canvas-token-crypto.util';
 import { LtiService } from '../lti/lti.service';
 import { CourseSettingsEntity } from './entities/course-settings.entity';
@@ -698,22 +700,133 @@ export class CourseSettingsService {
    * Uses launch course_id only — never a host-based or global token.
    */
   async hydrateTeacherCanvasTokenFromDatabase(req: Request): Promise<void> {
+    const logDiag = (payload: Record<string, unknown>) => {
+      appendLtiLog('token-hydrate', 'Canvas token hydrate', payload);
+    };
+
     try {
-      if (!req.session?.ltiContext) return;
+      if (!req.session?.ltiContext) {
+        logDiag({
+          encryptionKeySet: !!this.canvasTokenEncryptionKey(),
+          rowExists: false,
+          storage_shape: null,
+          resolvedPlaintext: false,
+          decryptFailed: false,
+          skipReason: 'no_session_context',
+        });
+        return;
+      }
       const ctx = req.session.ltiContext;
-      if (!this.ltiService.isTeacherRole(ctx.roles ?? '')) return;
-      const sess = req.session as { canvasAccessToken?: string };
-      if ((sess.canvasAccessToken ?? '').trim()) return;
-      const row = await this.repo.findOne({ where: { courseId: ctx.courseId } });
+      const courseId = (ctx.courseId ?? '').trim();
       const key = this.canvasTokenEncryptionKey();
-      const plain = resolveStoredCanvasApiToken(row?.canvasApiToken ?? null, key);
-      if (!plain) return;
+      const encryptionKeySet = !!key;
+      const row = courseId ? await this.repo.findOne({ where: { courseId } }) : null;
+      const rowExists = !!row;
+      const rawStored = row?.canvasApiToken ?? null;
+      const storage_shape = rowExists ? getCanvasStoredTokenShape(rawStored) : null;
+
+      if (!this.ltiService.isTeacherRole(ctx.roles ?? '')) {
+        const { plain, decryptFailed } = resolveStoredCanvasApiTokenDiagnostic(rawStored, key);
+        logDiag({
+          courseId: courseId || null,
+          encryptionKeySet,
+          rowExists,
+          storage_shape,
+          resolvedPlaintext: !!plain,
+          decryptFailed,
+          skipReason: 'not_teacher',
+        });
+        return;
+      }
+
+      const sess = req.session as { canvasAccessToken?: string };
+      if ((sess.canvasAccessToken ?? '').trim()) {
+        const { plain, decryptFailed } = resolveStoredCanvasApiTokenDiagnostic(rawStored, key);
+        logDiag({
+          courseId: courseId || null,
+          encryptionKeySet,
+          rowExists,
+          storage_shape,
+          resolvedPlaintext: !!plain,
+          decryptFailed,
+          skipReason: 'already_session',
+        });
+        return;
+      }
+
+      if (!rowExists) {
+        logDiag({
+          courseId: courseId || null,
+          encryptionKeySet,
+          rowExists: false,
+          storage_shape: null,
+          resolvedPlaintext: false,
+          decryptFailed: false,
+          skipReason: 'no_row',
+        });
+        return;
+      }
+
+      if (storage_shape === 'empty') {
+        logDiag({
+          courseId: courseId || null,
+          encryptionKeySet,
+          rowExists: true,
+          storage_shape: 'empty',
+          resolvedPlaintext: false,
+          decryptFailed: false,
+          skipReason: 'empty_column',
+        });
+        return;
+      }
+
+      if (storage_shape === 'encrypted' && !encryptionKeySet) {
+        logDiag({
+          courseId: courseId || null,
+          encryptionKeySet: false,
+          rowExists: true,
+          storage_shape: 'encrypted',
+          resolvedPlaintext: false,
+          decryptFailed: false,
+          skipReason: 'encrypted_no_key',
+        });
+        return;
+      }
+
+      const { plain, decryptFailed } = resolveStoredCanvasApiTokenDiagnostic(rawStored, key);
+      if (!plain) {
+        logDiag({
+          courseId: courseId || null,
+          encryptionKeySet,
+          rowExists: true,
+          storage_shape,
+          resolvedPlaintext: false,
+          decryptFailed,
+          skipReason: 'decrypt_failed',
+        });
+        return;
+      }
+
       sess.canvasAccessToken = plain;
       await new Promise<void>((resolve, reject) => {
         req.session!.save((e) => (e ? reject(e) : resolve()));
       });
+      logDiag({
+        courseId: courseId || null,
+        encryptionKeySet,
+        rowExists: true,
+        storage_shape,
+        resolvedPlaintext: true,
+        decryptFailed: false,
+        outcome: 'hydrated',
+      });
       appendLtiLog('oauth', 'Hydrated teacher Canvas token from course_settings (manual path)');
     } catch (err) {
+      logDiag({
+        encryptionKeySet: !!this.canvasTokenEncryptionKey(),
+        error: err instanceof Error ? err.message : String(err),
+        outcome: 'error',
+      });
       appendLtiLog('oauth', 'hydrateTeacherCanvasTokenFromDatabase failed (non-fatal)', {
         error: err instanceof Error ? err.message : String(err),
       });
