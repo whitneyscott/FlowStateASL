@@ -127,7 +127,7 @@ export function ManualTokenModal({ message, onSuccess, onDismiss, variant = 'def
             </div>
             <p className="manual-token-success-title">Token saved</p>
             <p className="manual-token-success-detail">
-              Your Canvas token is stored for this session. You can continue in the app.
+              Your Canvas token is saved for this course and will be reused on future launches.
             </p>
             <button type="button" className="manual-token-submit" onClick={handleContinue}>
               Continue

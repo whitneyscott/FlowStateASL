@@ -14,7 +14,7 @@ export class CourseSettingsEntity {
   selectedUnits: string[];
   @Column({ name: 'progress_assignment_id', type: 'varchar', length: 64, nullable: true })
   progressAssignmentId: string | null;
-  @Column({ name: 'canvas_api_token', type: 'varchar', length: 256, nullable: true })
+  @Column({ name: 'canvas_api_token', type: 'text', nullable: true })
   canvasApiToken: string | null;
   @UpdateDateColumn({ name: 'updated_at' }) updatedAt: Date;
 }

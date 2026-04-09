@@ -1,12 +1,14 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
+import { Request } from 'express';
 import { Repository } from 'typeorm';
 import { appendLtiLog, getLastCanvasApiResponse } from '../common/last-error.store';
 import { CanvasService, CanvasTokenExpiredError } from '../canvas/canvas.service';
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
 import { canvasApiBaseFromLtiContext, resolveCanvasApiBaseUrl } from '../common/utils/canvas-base-url.util';
 import { resolveStaticCanvasApiToken } from '../common/utils/canvas-static-api-token.util';
+import { LtiService } from '../lti/lti.service';
 import { CourseSettingsEntity } from './entities/course-settings.entity';
 
 const FLASHCARD_SETTINGS_ASSIGNMENT_TITLE = 'Flashcard Settings';
@@ -60,6 +62,8 @@ export class CourseSettingsService {
     private readonly repo: Repository<CourseSettingsEntity>,
     private readonly canvas: CanvasService,
     private readonly config: ConfigService,
+    @Inject(forwardRef(() => LtiService))
+    private readonly ltiService: LtiService,
   ) {}
 
   /** Canvas API host from LTI launch (iss / consumer URL / domain); env only as dev fallback. */
@@ -636,5 +640,67 @@ export class CourseSettingsService {
       published: true,
       omitFromFinalGrade: true,
     }, token);
+  }
+
+  /**
+   * Persist manual Canvas API token for LTI 1.1 teachers (per course). Does not touch curriculum/unit fields.
+   */
+  async persistTeacherCanvasApiToken(courseId: string, token: string): Promise<void> {
+    const t = token.trim();
+    if (!courseId || !t) return;
+    let row = await this.repo.findOne({ where: { courseId } });
+    if (!row) {
+      row = this.repo.create({
+        courseId,
+        canvasApiToken: t,
+        selectedCurriculums: [],
+        selectedUnits: [],
+      });
+    } else {
+      row.canvasApiToken = t;
+    }
+    await this.repo.save(row);
+    appendLtiLog('oauth', 'Manual Canvas API token persisted to course_settings', {
+      courseId,
+      tokenLength: t.length,
+    });
+  }
+
+  /** Clear stored manual token so reset / bad key does not re-hydrate into the session. */
+  async clearStoredTeacherCanvasApiToken(courseId: string): Promise<void> {
+    if (!courseId) return;
+    const row = await this.repo.findOne({ where: { courseId } });
+    if (!row || row.canvasApiToken == null) return;
+    row.canvasApiToken = null;
+    await this.repo.save(row);
+    appendLtiLog('oauth', 'Cleared canvas_api_token from course_settings', { courseId });
+  }
+
+  /**
+   * If an LTI 1.1 (or non-OAuth) teacher session has no in-memory token, load from course_settings.
+   * Skips LTI 1.3 so OAuth sessions are not overwritten by a stale manual token row.
+   */
+  async hydrateTeacherCanvasTokenFromDatabase(req: Request): Promise<void> {
+    try {
+      if (!req.session?.ltiContext) return;
+      const ctx = req.session.ltiContext;
+      const launchType = (req.session as { ltiLaunchType?: '1.1' | '1.3' }).ltiLaunchType;
+      if (launchType === '1.3') return;
+      if (!this.ltiService.isTeacherRole(ctx.roles ?? '')) return;
+      const sess = req.session as { canvasAccessToken?: string };
+      if ((sess.canvasAccessToken ?? '').trim()) return;
+      const row = await this.repo.findOne({ where: { courseId: ctx.courseId } });
+      const stored = (row?.canvasApiToken ?? '').trim();
+      if (!stored) return;
+      sess.canvasAccessToken = stored;
+      await new Promise<void>((resolve, reject) => {
+        req.session!.save((e) => (e ? reject(e) : resolve()));
+      });
+      appendLtiLog('oauth', 'Hydrated teacher Canvas token from course_settings (manual path)');
+    } catch (err) {
+      appendLtiLog('oauth', 'hydrateTeacherCanvasTokenFromDatabase failed (non-fatal)', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 }

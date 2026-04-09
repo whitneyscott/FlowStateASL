@@ -1,10 +1,21 @@
-import { Controller, Get, Post, Body, Query, Req, Res } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Inject,
+  Post,
+  Query,
+  Req,
+  Res,
+  forwardRef,
+} from '@nestjs/common';
 import { Request, Response } from 'express';
 import { ConfigService } from '@nestjs/config';
 import { randomBytes } from 'crypto';
 import { appendLtiLog } from '../common/last-error.store';
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
 import { canvasApiBaseFromLtiContext } from '../common/utils/canvas-base-url.util';
+import { CourseSettingsService } from '../course-settings/course-settings.service';
 import { DEFAULT_CANVAS_OAUTH_SCOPES } from './canvas-oauth-scopes';
 
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000; // 10 min
@@ -15,7 +26,11 @@ const oauthStateStore = new Map<
 
 @Controller('oauth/canvas')
 export class CanvasOAuthController {
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    @Inject(forwardRef(() => CourseSettingsService))
+    private readonly courseSettings: CourseSettingsService,
+  ) {}
 
   /**
    * Store manual Canvas API token in session (for LTI 1.1 users who cannot use OAuth2).
@@ -35,11 +50,19 @@ export class CanvasOAuthController {
       return res.status(403).json({ error: 'LTI context required' });
     }
     req.session.canvasAccessToken = token;
-    req.session.save((err) => {
+    req.session.save(async (err) => {
       if (err) {
         return res.status(500).json({ error: 'Failed to save token' });
       }
       appendLtiLog('oauth', 'Manual token stored in session');
+      try {
+        const ctx = req.session!.ltiContext as LtiContext;
+        await this.courseSettings.persistTeacherCanvasApiToken(ctx.courseId, token);
+      } catch (e) {
+        appendLtiLog('oauth', 'Failed to persist manual token to DB (non-fatal)', {
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
       return res.json({ success: true });
     });
   }
@@ -57,12 +80,23 @@ export class CanvasOAuthController {
       return res.status(403).json({ error: 'LTI context required' });
     }
     const hadToken = !!(req.session.canvasAccessToken ?? '').trim();
+    const ctx = req.session.ltiContext as LtiContext;
+    const launchType = (req.session as { ltiLaunchType?: '1.1' | '1.3' }).ltiLaunchType;
     delete req.session.canvasAccessToken;
-    req.session.save((err) => {
+    req.session.save(async (err) => {
       if (err) {
         return res.status(500).json({ error: 'Failed to clear token' });
       }
       appendLtiLog('oauth', 'Canvas token cleared from session', { hadToken });
+      if (launchType !== '1.3' && ctx?.courseId) {
+        try {
+          await this.courseSettings.clearStoredTeacherCanvasApiToken(ctx.courseId);
+        } catch (e) {
+          appendLtiLog('oauth', 'Failed to clear stored token in DB (non-fatal)', {
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }
       return res.json({ success: true, hadToken });
     });
   }

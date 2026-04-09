@@ -9,11 +9,14 @@ import { LtiDeepLinkFileStore } from './lti-deep-link-file.store';
 import { LtiDeepLinkResponseService } from './lti-deep-link-response.service';
 import { AssessmentModule } from '../assessment/assessment.module';
 import { PromptModule } from '../prompt/prompt.module';
+import { CourseSettingsModule } from '../course-settings/course-settings.module';
+import { LtiLaunchGuard } from './guards/lti-launch.guard';
 
 @Module({
-  imports: [AssessmentModule, forwardRef(() => PromptModule)],
+  imports: [AssessmentModule, forwardRef(() => PromptModule), forwardRef(() => CourseSettingsModule)],
   controllers: [LtiController],
   providers: [
+    LtiLaunchGuard,
     LtiService,
     LtiJwksService,
     Lti13LaunchService,
@@ -22,6 +25,12 @@ import { PromptModule } from '../prompt/prompt.module';
     LtiDeepLinkFileStore,
     LtiDeepLinkResponseService,
   ],
-  exports: [LtiService, LtiAgsService, LtiDeepLinkFileStore, LtiDeepLinkResponseService],
+  exports: [
+    LtiLaunchGuard,
+    LtiService,
+    LtiAgsService,
+    LtiDeepLinkFileStore,
+    LtiDeepLinkResponseService,
+  ],
 })
 export class LtiModule {}

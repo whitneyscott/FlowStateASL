@@ -6,10 +6,13 @@ import {
 } from '@nestjs/common';
 import { Request } from 'express';
 import { repairCanvasHostFromRequest } from '../../common/utils/canvas-base-url.util';
+import { CourseSettingsService } from '../../course-settings/course-settings.service';
 
 @Injectable()
 export class LtiLaunchGuard implements CanActivate {
-  canActivate(context: ExecutionContext): boolean {
+  constructor(private readonly courseSettings: CourseSettingsService) {}
+
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest<Request>();
     // Allow GET /api/prompt/submission/:token by token alone (unguessable); video loads even if session expired
     if (req.method === 'GET' && /^\/api\/prompt\/submission\/[^/]+$/.test(req.path)) return true;
@@ -17,6 +20,7 @@ export class LtiLaunchGuard implements CanActivate {
     const hasLtiContext = !!req.session?.ltiContext;
     if (hasLtiContext) {
       repairCanvasHostFromRequest(req);
+      await this.courseSettings.hydrateTeacherCanvasTokenFromDatabase(req);
       return true;
     }
     const hasCookie = !!req.headers.cookie;

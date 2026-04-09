@@ -10,7 +10,7 @@ import { CourseSettingsEntity } from './entities/course-settings.entity';
 @Module({
   imports: [
     TypeOrmModule.forFeature([CourseSettingsEntity]),
-    CanvasModule,
+    forwardRef(() => CanvasModule),
     SproutVideoModule,
     forwardRef(() => LtiModule),
   ],
