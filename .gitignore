@@ -5,6 +5,8 @@ node_modules
 .env
 .env.local
 .env.*.local
+# Editor/backup copies of .env (must not be committed)
+.env(2)
 
 # LTI key files (never commit)
 apps/api/private-key.pem
