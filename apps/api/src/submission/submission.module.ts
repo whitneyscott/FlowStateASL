@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AssessmentSessionEntity } from '../assessment/entities/assessment-session.entity';
 import { CanvasModule } from '../canvas/canvas.module';
@@ -10,7 +10,7 @@ import { SubmissionService } from './submission.service';
 @Module({
   imports: [
     TypeOrmModule.forFeature([AssessmentSessionEntity]),
-    CanvasModule,
+    forwardRef(() => CanvasModule),
     CourseSettingsModule,
     LtiModule,
   ],

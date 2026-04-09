@@ -1,10 +1,11 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { DataModule } from '../data/data.module';
 import { CanvasModule } from '../canvas/canvas.module';
 import { AssessmentService } from './assessment.service';
 
 @Module({
-  imports: [DataModule, CanvasModule],
+  // Breaks CanvasModule -> CourseSettingsModule -> LtiModule -> AssessmentModule -> CanvasModule cycle (Render/Nest bootstrap).
+  imports: [DataModule, forwardRef(() => CanvasModule)],
   providers: [AssessmentService],
   exports: [AssessmentService],
 })

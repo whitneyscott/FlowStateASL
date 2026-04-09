@@ -13,7 +13,11 @@ import { CourseSettingsModule } from '../course-settings/course-settings.module'
 import { LtiLaunchGuard } from './guards/lti-launch.guard';
 
 @Module({
-  imports: [AssessmentModule, forwardRef(() => PromptModule), forwardRef(() => CourseSettingsModule)],
+  imports: [
+    forwardRef(() => AssessmentModule),
+    forwardRef(() => PromptModule),
+    forwardRef(() => CourseSettingsModule),
+  ],
   controllers: [LtiController],
   providers: [
     LtiLaunchGuard,

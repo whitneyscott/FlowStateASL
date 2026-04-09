@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { CanvasModule } from '../canvas/canvas.module';
 import { CourseSettingsModule } from '../course-settings/course-settings.module';
@@ -12,7 +12,7 @@ import { FlashcardConfigEntity } from './entities/flashcard-config.entity';
   imports: [
     TypeOrmModule.forFeature([FlashcardConfigEntity]),
     SproutVideoModule,
-    CanvasModule,
+    forwardRef(() => CanvasModule),
     CourseSettingsModule,
     LtiModule,
   ],

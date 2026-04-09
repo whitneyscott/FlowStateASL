@@ -14,7 +14,7 @@ import { SproutPlaylistVideoEntity } from '../sproutvideo/entities/sprout-playli
 @Module({
   imports: [
     DataModule,
-    CanvasModule,
+    forwardRef(() => CanvasModule),
     forwardRef(() => CourseSettingsModule),
     forwardRef(() => LtiModule),
     forwardRef(() => QuizModule),

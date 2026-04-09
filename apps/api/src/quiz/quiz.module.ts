@@ -6,7 +6,11 @@ import { CourseSettingsModule } from '../course-settings/course-settings.module'
 import { LtiModule } from '../lti/lti.module';
 
 @Module({
-  imports: [CanvasModule, forwardRef(() => CourseSettingsModule), forwardRef(() => LtiModule)],
+  imports: [
+    forwardRef(() => CanvasModule),
+    forwardRef(() => CourseSettingsModule),
+    forwardRef(() => LtiModule),
+  ],
   controllers: [QuizController],
   providers: [QuizService],
   exports: [QuizService],
