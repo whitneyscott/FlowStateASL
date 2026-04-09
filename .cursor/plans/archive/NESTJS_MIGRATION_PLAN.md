@@ -893,7 +893,7 @@ npx typeorm migration:run -d apps/api/dist/data-source.js
 ```
 DATABASE_URL       ← Render Managed PostgreSQL (sslmode=require)
 SPROUT_KEY         ← SproutVideo API key
-CANVAS_API_TOKEN   ← Canvas Bearer token (LTI 1.1); RSA private key in LTI 1.3
+Per-course encrypted Canvas token in Postgres (`course_settings`) + session OAuth; no CANVAS_API_TOKEN env. LTI 1.3 uses RSA private key in env for JWT signing.
 CANVAS_DOMAIN      ← e.g. tjc.instructure.com
 CURRICULUM_PREFIX  ← e.g. TWA
 LTI_VERSION        ← 1.1 (default) | 1.3

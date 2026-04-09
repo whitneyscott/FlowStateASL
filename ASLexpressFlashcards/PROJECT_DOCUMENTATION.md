@@ -12,7 +12,7 @@ This project is a comprehensive ASL (American Sign Language) vocabulary learning
 - **Purpose**: Environment configuration file containing API keys and domain settings
 - **Key Components**:
   - `SPROUT_KEY`: API key for SproutVideo service (video hosting)
-  - `CANVAS_API_TOKEN`: Authentication token for Canvas API integration
+  - `ASL_LEGACY_PHP_CANVAS_BEARER`: Optional Canvas bearer **only** for legacy PHP scripts (`timer.php`, `canvas_bridge.php`). The Nest API uses per-course encrypted tokens in Postgres, not env-based shared tokens.
   - `CANVAS_DOMAIN`: Canvas instance domain (tjc.instructure.com)
 - **Security**: Contains sensitive credentials, should not be committed to version control
 

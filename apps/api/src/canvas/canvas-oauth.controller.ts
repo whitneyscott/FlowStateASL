@@ -262,21 +262,41 @@ export class CanvasOAuthController {
       last4: tok.slice(-4),
     });
 
-    if (req.session) {
-      req.session.canvasAccessToken = tokenData.access_token;
-      req.session.save((err) => {
-        if (err) {
-          appendLtiLog('oauth', 'Session save failed', { error: (err as Error).message });
-        } else {
-          appendLtiLog('oauth', 'Canvas access token stored in session', {
-            tokenLength: tokenData.access_token!.length,
-          });
-        }
-        res.redirect(stored.returnTo);
-      });
-    } else {
+    if (!req.session) {
       appendLtiLog('oauth', 'No session - cannot store token');
-      res.redirect(`${stored.returnTo}?oauth_error=No+session`);
+      return res.redirect(`${stored.returnTo}?oauth_error=No+session`);
     }
+
+    req.session.canvasAccessToken = tokenData.access_token;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        req.session!.save((err) => (err ? reject(err) : resolve()));
+      });
+    } catch (e) {
+      appendLtiLog('oauth', 'Session save failed', { error: (e as Error).message });
+      const appUrl = (this.config.get<string>('FRONTEND_URL') ?? 'http://localhost:4200').replace(/\/$/, '');
+      return res.redirect(`${appUrl}/flashcards?oauth_error=${encodeURIComponent('Session save failed')}`);
+    }
+
+    appendLtiLog('oauth', 'Canvas access token stored in session', {
+      tokenLength: tokenData.access_token!.length,
+    });
+
+    const ctx = req.session.ltiContext as LtiContext | undefined;
+    if (ctx?.courseId) {
+      try {
+        await this.courseSettings.persistCanvasAccessTokenForLaunchingTeacher(
+          ctx.courseId,
+          ctx.roles,
+          tok,
+        );
+      } catch (e) {
+        appendLtiLog('oauth', 'Failed to persist OAuth token to course_settings (non-fatal)', {
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    }
+
+    return res.redirect(stored.returnTo);
   }
 }

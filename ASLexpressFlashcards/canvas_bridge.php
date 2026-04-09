@@ -17,7 +17,8 @@ function loadEnv($path) {
 $envPath = __DIR__ . '/.env';
 loadEnv($envPath);
 
-$canvasToken = $_ENV['CANVAS_API_TOKEN'] ?? '';
+// Legacy PHP only (not the Nest API). Per-course Canvas bearer if you still use this script — do not use removed CANVAS_API_TOKEN.
+$canvasToken = $_ENV['ASL_LEGACY_PHP_CANVAS_BEARER'] ?? '';
 $canvasDomain = $_ENV['CANVAS_DOMAIN'] ?? 'tjc.instructure.com';
 
 // Demo-Safe Patch: Hard-wire default prefix to 'TWA'

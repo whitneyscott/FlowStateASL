@@ -7,7 +7,6 @@ import { appendLtiLog, getLastCanvasApiResponse } from '../common/last-error.sto
 import { CanvasService, CanvasTokenExpiredError } from '../canvas/canvas.service';
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
 import { canvasApiBaseFromLtiContext, resolveCanvasApiBaseUrl } from '../common/utils/canvas-base-url.util';
-import { resolveStaticCanvasApiToken } from '../common/utils/canvas-static-api-token.util';
 import {
   deriveCanvasTokenAesKey,
   encryptCanvasTokenSecret,
@@ -587,43 +586,39 @@ export class CourseSettingsService {
     });
   }
 
-  async getEffectiveCanvasToken(_courseId: string, tokenOverride?: string | null): Promise<string | null> {
-    return (tokenOverride?.trim() || null) ?? null;
-  }
-
   /**
-   * For LTI-backed student flows (Prompter config read, submit, upload): prefer the user's
-   * Canvas OAuth token when present; otherwise pick a static token from env by Canvas host
-   * (CANVAS_API_TOKEN_LOCAL / CANVAS_API_TOKEN_FFT / CANVAS_API_TOKEN_TJC, then legacy names).
-   * Do not use for teacher-only writes (putConfig, create assignment) — those require OAuth.
+   * Canvas API bearer for this course: session token (OAuth / hydrated manual) first, else encrypted
+   * `course_settings.canvas_api_token` for the same `courseId`. Never uses shared env tokens.
    */
-  getCanvasTokenForLtiBackedOps(
-    oauthToken?: string | null,
-    ltiHostHints?: Partial<Pick<LtiContext, 'canvasBaseUrl' | 'canvasDomain' | 'platformIss'>>,
-  ): string | null {
-    const o = oauthToken?.trim() || null;
+  async getEffectiveCanvasToken(courseId: string, tokenOverride?: string | null): Promise<string | null> {
+    const o = tokenOverride?.trim() || null;
     if (o) return o;
-    const restBase = canvasApiBaseFromLtiContext(
-      ltiHostHints ?? {},
-      this.config.get<string>('CANVAS_API_BASE_URL'),
-    );
-    return resolveStaticCanvasApiToken(this.config, restBase);
+    return this.getCourseStoredCanvasToken(courseId);
+  }
+
+  /** Decrypted per-course token from DB only (no session). Scoped by course_id from LTI context. */
+  async getCourseStoredCanvasToken(courseId: string): Promise<string | null> {
+    const id = (courseId ?? '').trim();
+    if (!id) return null;
+    const row = await this.repo.findOne({ where: { courseId: id } });
+    const key = this.canvasTokenEncryptionKey();
+    return resolveStoredCanvasApiToken(row?.canvasApiToken ?? null, key);
   }
 
   /**
-   * Token for file upload operations (e.g. Prompter video). Prefer static token (host-matched);
-   * fallback to OAuth. Static token has permission to initiate upload and attach files on behalf of students.
+   * After Canvas OAuth, persist the access token for this course when the launcher is a teacher
+   * so student/server flows can use getEffectiveCanvasToken without a shared env fallback.
    */
-  getTokenForFileUpload(
-    oauthToken?: string | null,
-    ltiHostHints?: Partial<Pick<LtiContext, 'canvasBaseUrl' | 'canvasDomain' | 'platformIss'>>,
-  ): string | null {
-    const restBase = canvasApiBaseFromLtiContext(
-      ltiHostHints ?? {},
-      this.config.get<string>('CANVAS_API_BASE_URL'),
-    );
-    const staticToken = resolveStaticCanvasApiToken(this.config, restBase);
-    return staticToken ?? (oauthToken?.trim() || null) ?? null;
+  async persistCanvasAccessTokenForLaunchingTeacher(
+    courseId: string,
+    roles: string | undefined,
+    token: string,
+  ): Promise<boolean> {
+    const id = (courseId ?? '').trim();
+    const t = token.trim();
+    if (!id || !t) return true;
+    if (!this.ltiService.isTeacherRole(roles ?? '')) return true;
+    return this.persistTeacherCanvasApiToken(id, t);
   }
 
   async getProgressAssignmentId(
@@ -657,9 +652,7 @@ export class CourseSettingsService {
   }
 
   /**
-   * Persist manual Canvas API token for LTI 1.1 teachers (per course). Does not touch curriculum/unit fields.
-   */
-  /**
+   * Persist encrypted Canvas API token for this course (manual entry or OAuth). Does not touch curriculum/unit fields.
    * @returns false only when durable storage was required but encryption key is missing (misconfiguration).
    */
   async persistTeacherCanvasApiToken(courseId: string, token: string): Promise<boolean> {
@@ -683,7 +676,7 @@ export class CourseSettingsService {
       row.canvasApiToken = sealed;
     }
     await this.repo.save(row);
-    appendLtiLog('oauth', 'Manual Canvas API token persisted to course_settings (encrypted)', {
+    appendLtiLog('oauth', 'Canvas API token persisted to course_settings (encrypted)', {
       courseId,
       tokenLength: t.length,
     });
@@ -701,15 +694,13 @@ export class CourseSettingsService {
   }
 
   /**
-   * If an LTI 1.1 (or non-OAuth) teacher session has no in-memory token, load from course_settings.
-   * Skips LTI 1.3 so OAuth sessions are not overwritten by a stale manual token row.
+   * If a teacher session has no in-memory token, load from course_settings for the same course.
+   * Uses launch course_id only — never a host-based or global token.
    */
   async hydrateTeacherCanvasTokenFromDatabase(req: Request): Promise<void> {
     try {
       if (!req.session?.ltiContext) return;
       const ctx = req.session.ltiContext;
-      const launchType = (req.session as { ltiLaunchType?: '1.1' | '1.3' }).ltiLaunchType;
-      if (launchType === '1.3') return;
       if (!this.ltiService.isTeacherRole(ctx.roles ?? '')) return;
       const sess = req.session as { canvasAccessToken?: string };
       if ((sess.canvasAccessToken ?? '').trim()) return;

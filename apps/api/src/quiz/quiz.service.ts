@@ -5,7 +5,6 @@ import { CourseSettingsService } from '../course-settings/course-settings.servic
 import { appendLtiLog } from '../common/last-error.store';
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
 import { canvasApiBaseFromLtiContext } from '../common/utils/canvas-base-url.util';
-import { resolveStaticCanvasApiToken } from '../common/utils/canvas-static-api-token.util';
 
 const PROMPT_STORAGE_QUIZ_DESCRIPTION = `DO NOT DELETE - ASL Express Prompt Storage
 
@@ -20,23 +19,18 @@ export class QuizService {
   ) {}
 
   /**
-   * Prefer host-matched static Canvas token for quiz ops; fall back to session OAuth token.
-   */
-  private getTokenForQuizOps(ctx: LtiContext, oauthToken?: string | null): string | null {
-    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
-    const staticToken = resolveStaticCanvasApiToken(this.config, domainOverride);
-    return staticToken ?? (oauthToken?.trim() || null) ?? null;
-  }
-
-  /**
    * Ensure the prompt-storage quiz exists for the course.
    * Create with DO NOT DELETE description if not found.
    * Call when teacher creates first assignment and before any store-prompt.
    */
   async ensurePromptStorageQuiz(ctx: LtiContext): Promise<number> {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
-    if (!token) throw new Error('Canvas OAuth token required');
-    const effectiveToken = this.getTokenForQuizOps(ctx, token) ?? token;
+    if (!token) {
+      throw new Error(
+        'Canvas API token required: teacher must complete OAuth or save a course token so quiz storage can call Canvas.',
+      );
+    }
+    const effectiveToken = token;
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
 
     const existing = await this.canvas.findQuizByTitle(
@@ -76,8 +70,12 @@ export class QuizService {
     assignmentTitle: string,
   ): Promise<{ quizId: number; questionId: number }> {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
-    if (!token) throw new Error('Canvas OAuth token required');
-    const effectiveToken = this.getTokenForQuizOps(ctx, token) ?? token;
+    if (!token) {
+      throw new Error(
+        'Canvas API token required: teacher must complete OAuth or save a course token so quiz storage can call Canvas.',
+      );
+    }
+    const effectiveToken = token;
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
 
     const quizId = await this.ensurePromptStorageQuiz(ctx);
@@ -113,8 +111,12 @@ export class QuizService {
     studentUserId: string,
   ): Promise<void> {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
-    if (!token) throw new Error('Canvas OAuth token required');
-    const effectiveToken = this.getTokenForQuizOps(ctx, token) ?? token;
+    if (!token) {
+      throw new Error(
+        'Canvas API token required: teacher must complete OAuth or save a course token so quiz storage can call Canvas.',
+      );
+    }
+    const effectiveToken = token;
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
 
     const { quizId, questionId } = await this.ensureQuestionForAssignment(ctx, assignmentId, assignmentTitle);
@@ -155,7 +157,7 @@ export class QuizService {
   ): Promise<string | null> {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
     if (!token) return null;
-    const effectiveToken = this.getTokenForQuizOps(ctx, token) ?? token;
+    const effectiveToken = token;
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
 
     const existing = await this.canvas.findQuizByTitle(

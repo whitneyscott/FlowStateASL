@@ -136,7 +136,11 @@ export class SubmissionService {
     appendLtiLog('submission', 'saveProgressToCanvas (Step 10)', {
       progressAssignmentId,
       deckCount: deckIdsToSave.length,
-      tokenSource: ctx.canvasAccessToken ? 'session (launcher token)' : 'null',
+      tokenSource: ctx.canvasAccessToken?.trim()
+        ? 'session'
+        : token
+          ? 'course_settings'
+          : 'none',
       submittingForUserId: ctx.userId,
     });
 
@@ -262,7 +266,11 @@ export class SubmissionService {
             progressSaved: false,
             details: `Progress failed to save. Reason: ${msg}`,
             canvasRequest: {
-              tokenSource: ctx.canvasAccessToken ? 'session (launcher\'s OAuth token)' : 'null',
+              tokenSource: ctx.canvasAccessToken?.trim()
+                ? 'session'
+                : token
+                  ? 'course_settings'
+                  : 'none',
               tokenPreview,
               submittingForUserId: ctx.userId,
               as_user_idInRequest: false,
@@ -285,7 +293,11 @@ export class SubmissionService {
           progressSaved: false,
           details: `Progress failed to save. Reason: ${msg} Complete Canvas OAuth (Teacher Settings) and ensure the Flashcard Progress assignment exists and is published.`,
           canvasRequest: {
-            tokenSource: ctx.canvasAccessToken ? 'session (launcher\'s OAuth token)' : 'null',
+            tokenSource: ctx.canvasAccessToken?.trim()
+              ? 'session'
+              : token
+                ? 'course_settings'
+                : 'none',
             tokenPreview,
             submittingForUserId: ctx.userId,
             as_user_idInRequest: false,

@@ -17,7 +17,8 @@ function loadEnv($path) {
 
 loadEnv(__DIR__ . '/.env');
 
-$canvas_token = $_ENV['CANVAS_API_TOKEN'] ?? '';
+// Legacy PHP only (not the Nest API). Per-course Canvas bearer if you still use this script — do not use removed CANVAS_API_TOKEN.
+$canvas_token = $_ENV['ASL_LEGACY_PHP_CANVAS_BEARER'] ?? '';
 $canvas_domain = $_ENV['CANVAS_DOMAIN'] ?? '';
 
 $course_id = $_POST['custom_canvas_course_id'] ?? $_POST['custom_course_id'] ?? $_GET['course_id'] ?? null;

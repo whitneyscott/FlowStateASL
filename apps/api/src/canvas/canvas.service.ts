@@ -2481,7 +2481,7 @@ export class CanvasService {
     const token = tokenOverride?.trim() || null;
     if (!token) {
       throw new Error(
-        'Canvas access token required for writeSubmissionBody (OAuth or host-matched static Canvas token)',
+        'Canvas access token required for writeSubmissionBody (session OAuth or per-course stored token)',
       );
     }
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
