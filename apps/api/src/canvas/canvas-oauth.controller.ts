@@ -57,7 +57,13 @@ export class CanvasOAuthController {
       appendLtiLog('oauth', 'Manual token stored in session');
       try {
         const ctx = req.session!.ltiContext as LtiContext;
-        await this.courseSettings.persistTeacherCanvasApiToken(ctx.courseId, token);
+        const persisted = await this.courseSettings.persistTeacherCanvasApiToken(ctx.courseId, token);
+        if (process.env.NODE_ENV === 'production' && !persisted) {
+          return res.status(503).json({
+            error:
+              'Secure token storage is not configured. Set CANVAS_TOKEN_ENCRYPTION_KEY on the server (e.g. openssl rand -hex 32).',
+          });
+        }
       } catch (e) {
         appendLtiLog('oauth', 'Failed to persist manual token to DB (non-fatal)', {
           error: e instanceof Error ? e.message : String(e),

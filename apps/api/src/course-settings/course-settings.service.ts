@@ -8,6 +8,11 @@ import { CanvasService, CanvasTokenExpiredError } from '../canvas/canvas.service
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
 import { canvasApiBaseFromLtiContext, resolveCanvasApiBaseUrl } from '../common/utils/canvas-base-url.util';
 import { resolveStaticCanvasApiToken } from '../common/utils/canvas-static-api-token.util';
+import {
+  deriveCanvasTokenAesKey,
+  encryptCanvasTokenSecret,
+  resolveStoredCanvasApiToken,
+} from '../common/utils/canvas-token-crypto.util';
 import { LtiService } from '../lti/lti.service';
 import { CourseSettingsEntity } from './entities/course-settings.entity';
 
@@ -67,6 +72,15 @@ export class CourseSettingsService {
   ) {}
 
   /** Canvas API host from LTI launch (iss / consumer URL / domain); env only as dev fallback. */
+  /** 32-byte AES key for encrypting persisted manual Canvas tokens; null if unset. */
+  private canvasTokenEncryptionKey(): Buffer | null {
+    const raw = (this.config.get<string>('CANVAS_TOKEN_ENCRYPTION_KEY') ?? '').trim();
+    if (!raw) {
+      return null;
+    }
+    return deriveCanvasTokenAesKey(raw);
+  }
+
   private canvasOverrideFromLaunchHints(opts: {
     canvasBaseUrl?: string;
     canvasDomain?: string;
@@ -645,25 +659,35 @@ export class CourseSettingsService {
   /**
    * Persist manual Canvas API token for LTI 1.1 teachers (per course). Does not touch curriculum/unit fields.
    */
-  async persistTeacherCanvasApiToken(courseId: string, token: string): Promise<void> {
+  /**
+   * @returns false only when durable storage was required but encryption key is missing (misconfiguration).
+   */
+  async persistTeacherCanvasApiToken(courseId: string, token: string): Promise<boolean> {
     const t = token.trim();
-    if (!courseId || !t) return;
+    if (!courseId || !t) return true;
+    const key = this.canvasTokenEncryptionKey();
+    if (!key) {
+      appendLtiLog('oauth', 'CANVAS_TOKEN_ENCRYPTION_KEY not set; skipping DB persistence of manual token');
+      return false;
+    }
+    const sealed = encryptCanvasTokenSecret(t, key);
     let row = await this.repo.findOne({ where: { courseId } });
     if (!row) {
       row = this.repo.create({
         courseId,
-        canvasApiToken: t,
+        canvasApiToken: sealed,
         selectedCurriculums: [],
         selectedUnits: [],
       });
     } else {
-      row.canvasApiToken = t;
+      row.canvasApiToken = sealed;
     }
     await this.repo.save(row);
-    appendLtiLog('oauth', 'Manual Canvas API token persisted to course_settings', {
+    appendLtiLog('oauth', 'Manual Canvas API token persisted to course_settings (encrypted)', {
       courseId,
       tokenLength: t.length,
     });
+    return true;
   }
 
   /** Clear stored manual token so reset / bad key does not re-hydrate into the session. */
@@ -690,9 +714,10 @@ export class CourseSettingsService {
       const sess = req.session as { canvasAccessToken?: string };
       if ((sess.canvasAccessToken ?? '').trim()) return;
       const row = await this.repo.findOne({ where: { courseId: ctx.courseId } });
-      const stored = (row?.canvasApiToken ?? '').trim();
-      if (!stored) return;
-      sess.canvasAccessToken = stored;
+      const key = this.canvasTokenEncryptionKey();
+      const plain = resolveStoredCanvasApiToken(row?.canvasApiToken ?? null, key);
+      if (!plain) return;
+      sess.canvasAccessToken = plain;
       await new Promise<void>((resolve, reject) => {
         req.session!.save((e) => (e ? reject(e) : resolve()));
       });

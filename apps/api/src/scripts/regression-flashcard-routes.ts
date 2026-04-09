@@ -55,10 +55,10 @@ function run(): void {
     'TeacherSettings debug labels should not reference legacy all-playlists endpoint',
   );
 
-  // Playlist filtering should be query-driven.
+  // Playlist filtering should be query-driven (deck_title is the DB column; SELECT aliases it AS title).
   assert(
-    playlistCache.includes('LOWER(title) LIKE'),
-    'PlaylistCacheService.getPlaylistsForFilter should use SQL prefix filtering',
+    playlistCache.includes('LOWER(deck_title) LIKE'),
+    'PlaylistCacheService.getPlaylistsForFilter should use SQL prefix filtering on deck_title',
   );
   assert(
     !playlistCache.includes('const all = await this.getAllPlaylists();'),
