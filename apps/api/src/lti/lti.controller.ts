@@ -8,12 +8,10 @@ import { Lti13LaunchService } from './lti13-launch.service';
 import { Lti11LaunchVerifyService } from './lti11-launch.verify.service';
 import { AssessmentService } from '../assessment/assessment.service';
 import { LtiDeepLinkFileStore } from './lti-deep-link-file.store';
-import { setLtiToken, getLtiToken } from './lti-token.store';
 import { setOidcState, consumeOidcState } from './lti-oidc-state.store';
 import { setLastError, appendLtiLog } from '../common/last-error.store';
 import { renderLtiLaunchErrorHtml } from './lti-error.util';
 import { getRedirectPathForToolType } from './lti-redirect.util';
-import { persistLtiContextAndRedirect } from './lti-launch-finish.util';
 import { sanitizeLtiContext } from '../common/utils/lti-context-value.util';
 import { getPublicOrigin } from '../common/utils/public-origin.util';
 import {
@@ -22,6 +20,8 @@ import {
   normalizeToCanvasRestBase,
 } from '../common/utils/canvas-base-url.util';
 import { PromptService } from '../prompt/prompt.service';
+import { AuthSessionService } from '../auth-state/auth-session.service';
+import type { LtiContext } from '../common/interfaces/lti-context.interface';
 
 @Controller('lti')
 export class LtiController {
@@ -33,6 +33,7 @@ export class LtiController {
     private readonly assessmentService: AssessmentService,
     private readonly config: ConfigService,
     private readonly deepLinkFileStore: LtiDeepLinkFileStore,
+    private readonly authSessions: AuthSessionService,
     @Inject(forwardRef(() => PromptService))
     private readonly promptService: PromptService,
   ) {}
@@ -109,6 +110,21 @@ export class LtiController {
     });
   }
 
+  private async issueAuthAndRedirect(
+    req: Request,
+    res: Response,
+    ctx: LtiContext,
+    launchType: '1.1' | '1.3',
+    targetPath: string,
+  ): Promise<void> {
+    const existingCanvasToken = (req.session as { canvasAccessToken?: string } | undefined)?.canvasAccessToken;
+    const { bootstrapNonce } = await this.authSessions.issueFromLaunch(ctx, launchType, existingCanvasToken);
+    const base = getPublicOrigin(req) || (this.config.get<string>('FRONTEND_URL') ?? '');
+    const sep = targetPath.includes('?') ? '&' : '?';
+    const url = `${base}${targetPath}${sep}boot_nonce=${encodeURIComponent(bootstrapNonce)}`;
+    res.redirect(url);
+  }
+
   @Post('launch/flashcards')
   async launchFlashcards(
     @Body() body: Record<string, string>,
@@ -140,25 +156,7 @@ export class LtiController {
     }
     ctx.toolType = 'flashcards';
     this.repairCanvasHostFromLaunchRequest(req, ctx);
-    const token = randomBytes(24).toString('hex');
-    setLtiToken(token, ctx);
-    if (req.session) {
-      req.session.ltiContext = ctx;
-      req.session.ltiLaunchType = '1.1';
-      req.session.save((err) => {
-        if (err) console.error('[LTI] launch session save failed', err);
-        else console.log('[LTI] launch session saved, sessionId=', req.sessionID?.slice(0, 16));
-        const base = getPublicOrigin(req) || (this.config.get<string>('FRONTEND_URL') ?? '');
-        const url = base ? `${base}/flashcards?lti_token=${token}` : `/flashcards?lti_token=${token}`;
-        console.log('[LTI] redirecting to', url.replace(token, '***'));
-        res.redirect(url);
-      });
-    } else {
-      const base = getPublicOrigin(req) || (this.config.get<string>('FRONTEND_URL') ?? '');
-      const url = base ? `${base}/flashcards?lti_token=${token}` : `/flashcards?lti_token=${token}`;
-      console.log('[LTI] no session, redirecting with token');
-      res.redirect(url);
-    }
+    await this.issueAuthAndRedirect(req, res, ctx, '1.1', '/flashcards');
   }
 
   @Post('launch/prompter')
@@ -196,24 +194,11 @@ export class LtiController {
       });
     }
     /* Do not rename assignment - prompter is placed in the assignment; leave title unchanged. */
-    const token = randomBytes(24).toString('hex');
-    setLtiToken(token, ctx);
-    if (req.session) {
-      req.session.ltiContext = ctx;
-      req.session.ltiLaunchType = '1.1';
-      req.session.save((err) => {
-        if (err) console.error('[LTI] session save failed', err);
-        const base = getPublicOrigin(req) || (this.config.get<string>('FRONTEND_URL') ?? '');
-        res.redirect(base ? `${base}/prompter?lti_token=${token}` : `/prompter?lti_token=${token}`);
-      });
-    } else {
-      const base = getPublicOrigin(req) || (this.config.get<string>('FRONTEND_URL') ?? '');
-      res.redirect(base ? `${base}/prompter?lti_token=${token}` : `/prompter?lti_token=${token}`);
-    }
+    await this.issueAuthAndRedirect(req, res, ctx, '1.1', '/prompter');
   }
 
   @Get('context')
-  getContext(@Req() req: Request) {
+  async getContext(@Req() req: Request) {
     const sctx = req.session?.ltiContext;
     this.logLaunchEntry(req, 'GET /api/lti/context', {
       courseId: sctx?.courseId,
@@ -223,30 +208,34 @@ export class LtiController {
       userId: sctx?.userId,
       roles: sctx?.roles,
     });
-    const ctx = req.session?.ltiContext;
-    if (ctx) {
-      console.log('[LTI] context from session', { courseId: ctx.courseId, roles: ctx.roles?.slice(0, 30) });
-      return sanitizeLtiContext(ctx);
-    }
-    const token = (req.query.lti_token as string) ?? '';
-    if (token) {
-      const tokenCtx = getLtiToken(token);
-      if (tokenCtx) {
-        console.log('[LTI] context from token', { courseId: tokenCtx.courseId });
-        if (req.session) {
-          req.session.ltiContext = sanitizeLtiContext(tokenCtx) as typeof tokenCtx;
-          req.session.save((err) => {
-            if (err) console.error('[LTI] session save failed after lti_token', err);
-            else console.log('[LTI] session saved with ltiContext, sessionId=', req.sessionID?.slice(0, 16));
-          });
-        } else {
-          console.warn('[LTI] lti_token success but req.session is null - no cookie will be set');
-        }
-        return sanitizeLtiContext(tokenCtx);
+    const nonce = ((req.query.boot_nonce as string) ?? '').trim();
+    if (nonce) {
+      const bootstrapped = await this.authSessions.consumeBootstrapNonce(nonce);
+      if (bootstrapped) {
+        return {
+          ...sanitizeLtiContext(bootstrapped.ctx),
+          authToken: bootstrapped.bearerToken,
+          bootNonce: bootstrapped.rotatedNonce,
+          authSource: 'nonce',
+        };
       }
-      console.warn('[LTI] lti_token present but getLtiToken returned null (token unknown/expired, possible multi-instance)');
-    } else {
-      console.log('[LTI] context fallback: no session.ltiContext, no lti_token');
+      console.warn('[LTI] boot_nonce present but unknown/expired');
+    }
+
+    const auth = (req.headers.authorization ?? '').trim();
+    const bearer = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7).trim() : '';
+    if (bearer) {
+      const loaded = await this.authSessions.getByBearerToken(bearer);
+      if (loaded) {
+        const rotatedNonce = await this.authSessions.rotateNonceForSession(loaded.row.id);
+        return {
+          ...sanitizeLtiContext(loaded.ctx),
+          authToken: bearer,
+          bootNonce: rotatedNonce,
+          authSource: 'bearer',
+        };
+      }
+      console.warn('[LTI] bearer auth token present but unknown/expired');
     }
     return {
       courseId: '',
@@ -256,6 +245,8 @@ export class LtiController {
       moduleId: '',
       toolType: 'flashcards' as const,
       roles: '',
+      authToken: '',
+      bootNonce: '',
     };
   }
 
@@ -488,9 +479,8 @@ export class LtiController {
       hasSubmissionToken: !!ctx.submissionToken,
     });
     const base = frontendBase;
-    /* When viewing an ltiResourceLink submission, redirect to review page */
-    const buildRedirectUrl = ctx.submissionToken
-      ? (_token: string) => {
+    const redirectPath = ctx.submissionToken
+      ? (() => {
           const tokenPart = `token=${encodeURIComponent(ctx.submissionToken!)}`;
           const title = (ctx.submissionTitle ?? '').trim();
           const titlePart = title ? `&title=${encodeURIComponent(title)}` : '';
@@ -499,13 +489,13 @@ export class LtiController {
             hasSubmissionTitle: !!title,
             submissionTitle: title || '(none)',
           });
-          return `${base}/prompt/review?${tokenPart}${titlePart}`;
-        }
+          return `/prompt/review?${tokenPart}${titlePart}`;
+        })()
       : (() => {
           const path = getRedirectPathForToolType(ctx.toolType, this.ltiService.isTeacherRole(ctx.roles));
           ctx.redirectPath = path;
-          appendLtiLog('launch', 'Redirect path (Step 2)', { path, toolType: ctx.toolType, redirectUrl: `${base}${path}?lti_token=***` });
-          return (token: string) => `${base}${path}?lti_token=${token}`;
+          appendLtiLog('launch', 'Redirect path (Step 2)', { path, toolType: ctx.toolType, redirectUrl: `${base}${path}?boot_nonce=***` });
+          return path;
         })();
 
     const needsOAuth = !(req.session as { canvasAccessToken?: string })?.canvasAccessToken;
@@ -523,20 +513,18 @@ export class LtiController {
       hasCanvasAccessToken: !!(req.session as { canvasAccessToken?: string })?.canvasAccessToken,
     });
 
-    const options =
-      needsOAuth && oauthConfigured && canvasBaseUrl && !ctx.submissionToken
-        ? {
-            oauthInitUrlBuilder: (token: string) => {
-              const apiBase = this.config.get<string>('APP_URL') ?? `http://localhost:${this.config.get('PORT') ?? 3000}`;
-              const base = (canvasBaseUrl ?? '').replace(/\/$/, '');
-              const params = new URLSearchParams({ returnTo: buildRedirectUrl(token) });
-              if (base) params.set('canvasBaseUrl', base);
-              return `${apiBase}/api/oauth/canvas?${params.toString()}`;
-            },
-          }
-        : undefined;
-
-    persistLtiContextAndRedirect(req, res, ctx, buildRedirectUrl, options);
+    const existingCanvasToken = (req.session as { canvasAccessToken?: string } | undefined)?.canvasAccessToken;
+    const { bootstrapNonce } = await this.authSessions.issueFromLaunch(ctx, '1.3', existingCanvasToken);
+    const sep = redirectPath.includes('?') ? '&' : '?';
+    const appRedirect = `${base}${redirectPath}${sep}boot_nonce=${encodeURIComponent(bootstrapNonce)}`;
+    if (needsOAuth && oauthConfigured && canvasBaseUrl && !ctx.submissionToken) {
+      const apiBase = this.config.get<string>('APP_URL') ?? `http://localhost:${this.config.get('PORT') ?? 3000}`;
+      const canvasBase = (canvasBaseUrl ?? '').replace(/\/$/, '');
+      const params = new URLSearchParams({ returnTo: appRedirect });
+      if (canvasBase) params.set('canvasBaseUrl', canvasBase);
+      return res.redirect(`${apiBase}/api/oauth/canvas?${params.toString()}`);
+    }
+    return res.redirect(appRedirect);
   }
 
   /**
@@ -597,26 +585,12 @@ export class LtiController {
       });
     }
 
-    const token = randomBytes(24).toString('hex');
-    setLtiToken(token, ctx);
-
-    if (req.session) {
-      req.session.ltiContext = ctx;
-      req.session.ltiLaunchType = '1.1';
-      delete (req.session as { ltiClientId?: string }).ltiClientId;
-      req.session.save((err) => {
-        if (err) {
-          setLastError('/api/lti/launch', err);
-        }
-        const path = getRedirectPathForToolType(ctx.toolType, this.ltiService.isTeacherRole(data.roles));
-        const url = `${frontendBase}${path}?lti_token=${token}&courseId=${encodeURIComponent(data.courseId)}`;
-        appendLtiLog('launch', 'LTI 1.1 redirect to app (no OAuth)', { path, url: url.replace(token, '***') });
-        res.redirect(url);
-      });
-    } else {
-      const path = getRedirectPathForToolType(ctx.toolType, this.ltiService.isTeacherRole(data.roles));
-      res.redirect(`${frontendBase}${path}?lti_token=${token}&courseId=${encodeURIComponent(data.courseId)}`);
-    }
+    const path = getRedirectPathForToolType(ctx.toolType, this.ltiService.isTeacherRole(data.roles));
+    const pathWithCourse = `${path}?courseId=${encodeURIComponent(data.courseId)}`;
+    appendLtiLog('launch', 'LTI 1.1 redirect to app (no OAuth)', { path, url: `${frontendBase}${pathWithCourse}&boot_nonce=***` });
+    const existingCanvasToken = (req.session as { canvasAccessToken?: string } | undefined)?.canvasAccessToken;
+    const { bootstrapNonce } = await this.authSessions.issueFromLaunch(ctx, '1.1', existingCanvasToken);
+    return res.redirect(`${frontendBase}${pathWithCourse}&boot_nonce=${encodeURIComponent(bootstrapNonce)}`);
   }
 
   private buildLtiLaunchUrl(req: Request): string {

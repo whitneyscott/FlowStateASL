@@ -1,5 +1,6 @@
 import { useEffect, useId, useState } from 'react';
 import type { AppMode } from '../utils/app-mode';
+import { ltiTokenHeaders } from '../api/lti-token';
 
 interface AppModeModalProps {
   open: boolean;
@@ -74,7 +75,7 @@ export function AppModeModal({
     try {
       const res = await fetch('/api/oauth/canvas/token/reset', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...ltiTokenHeaders() },
         credentials: 'include',
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string };

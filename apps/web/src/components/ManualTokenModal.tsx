@@ -1,5 +1,6 @@
 import { useId, useState } from 'react';
 import './ManualTokenModal.css';
+import { ltiTokenHeaders } from '../api/lti-token';
 
 interface ManualTokenModalProps {
   message?: string;
@@ -27,7 +28,7 @@ export function ManualTokenModal({ message, onSuccess, onDismiss, variant = 'def
     try {
       const res = await fetch('/api/oauth/canvas/token', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...ltiTokenHeaders() },
         credentials: 'include',
         body: JSON.stringify({ token: token.trim() }),
       });

@@ -3,6 +3,7 @@ import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
 import { useAppMode } from '../contexts/AppModeContext';
 import { useSearchParams } from 'react-router-dom';
+import { ltiTokenHeaders } from '../api/lti-token';
 
 interface BridgeLogProps {
   context: LtiContext | null;
@@ -48,8 +49,8 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
     const poll = async () => {
       try {
         const [errRes, ltiRes] = await Promise.all([
-          fetch('/api/debug/last-error', { credentials: 'include' }),
-          fetch('/api/debug/lti-log', { credentials: 'include' }),
+          fetch('/api/debug/last-error', { credentials: 'include', headers: ltiTokenHeaders() }),
+          fetch('/api/debug/lti-log', { credentials: 'include', headers: ltiTokenHeaders() }),
         ]);
         if (cancelled) return;
         const errData = await errRes.json();
@@ -302,7 +303,7 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
           disabled={!canClearLog}
           onClick={async () => {
             if (!canClearLog) return;
-            await fetch('/api/debug/lti-log?clear=1', { credentials: 'include' });
+            await fetch('/api/debug/lti-log?clear=1', { credentials: 'include', headers: ltiTokenHeaders() });
             setLtiLog([]);
           }}
           title={canClearLog ? 'Clear LTI log' : 'Clear disabled outside developer/debug mode'}
@@ -330,13 +331,14 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
               const res = await fetch('/api/oauth/canvas/token/reset', {
                 method: 'POST',
                 credentials: 'include',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', ...ltiTokenHeaders() },
               });
               if (!res.ok) {
                 // Fallback for dev when oauth reset endpoint rejects due missing LTI context.
                 const debugReset = await fetch('/api/debug/clear-canvas-auth', {
                   method: 'POST',
                   credentials: 'include',
+                  headers: ltiTokenHeaders(),
                 });
                 if (!debugReset.ok) {
                   const t = await res.text();

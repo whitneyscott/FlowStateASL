@@ -23,16 +23,16 @@ export class LtiLaunchGuard implements CanActivate {
       await this.courseSettings.hydrateTeacherCanvasTokenFromDatabase(req);
       return true;
     }
-    const hasCookie = !!req.headers.cookie;
+    const hasBearer = /^Bearer\s+/i.test(req.headers.authorization ?? '');
     const sid = (req.session as { id?: string })?.id ?? req.sessionID ?? 'none';
     const keys = req.session ? Object.keys(req.session).filter((k) => k !== 'cookie') : [];
-    const reason = !hasCookie
-      ? 'no_cookie'
+    const reason = !hasBearer
+      ? 'no_bearer'
       : hasSession && keys.length === 0
-        ? 'session_empty'
+        ? 'auth_state_empty'
         : 'missing_ltiContext';
-    const message = `LTI context required: ${reason} (hasCookie=${hasCookie} sessionId=${String(sid).slice(0, 12)})`;
-    console.warn('[LtiLaunchGuard] 401 path=', req.path, 'reason=', reason, 'hasCookie=', hasCookie, 'sessionKeys=', keys);
+    const message = `LTI context required: ${reason} (hasBearer=${hasBearer} sessionId=${String(sid).slice(0, 12)})`;
+    console.warn('[LtiLaunchGuard] 401 path=', req.path, 'reason=', reason, 'hasBearer=', hasBearer, 'sessionKeys=', keys);
     throw new UnauthorizedException({ message, reason });
   }
 }

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
-import { getStoredLtiToken, setStoredLtiToken } from '../api/lti-token';
+import { getAuthToken, setAuthToken } from '../api/lti-token';
 
 export function useLtiContext() {
   const { setLastFunction } = useDebug();
@@ -11,15 +11,15 @@ export function useLtiContext() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const ltiTokenFromUrl = params.get('lti_token');
-    const ltiToken = ltiTokenFromUrl ?? getStoredLtiToken();
-    if (ltiTokenFromUrl) setStoredLtiToken(ltiTokenFromUrl);
-    const url = ltiToken
-      ? `/api/lti/context?lti_token=${encodeURIComponent(ltiToken)}`
+    const bootNonce = params.get('boot_nonce') ?? '';
+    const url = bootNonce
+      ? `/api/lti/context?boot_nonce=${encodeURIComponent(bootNonce)}`
       : '/api/lti/context';
     setLastFunction(`GET ${url}`);
     const attempt = async (retries = 3): Promise<Response> => {
-      const res = await fetch(url, { credentials: 'include' });
+      const token = getAuthToken();
+      const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
+      const res = await fetch(url, { headers });
       if (res.ok) return res;
       if (retries > 1 && (res.status === 0 || res.status >= 502)) {
         await new Promise((r) => setTimeout(r, 1500));
@@ -29,18 +29,25 @@ export function useLtiContext() {
     };
     attempt()
       .then((res) => res.json())
-      .then((data) => {
+      .then((data: LtiContext & { authToken?: string; bootNonce?: string }) => {
+        if (data?.authToken) {
+          setAuthToken(data.authToken);
+        }
         console.log('[useLtiContext] loaded:', {
-          source: ltiToken ? 'lti_token' : 'session',
+          source: bootNonce ? 'boot_nonce' : 'bearer',
           courseId: data?.courseId,
           userId: data?.userId,
           hasContext: !!(data?.courseId && data?.userId !== 'standalone'),
         });
         setContext(data);
         setError(null);
-        if (ltiTokenFromUrl) {
+        if (bootNonce || data?.bootNonce) {
           const url = new URL(window.location.href);
-          url.searchParams.delete('lti_token');
+          if (data?.bootNonce) {
+            url.searchParams.set('boot_nonce', data.bootNonce);
+          } else {
+            url.searchParams.delete('boot_nonce');
+          }
           window.history.replaceState({}, '', url.toString());
         }
       })

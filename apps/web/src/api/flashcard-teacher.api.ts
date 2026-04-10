@@ -1,6 +1,6 @@
 /**
  * Teacher flashcard catalog (curricula / units / decks) for Prompt Manager deck picker.
- * Calls existing GET /api/flashcard/* endpoints with LTI token + OAuth/manual-token parity.
+ * Calls existing GET /api/flashcard/* endpoints with Bearer auth token in memory.
  */
 import { ltiTokenHeaders } from './lti-token';
 import { NeedsManualTokenError } from './prompt.api';

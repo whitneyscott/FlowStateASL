@@ -1,6 +1,6 @@
 /**
- * Prompt Manager API client. Uses fetch with credentials: 'include' (same as TeacherSettings, FlashcardsPage).
- * Sends X-LTI-Token when stored so session can be restored after refresh.
+ * Prompt Manager API client.
+ * Sends Authorization Bearer from in-memory auth token.
  */
 import { ltiTokenHeaders } from './lti-token';
 

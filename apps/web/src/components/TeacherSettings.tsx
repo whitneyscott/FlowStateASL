@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
 import { ManualTokenModal } from './ManualTokenModal';
+import { ltiTokenHeaders } from '../api/lti-token';
 import './TeacherSettings.css';
 
 const TEACHER_PATTERNS = [
@@ -77,9 +78,14 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
       .map(encodeURIComponent)
       .join(',');
 
+  const authInit = (): RequestInit => ({
+    credentials: 'include',
+    headers: ltiTokenHeaders(),
+  });
+
   const loadUnits = useCallback(async (curriculaInput: string[]) => {
     const csv = encodeCsv(curriculaInput);
-    const res = await fetch(`/api/flashcard/units?curricula=${csv}`, { credentials: 'include' });
+    const res = await fetch(`/api/flashcard/units?curricula=${csv}`, authInit());
     const data = await res.json().catch(() => []);
     const units = Array.isArray(data) ? data.map(String) : [];
     setAllUnits(units);
@@ -90,7 +96,7 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
     const unitsCsv = encodeCsv(unitsInput);
     const res = await fetch(
       `/api/flashcard/teacher-playlists?curricula=${curriculaCsv}&units=${unitsCsv}`,
-      { credentials: 'include' },
+      authInit(),
     );
     if (!res.ok) {
       setError(`HTTP ${res.status}`);
@@ -126,7 +132,7 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
         setLastFunction('GET /api/flashcard/playlist-count');
         setError(null);
         setPlaylistTotal(null);
-        const countRes = await fetch('/api/flashcard/playlist-count', { credentials: 'include' });
+        const countRes = await fetch('/api/flashcard/playlist-count', authInit());
         if (!cancelled) {
           const countData = await countRes.json().catch(() => ({}));
           if (typeof countData.total === 'number' && countData.total > 0) {
@@ -135,7 +141,7 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
         }
         if (cancelled) return;
         setLastFunction('GET /api/course-settings');
-        const csRes = await fetch('/api/course-settings', { credentials: 'include' });
+        const csRes = await fetch('/api/course-settings', authInit());
         if (cancelled) return;
         const csRaw = await csRes.text().catch(() => '');
         const cs = (() => { try { return JSON.parse(csRaw); } catch { return null; } })();
@@ -172,7 +178,7 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
         setSelectedUnits(savedUnits);
         if (cancelled) return;
         setLastFunction('GET /api/flashcard/curricula');
-        const curriculaRes = await fetch('/api/flashcard/curricula', { credentials: 'include' });
+        const curriculaRes = await fetch('/api/flashcard/curricula', authInit());
         if (cancelled) return;
         const curriculaList = await curriculaRes.json().catch(() => []);
         if (!curriculaRes.ok) {
@@ -187,7 +193,7 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
         setHasCanvasToken(!!cs?.hasCanvasToken);
         if (cancelled) return;
         setLastFunction('GET /api/course-settings/announcement-status');
-        const annRes = await fetch('/api/course-settings/announcement-status', { credentials: 'include' });
+        const annRes = await fetch('/api/course-settings/announcement-status', authInit());
         if (cancelled) return;
         const annRaw = await annRes.text().catch(() => '');
         const annData = (() => {
@@ -258,7 +264,7 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
       };
       const res = await fetch('/api/course-settings', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...ltiTokenHeaders() },
         credentials: 'include',
         body: JSON.stringify(body),
       });
@@ -430,6 +436,7 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
                     const res = await fetch('/api/course-settings/recreate-announcement', {
                       method: 'POST',
                       credentials: 'include',
+                      headers: ltiTokenHeaders(),
                     });
                     const raw = await res.text().catch(() => '');
                     const data = (() => {

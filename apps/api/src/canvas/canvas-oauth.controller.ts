@@ -17,17 +17,19 @@ import type { LtiContext } from '../common/interfaces/lti-context.interface';
 import { canvasApiBaseFromLtiContext } from '../common/utils/canvas-base-url.util';
 import { CourseSettingsService } from '../course-settings/course-settings.service';
 import { DEFAULT_CANVAS_OAUTH_SCOPES } from './canvas-oauth-scopes';
+import { AuthSessionService } from '../auth-state/auth-session.service';
 
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000; // 10 min
 const oauthStateStore = new Map<
   string,
-  { canvasBaseUrl: string; returnTo: string; expires: number }
+  { canvasBaseUrl: string; returnTo: string; authSessionId: string; expires: number }
 >();
 
 @Controller('oauth/canvas')
 export class CanvasOAuthController {
   constructor(
     private readonly config: ConfigService,
+    private readonly authSessions: AuthSessionService,
     @Inject(forwardRef(() => CourseSettingsService))
     private readonly courseSettings: CourseSettingsService,
   ) {}
@@ -119,16 +121,39 @@ export class CanvasOAuthController {
     @Query('returnTo') returnTo?: string,
     @Query('canvasBaseUrl') canvasBaseUrlParam?: string,
   ) {
-    const ltiLaunchType = (req.session as { ltiLaunchType?: '1.1' | '1.3' })?.ltiLaunchType;
+    let launchType = (req.session as { ltiLaunchType?: '1.1' | '1.3' })?.ltiLaunchType;
+    let ctx = req.session?.ltiContext as LtiContext | undefined;
+    let authSessionId = (req.session as { id?: string } | undefined)?.id ?? '';
+    let effectiveReturnTo = returnTo ?? '/flashcards';
+    if (!ctx) {
+      const full = effectiveReturnTo.startsWith('http')
+        ? new URL(effectiveReturnTo)
+        : new URL(
+            effectiveReturnTo.startsWith('/') ? effectiveReturnTo : `/${effectiveReturnTo}`,
+            (this.config.get<string>('FRONTEND_URL') ?? 'http://localhost:4200').replace(/\/$/, ''),
+          );
+      const bootNonce = (full.searchParams.get('boot_nonce') ?? '').trim();
+      if (bootNonce) {
+        const boot = await this.authSessions.consumeBootstrapNonce(bootNonce);
+        if (boot) {
+          ctx = boot.ctx;
+          launchType = boot.row.ltiLaunchType;
+          authSessionId = boot.row.id;
+          full.searchParams.set('boot_nonce', boot.rotatedNonce);
+          effectiveReturnTo = full.toString();
+        }
+      }
+    }
+
+    const ltiLaunchType = launchType;
     if (ltiLaunchType === '1.1') {
       appendLtiLog('oauth', 'LTI 1.1 short-circuit: redirect to app (no OAuth2)');
       const appUrl = (this.config.get<string>('FRONTEND_URL') ?? 'http://localhost:4200').replace(/\/$/, '');
-      const returnPath = (returnTo ?? '/flashcards').replace(/^https?:\/\/[^/]+/, '') || '/flashcards';
+      const returnPath = (effectiveReturnTo ?? '/flashcards').replace(/^https?:\/\/[^/]+/, '') || '/flashcards';
       const dest = returnPath.startsWith('http') ? returnPath : `${appUrl}${returnPath}`;
       return res.redirect(dest);
     }
 
-    const ctx = req.session?.ltiContext as LtiContext | undefined;
     const fromParam = (canvasBaseUrlParam ?? '').trim();
     const fromLaunch = canvasApiBaseFromLtiContext(ctx ?? {}, this.config.get<string>('CANVAS_API_BASE_URL'));
     const canvasBaseUrl = fromParam || fromLaunch;
@@ -152,13 +177,19 @@ export class CanvasOAuthController {
 
     const base = (canvasBaseUrl.startsWith('http') ? canvasBaseUrl : `https://${canvasBaseUrl}`).replace(/\/$/, '');
     const state = randomBytes(16).toString('hex');
-    const returnPath = (returnTo ?? '/flashcards').replace(/^https?:\/\/[^/]+/, '') || '/flashcards';
+    const returnPath = (effectiveReturnTo ?? '/flashcards').replace(/^https?:\/\/[^/]+/, '') || '/flashcards';
     const appUrl = (this.config.get<string>('FRONTEND_URL') ?? 'http://localhost:4200').replace(/\/$/, '');
     const fullReturnTo = returnPath.startsWith('http') ? returnPath : `${appUrl}${returnPath}`;
+
+    if (!authSessionId) {
+      appendLtiLog('oauth', 'OAuth init failed (missing auth session)');
+      return res.status(401).send('Auth session required. Relaunch from Canvas.');
+    }
 
     oauthStateStore.set(state, {
       canvasBaseUrl: base,
       returnTo: fullReturnTo,
+      authSessionId,
       expires: Date.now() + OAUTH_STATE_TTL_MS,
     });
 
@@ -262,27 +293,16 @@ export class CanvasOAuthController {
       last4: tok.slice(-4),
     });
 
-    if (!req.session) {
-      appendLtiLog('oauth', 'No session - cannot store token');
-      return res.redirect(`${stored.returnTo}?oauth_error=No+session`);
-    }
+    await this.authSessions.updateSessionState(stored.authSessionId, {
+      canvasAccessToken: tokenData.access_token!,
+    });
 
-    req.session.canvasAccessToken = tokenData.access_token;
-    try {
-      await new Promise<void>((resolve, reject) => {
-        req.session!.save((err) => (err ? reject(err) : resolve()));
-      });
-    } catch (e) {
-      appendLtiLog('oauth', 'Session save failed', { error: (e as Error).message });
-      const appUrl = (this.config.get<string>('FRONTEND_URL') ?? 'http://localhost:4200').replace(/\/$/, '');
-      return res.redirect(`${appUrl}/flashcards?oauth_error=${encodeURIComponent('Session save failed')}`);
-    }
-
-    appendLtiLog('oauth', 'Canvas access token stored in session', {
+    appendLtiLog('oauth', 'Canvas access token stored in auth session', {
       tokenLength: tokenData.access_token!.length,
     });
 
-    const ctx = req.session.ltiContext as LtiContext | undefined;
+    const loaded = await this.authSessions.getBySessionId(stored.authSessionId);
+    const ctx = loaded?.ctx;
     if (ctx?.courseId) {
       try {
         await this.courseSettings.persistCanvasAccessTokenForLaunchingTeacher(

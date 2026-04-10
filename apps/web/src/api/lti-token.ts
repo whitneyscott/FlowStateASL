@@ -1,25 +1,20 @@
-/** SessionStorage key for LTI token so context can be restored after refresh. */
-export const LTI_TOKEN_STORAGE_KEY = 'lti_token';
+let inMemoryAuthToken = '';
 
-export function getStoredLtiToken(): string | null {
-  try {
-    return sessionStorage.getItem(LTI_TOKEN_STORAGE_KEY);
-  } catch {
-    return null;
-  }
+export function getAuthToken(): string {
+  return inMemoryAuthToken;
 }
 
-export function setStoredLtiToken(token: string): void {
-  try {
-    sessionStorage.setItem(LTI_TOKEN_STORAGE_KEY, token);
-  } catch {
-    // ignore
-  }
+export function setAuthToken(token: string): void {
+  inMemoryAuthToken = (token ?? '').trim();
 }
 
-/** Headers to add to API requests when we have a stored LTI token (for session restore on refresh). */
+export function clearAuthToken(): void {
+  inMemoryAuthToken = '';
+}
+
+/** Authorization header from in-memory auth token only (never persisted). */
 export function ltiTokenHeaders(): Record<string, string> {
-  const token = getStoredLtiToken();
+  const token = getAuthToken();
   if (!token) return {};
-  return { 'X-LTI-Token': token };
+  return { Authorization: `Bearer ${token}` };
 }

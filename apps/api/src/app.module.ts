@@ -16,6 +16,9 @@ import { CourseSettingsModule } from './course-settings/course-settings.module';
 import { PromptModule } from './prompt/prompt.module';
 import { QuizModule } from './quiz/quiz.module';
 import { HealthModule } from './health/health.module';
+import { AuthStateModule } from './auth-state/auth-state.module';
+import { AuthSessionEntity } from './auth-state/entities/auth-session.entity';
+import { BearerAuthMiddleware } from './common/middleware/bearer-auth.middleware';
 import { PromptConfigEntity } from './assessment/entities/prompt-config.entity';
 import { BlockedAttemptEntity } from './assessment/entities/blocked-attempt.entity';
 import { AssessmentSessionEntity } from './assessment/entities/assessment-session.entity';
@@ -69,6 +72,7 @@ const webRoot = join(__dirname, '..', '..', 'web');
             SyncMetadataEntity,
             AssignmentPromptEntity,
             StudentResetEntity,
+            AuthSessionEntity,
           ],
           migrations: [__dirname + '/migrations/*{.ts,.js}'],
           migrationsRun: false,
@@ -89,15 +93,16 @@ const webRoot = join(__dirname, '..', '..', 'web');
     LtiModule,
     DebugModule,
     HealthModule,
+    AuthStateModule,
     SubmissionModule,
     CourseSettingsModule,
     PromptModule,
     QuizModule,
   ],
-  providers: [RoutingLogMiddleware],
+  providers: [BearerAuthMiddleware, RoutingLogMiddleware],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
-    consumer.apply(RoutingLogMiddleware).forRoutes('*');
+    consumer.apply(BearerAuthMiddleware, RoutingLogMiddleware).forRoutes('*');
   }
 }

@@ -6,6 +6,7 @@ import { computeDeckHubFilters } from '../utils/deckHierarchyFilters';
 import { isLastDeckCard, nextDeckIndexAfterAdvance } from '../utils/deck-advance';
 import { TeacherSettings } from '../components/TeacherSettings';
 import { ManualTokenModal } from '../components/ManualTokenModal';
+import { ltiTokenHeaders } from '../api/lti-token';
 import './FlashcardsPage.css';
 
 type PlaylistItem = { title: string; id?: string };
@@ -110,7 +111,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     try {
       setLastFunction('GET /api/flashcard/student-playlists-batch');
       const url = '/api/flashcard/student-playlists-batch?showHidden=1';
-      const res = await fetch(url, { credentials: 'include' });
+      const res = await fetch(url, { credentials: 'include', headers: ltiTokenHeaders() });
       setLastApiResult('GET /api/flashcard/student-playlists-batch', res.status, res.ok);
       const data = await res.json().catch(() => ({}));
       if (res.status === 401 && data?.redirectToOAuth) {
@@ -279,7 +280,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     try {
       const res = await fetch(
         `/api/flashcard/items?playlist_id=${encodeURIComponent(id)}`,
-        { credentials: 'include' },
+        { credentials: 'include', headers: ltiTokenHeaders() },
       );
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -315,7 +316,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
       try {
         const progRes = await fetch(
           `/api/flashcard/progress?deck_ids=${encodeURIComponent(id)}`,
-          { credentials: 'include' },
+          { credentials: 'include', headers: ltiTokenHeaders() },
         );
         const prog = (await progRes.json().catch(() => ({}))) as Record<string, { completed: number }>;
         setDeckProgress(prog);
@@ -503,7 +504,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     try {
       const res = await fetch('/api/submission', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...ltiTokenHeaders() },
         credentials: 'include',
         body: JSON.stringify(payload),
       });

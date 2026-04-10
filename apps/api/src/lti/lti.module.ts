@@ -11,12 +11,14 @@ import { AssessmentModule } from '../assessment/assessment.module';
 import { PromptModule } from '../prompt/prompt.module';
 import { CourseSettingsModule } from '../course-settings/course-settings.module';
 import { LtiLaunchGuard } from './guards/lti-launch.guard';
+import { AuthStateModule } from '../auth-state/auth-state.module';
 
 @Module({
   imports: [
     forwardRef(() => AssessmentModule),
     forwardRef(() => PromptModule),
     forwardRef(() => CourseSettingsModule),
+    AuthStateModule,
   ],
   controllers: [LtiController],
   providers: [
