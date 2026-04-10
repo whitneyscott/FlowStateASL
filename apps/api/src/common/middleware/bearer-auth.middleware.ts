@@ -17,11 +17,6 @@ export class BearerAuthMiddleware implements NestMiddleware {
   constructor(private readonly authSessions: AuthSessionService) {}
 
   async use(req: Request, _res: Response, next: NextFunction): Promise<void> {
-    if (!req.path.startsWith('/api')) {
-      next();
-      return;
-    }
-
     const auth = (req.headers.authorization ?? '').trim();
     const bearer = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7).trim() : '';
     const loaded = bearer ? await this.authSessions.getByBearerToken(bearer) : null;
