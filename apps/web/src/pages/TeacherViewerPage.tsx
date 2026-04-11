@@ -593,15 +593,6 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     return out;
   }, [feedbackEntries, deckTimeline, resolvedRubricDeckIndexMap]);
 
-  const activeRubricRowIndex = useMemo(() => {
-    if (rubric.length === 0) return -1;
-    if (activeDeckIndex >= 0) {
-      const exact = resolvedRubricDeckIndexMap.findIndex((idx) => idx === activeDeckIndex);
-      if (exact >= 0) return exact;
-    }
-    return 0;
-  }, [rubric.length, activeDeckIndex, resolvedRubricDeckIndexMap]);
-
   useEffect(() => {
     const layout = document.getElementById('viewer-layout');
     const leftSidebar = leftSidebarRef.current;
@@ -954,27 +945,33 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
               <span dangerouslySetInnerHTML={{ __html: activeDeckPrompt.title || '—' }} />
             </div>
           )}
-          {rubric.length > 0 && activeRubricRowIndex >= 0 && (
+          {rubric.length > 0 && (
             <div className="prompter-viewer-center-rubric">
               <div className="prompter-viewer-feedback-title">Rubric scoring</div>
-              {(() => {
-                const c = rubric[activeRubricRowIndex];
-                const critId = String(c?.id ?? '');
-                const assess = rubricAssessment[critId] ?? rubricAssessment[String(c?.id)];
+              {rubric.map((c, rowIdx) => {
+                const critId = String(c.id ?? '');
+                const assess = rubricAssessment[critId] ?? rubricAssessment[String(c.id)];
                 const selectedRatingId = assess?.rating_id;
-                const mappedDeckIdx = resolvedRubricDeckIndexMap[activeRubricRowIndex];
+                const mappedDeckIdx = resolvedRubricDeckIndexMap[rowIdx];
                 const mappedDeckPrompt = mappedDeckIdx != null ? deckTimeline[mappedDeckIdx] : undefined;
+                const mappedDeckActive = mappedDeckIdx != null && mappedDeckIdx === activeDeckIndex;
                 return (
                   <div key={`center-${critId}`} className="prompter-viewer-rubric-criterion-center">
                     <div className="prompter-viewer-rubric-criterion-title">
-                      {c?.description ?? 'Criterion'} ({c?.points ?? 0} pts)
+                      {c.description ?? 'Criterion'} ({c.points ?? 0} pts)
                     </div>
                     {mappedDeckPrompt && (
-                      <div className="prompter-viewer-rubric-center-time">
-                        Timestamp: {formatTime(Math.floor(mappedDeckPrompt.startSec))}
+                      <div className={`prompter-viewer-rubric-card-prompt ${mappedDeckActive ? 'active' : ''}`}>
+                        <div className="prompter-viewer-rubric-card-prompt-time">
+                          {formatTime(Math.floor(mappedDeckPrompt.startSec))}
+                        </div>
+                        <div
+                          className="prompter-viewer-rubric-card-prompt-text"
+                          dangerouslySetInnerHTML={{ __html: mappedDeckPrompt.title || '—' }}
+                        />
                       </div>
                     )}
-                    {c?.ratings?.length ? (
+                    {c.ratings?.length ? (
                       <div className="prompter-viewer-rubric-ratings">
                         {c.ratings.map((r) => {
                           const rid = String(r.id ?? '');
@@ -999,7 +996,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                     ) : null}
                   </div>
                 );
-              })()}
+              })}
             </div>
           )}
           {teacher && !noSubmissionsInGradingMode && (
