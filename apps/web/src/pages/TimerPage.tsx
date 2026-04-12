@@ -93,6 +93,40 @@ function toMb(sizeBytes: number): string {
   return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/** Cap wait for metadata; fail open so submission never blocks on duration. */
+const VIDEO_DURATION_PROBE_MS = 1200;
+
+/**
+ * Best-effort duration for a recorded blob (object URL + video loadedmetadata).
+ * Resolves null on timeout, decode error, or non-finite duration.
+ */
+function probeBlobVideoDurationSeconds(blob: Blob, timeoutMs = VIDEO_DURATION_PROBE_MS): Promise<number | null> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(blob);
+    const video = document.createElement('video');
+    let settled = false;
+    const finish = (v: number | null) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(tid);
+      URL.revokeObjectURL(url);
+      video.removeAttribute('src');
+      video.load();
+      resolve(v);
+    };
+    const tid = window.setTimeout(() => finish(null), timeoutMs);
+    video.preload = 'metadata';
+    video.muted = true;
+    video.playsInline = true;
+    video.onloadedmetadata = () => {
+      const d = video.duration;
+      finish(Number.isFinite(d) && d > 0 ? Math.round(d * 1000) / 1000 : null);
+    };
+    video.onerror = () => finish(null);
+    video.src = url;
+  });
+}
+
 function mapSubmitErrorForStudent(message: string): string {
   const lower = message.toLowerCase();
   if (lower.includes('server busy')) return 'Many students are submitting right now. Wait about 30 seconds, then try again.';
@@ -194,6 +228,14 @@ export default function TimerPage({ context }: TimerPageProps) {
           `Large upload detected (${toMb(blob.size)}). Keep this tab open during submission.`,
         );
       }
+      let durationSeconds: number | null = null;
+      if (blob) {
+        try {
+          durationSeconds = await probeBlobVideoDurationSeconds(blob);
+        } catch {
+          durationSeconds = null;
+        }
+      }
       setPhase(blob ? 'upload' : 'done');
       const isDeepLink = context?.messageType === 'LtiDeepLinkingRequest';
       const submitAttemptKey =
@@ -263,6 +305,7 @@ export default function TimerPage({ context }: TimerPageProps) {
                 deckTimeline,
                 idempotencyKey: `upload-${submitAttemptKey}`,
                 captureProfile: captureProfile ?? undefined,
+                ...(durationSeconds != null ? { durationSeconds } : {}),
               },
             );
             setLastApiResult('POST /api/prompt/upload-video', 200, true);

@@ -242,6 +242,8 @@ export async function uploadVideo(
     promptSnapshotHtml?: string;
     deckTimeline?: DeckTimelineEntry[];
     idempotencyKey?: string;
+    /** Client-measured recording length (seconds); omitted if unknown. */
+    durationSeconds?: number;
     captureProfile?: {
       profileId?: string;
       requestedWidth?: number;
@@ -267,6 +269,9 @@ export async function uploadVideo(
   }
   if (options?.captureProfile) {
     form.append('captureProfile', JSON.stringify(options.captureProfile));
+  }
+  if (options?.durationSeconds != null && Number.isFinite(options.durationSeconds)) {
+    form.append('durationSeconds', String(options.durationSeconds));
   }
   const res = await fetch(withAssignmentId(base + '/upload-video', assignmentId), apiInit({
     method: 'POST',
@@ -330,6 +335,9 @@ export interface PromptSubmission {
   rubricAssessment?: Record<string, unknown>;
   /** Prompt from quiz storage (preferred when present). */
   promptHtml?: string;
+  /** From submission comment JSON, prompt-config fallback, or unknown. */
+  videoDurationSeconds?: number | null;
+  durationSource?: 'submission' | 'prompts' | 'unknown';
 }
 
 export async function getSubmissionCount(assignmentId?: string | null): Promise<number> {

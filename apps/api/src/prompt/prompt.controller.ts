@@ -216,7 +216,12 @@ export class PromptController {
     } catch (err) {
       throw new PayloadTooLargeException(err instanceof Error ? err.message : 'Upload too large');
     }
-    const body = req.body as { promptSnapshotHtml?: string; deckTimeline?: string; captureProfile?: string };
+    const body = req.body as {
+      promptSnapshotHtml?: string;
+      deckTimeline?: string;
+      captureProfile?: string;
+      durationSeconds?: string;
+    };
     const promptSnapshotHtml = (body?.promptSnapshotHtml ?? '').toString().trim();
     let captureProfile:
       | {
@@ -248,6 +253,14 @@ export class PromptController {
         }
       } catch {
         // ignore invalid deckTimeline JSON
+      }
+    }
+    const rawDuration = body?.durationSeconds;
+    let durationSeconds: number | undefined;
+    if (rawDuration != null && String(rawDuration).trim() !== '') {
+      const n = Number.parseFloat(String(rawDuration).trim());
+      if (Number.isFinite(n) && n > 0) {
+        durationSeconds = Math.round(n * 1000) / 1000;
       }
     }
     const rawCapture = body?.captureProfile;
@@ -318,6 +331,7 @@ export class PromptController {
           ...(promptSnapshotHtml ? { promptSnapshotHtml } : {}),
           ...(deckTimeline?.length ? { deckTimeline } : {}),
           ...(captureProfile ? { captureProfile } : {}),
+          ...(durationSeconds != null ? { durationSeconds } : {}),
         },
       );
       this.uploadResilience.markCompleted(idemKey, result);
