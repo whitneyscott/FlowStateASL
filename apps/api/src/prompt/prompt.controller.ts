@@ -400,41 +400,52 @@ export class PromptController {
   }
 
   /**
-   * Proxy Canvas video URLs so the frontend can load them with auth (Canvas file URLs
-   * require OAuth; the video element cannot send our token cross-origin).
-   * Supports Range requests for video seeking.
+   * Mint a short-lived proxy grant for Canvas video URLs (Bearer auth).
+   * Client uses returned playbackUrl on &lt;video src&gt; (no JWT in query).
+   */
+  @Post('video-proxy-token')
+  @HttpCode(HttpStatus.OK)
+  async mintVideoProxyToken(@Req() req: Request, @Body() body: { url?: string }) {
+    const ctx = this.getCtx(req);
+    const url = (body?.url ?? '').toString().trim();
+    if (!url) throw new BadRequestException('url is required');
+    return this.prompt.mintVideoProxyGrant(ctx, url);
+  }
+
+  /**
+   * Stream Canvas video using proxy_token grant (no Bearer on &lt;video&gt;).
+   * Forwards Range for seeking; streams without buffering the full file.
    */
   @Get('video-proxy')
   async videoProxy(@Req() req: Request, @Res() res: Response) {
-    const q = req.query as { url?: string };
-    const targetUrl = (q?.url ?? '').toString().trim();
-    if (!targetUrl) return res.status(400).send('Missing url parameter');
+    const q = req.query as { url?: string; proxy_token?: string | string[] };
+    const enc = (q?.url ?? '').toString().trim();
+    if (!enc) {
+      return res.status(400).send('Missing url parameter');
+    }
+    let targetUrl: string;
     try {
-      const ctx = this.getCtx(req);
-      const result = await this.prompt.streamVideoProxy(ctx, targetUrl);
-      if (!result) return res.status(404).send('Not found or access denied');
-      const { buffer, contentType } = result;
-      const total = buffer.length;
-      res.setHeader('Content-Type', contentType);
-      res.setHeader('Accept-Ranges', 'bytes');
-      const rangeHeader = (req.headers.range ?? '').toString();
-      const rangeMatch = rangeHeader.match(/^bytes=(\d*)-(\d*)$/);
-      if (rangeMatch) {
-        const start = rangeMatch[1] ? parseInt(rangeMatch[1], 10) : 0;
-        const end = rangeMatch[2] ? parseInt(rangeMatch[2], 10) : total - 1;
-        const s = Math.min(start, total - 1);
-        const e = Math.min(end, total - 1);
-        const chunk = buffer.subarray(s, e + 1);
-        res.setHeader('Content-Range', `bytes ${s}-${e}/${total}`);
-        res.setHeader('Content-Length', String(chunk.length));
-        res.status(206);
-        return res.send(chunk);
-      }
-      res.setHeader('Content-Length', String(total));
-      return res.send(buffer);
+      targetUrl = decodeURIComponent(enc);
+    } catch {
+      return res.status(400).send('Invalid url parameter');
+    }
+    const rawPt = q.proxy_token;
+    const proxyToken = (Array.isArray(rawPt) ? rawPt[0] : rawPt)?.toString().trim() ?? '';
+    if (!proxyToken) {
+      return res.status(400).send('Missing proxy_token');
+    }
+    try {
+      await this.prompt.pipeCanvasVideoProxyToResponse(
+        res,
+        req.headers.range as string | undefined,
+        targetUrl,
+        proxyToken,
+      );
     } catch (err) {
       if (err instanceof ForbiddenException) throw err;
-      return res.status(502).send('Proxy failed');
+      if (!res.headersSent) {
+        return res.status(502).send('Proxy failed');
+      }
     }
   }
 

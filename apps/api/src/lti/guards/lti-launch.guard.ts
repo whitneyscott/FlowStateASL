@@ -16,6 +16,13 @@ export class LtiLaunchGuard implements CanActivate {
     const req = context.switchToHttp().getRequest<Request>();
     // Allow GET /api/prompt/submission/:token by token alone (unguessable); video loads even if session expired
     if (req.method === 'GET' && /^\/api\/prompt\/submission\/[^/]+$/.test(req.path)) return true;
+    // Short-lived proxy_token grants (no JWT in query); validated inside PromptController
+    if (req.method === 'GET' && /^\/api\/prompt\/video-proxy$/.test(req.path)) {
+      const q = req.query as { proxy_token?: string | string[] };
+      const raw = q.proxy_token;
+      const t = Array.isArray(raw) ? raw[0] : raw;
+      if (typeof t === 'string' && t.trim().length > 0) return true;
+    }
     const hasSession = !!req.session;
     const hasLtiContext = !!req.session?.ltiContext;
     if (hasLtiContext) {

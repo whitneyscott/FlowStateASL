@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
 import { resolveLtiContextValue } from '../utils/lti-context';
-import { videoSrcWithBearerIfNeeded } from '../utils/viewer-video-src';
+import { resolveViewerVideoPlaybackUrl } from '../utils/viewer-video-src';
 import * as promptApi from '../api/prompt.api';
 import './PrompterPage.css';
 
@@ -297,6 +297,9 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   const leftSidebarRef = useRef<HTMLDivElement>(null);
   const rightSidebarRef = useRef<HTMLDivElement>(null);
   const [textPromptVisible, setTextPromptVisible] = useState(false);
+  const [resolvedVideoSrc, setResolvedVideoSrc] = useState<string | null>(null);
+  const [videoMintLoading, setVideoMintLoading] = useState(false);
+  const [videoMintError, setVideoMintError] = useState<string | null>(null);
 
   const isDev = typeof window !== 'undefined' && /^(localhost|127\.0\.0\.1)$/.test(window.location.hostname);
   const teacher = context && isTeacher(context.roles);
@@ -321,6 +324,46 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   useEffect(() => {
     setVideoLoadFailed(false);
   }, [current?.userId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const raw = current?.videoUrl;
+    if (!raw) {
+      setResolvedVideoSrc(null);
+      setVideoMintError(null);
+      setVideoMintLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+    if (!raw.includes('/api/prompt/video-proxy') || raw.includes('proxy_token=')) {
+      setResolvedVideoSrc(raw);
+      setVideoMintError(null);
+      setVideoMintLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+    setVideoMintLoading(true);
+    setVideoMintError(null);
+    setResolvedVideoSrc(null);
+    void resolveViewerVideoPlaybackUrl(raw)
+      .then((src) => {
+        if (!cancelled) {
+          setResolvedVideoSrc(src);
+          setVideoMintLoading(false);
+        }
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setVideoMintError(e instanceof Error ? e.message : 'Video failed to load');
+          setVideoMintLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [current?.videoUrl, current?.userId, context]);
 
   useEffect(() => {
     if (!current) return;
@@ -887,10 +930,6 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   const promptUsed = getPromptFromComments(current?.body, current?.submissionComments, current?.promptHtml);
   const hasSubmissionNoVideo = current && !current.videoUrl;
   const noSubmissionsInGradingMode = gradingMode && submissions.length === 0;
-  const viewerVideoSrc = useMemo(
-    () => (current?.videoUrl ? videoSrcWithBearerIfNeeded(current.videoUrl) : undefined),
-    [current?.videoUrl, context],
-  );
 
   return (
     <div className="prompter-page prompter-page--viewer">
@@ -1220,10 +1259,17 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
           <div className="prompter-viewer-video-wrap">
             {noSubmissionsInGradingMode ? (
               <p className="prompter-viewer-no-video">No submissions for this assignment.</p>
-            ) : viewerVideoSrc ? (
+            ) : videoMintError ? (
+              <p className="prompter-viewer-error-box" role="alert">
+                Could not load video: {videoMintError}
+              </p>
+            ) : videoMintLoading && current?.videoUrl?.includes('/api/prompt/video-proxy') ? (
+              <p className="prompter-viewer-no-video">Preparing video…</p>
+            ) : resolvedVideoSrc ? (
               <video
                 ref={videoRef}
-                src={viewerVideoSrc}
+                key={`${current?.userId ?? ''}-${resolvedVideoSrc.slice(0, 48)}`}
+                src={resolvedVideoSrc}
                 controls
                 onError={() => setVideoLoadFailed(true)}
               />

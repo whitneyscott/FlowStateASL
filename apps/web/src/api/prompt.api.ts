@@ -341,6 +341,18 @@ export async function getSubmissions(assignmentId?: string | null): Promise<Prom
   return fetchJson<PromptSubmission[]>(withAssignmentId(base + '/submissions', assignmentId));
 }
 
+/** Mint short-lived proxy_token playback URL for Canvas-hosted video (grading viewer). */
+export async function mintVideoProxyPlaybackUrl(canvasVideoUrl: string): Promise<{
+  playbackUrl: string;
+  expiresInSeconds: number;
+}> {
+  return fetchJsonWithOAuthRedirect(`${base}/video-proxy-token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url: canvasVideoUrl }),
+  });
+}
+
 export async function submitGrade(
   dto: {
     userId: string;
