@@ -911,35 +911,14 @@
 
 .prompter-viewer-submission-nav-inner {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 12px 20px;
+  gap: 12px 16px;
   justify-content: flex-start;
-  min-width: 0;
   width: 100%;
-  overflow-x: auto;
-  padding-bottom: 2px;
-}
-
-.prompter-viewer-dropdown-row--inline {
-  margin-bottom: 0;
-  flex: 1 1 auto;
-  min-width: 0;
   max-width: 100%;
-}
-
-.prompter-viewer-dropdown-row--inline select {
-  max-width: none;
-  flex: 1;
   min-width: 0;
-}
-
-.prompter-viewer-nav-row--inline {
-  margin-bottom: 0;
-  width: auto;
-  max-width: none;
-  flex: 0 0 auto;
-  flex-wrap: nowrap;
+  box-sizing: border-box;
 }
 
 .prompter-viewer-center-row--grade {
@@ -1009,7 +988,7 @@
 .prompter-viewer-active-item-time-prompt-row {
   display: flex;
   flex-direction: row;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 10px 14px;
   flex: 1 1 auto;
@@ -1242,6 +1221,30 @@
   gap: 12px;
 }
 
+/* Submission strip: selector + prev/next share center width; later .dropdown-row select / .nav-row rules lose to this. */
+.prompter-viewer-submission-nav-inner .prompter-viewer-dropdown-row--inline {
+  margin-bottom: 0;
+  width: auto;
+  max-width: 100%;
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.prompter-viewer-submission-nav-inner .prompter-viewer-dropdown-row--inline select {
+  flex: 1 1 8rem;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.prompter-viewer-submission-nav-inner .prompter-viewer-nav-row--inline {
+  width: auto;
+  max-width: 100%;
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-bottom: 0;
+  flex-wrap: wrap;
+}
+
 .prompter-viewer-nav-btn {
   padding: 8px 16px;
   background: var(--prompter-canvas-blue);
@@ -1271,12 +1274,14 @@
 
 .prompter-viewer-grade-row-full {
   width: 100%;
-  max-width: none;
+  max-width: 100%;
+  min-width: 0;
   margin-bottom: 0;
   display: flex;
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+  box-sizing: border-box;
 }
 
 .prompter-viewer-grade-row-full label {
@@ -1311,6 +1316,8 @@
   flex-wrap: wrap;
   gap: 10px;
   margin-left: auto;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .prompter-viewer-grade-row-full > .prompter-viewer-reset-inline:first-child {
