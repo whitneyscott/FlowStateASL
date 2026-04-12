@@ -985,34 +985,42 @@
   gap: 8px 12px;
 }
 
-.prompter-viewer-active-item-time-prompt-row {
-  display: flex;
-  flex-direction: row;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  column-gap: 0.4em;
-  row-gap: 0.35em;
-  flex: 1 1 auto;
-  min-width: 0;
+/* Center panel: time + prompt read as one continuous line (same origin as timestamp). */
+.prompter-viewer-active-item-time-prompt-inline {
+  display: block;
+  width: 100%;
   max-width: 100%;
-  justify-content: flex-start;
-}
-
-/* Hug timestamp: grow only with content; avoids a wide empty flex band before prompt text (center panel). */
-.prompter-viewer-active-item-time-prompt-row .prompter-viewer-active-item-prompt-html {
-  flex: 0 1 auto;
   min-width: 0;
-  max-width: 100%;
-  margin-inline-start: 0;
-  padding-inline-start: 0;
   text-align: left;
+  font-size: 14px;
+  line-height: 1.45;
+  color: #223;
+  word-break: break-word;
 }
 
-.prompter-viewer-active-item-time {
+.prompter-viewer-active-item-time-prompt-inline .prompter-viewer-active-item-time {
+  display: inline;
   font-weight: 700;
   color: var(--prompter-canvas-blue, #008ee2);
   font-size: 15px;
-  flex-shrink: 0;
+  margin-right: 0.35em;
+  vertical-align: baseline;
+}
+
+.prompter-viewer-active-item-time-prompt-inline .prompter-viewer-active-item-prompt-html {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  vertical-align: baseline;
+  min-width: 0;
+}
+
+/* Flatten common block markup from deck titles so flow stays inline after the timestamp. */
+.prompter-viewer-active-item-time-prompt-inline .prompter-viewer-active-item-prompt-html p,
+.prompter-viewer-active-item-time-prompt-inline .prompter-viewer-active-item-prompt-html div {
+  display: inline;
+  margin: 0;
+  padding: 0;
 }
 
 .prompter-viewer-active-item-prompt-html {
@@ -1028,11 +1036,11 @@
   max-width: 100%;
 }
 
-.prompter-viewer-active-item-time-prompt-row .prompter-viewer-active-item-prompt-html :first-child {
+.prompter-viewer-active-item-time-prompt-inline .prompter-viewer-active-item-prompt-html :first-child {
   margin-top: 0;
 }
 
-.prompter-viewer-active-item-time-prompt-row .prompter-viewer-active-item-prompt-html :last-child {
+.prompter-viewer-active-item-time-prompt-inline .prompter-viewer-active-item-prompt-html :last-child {
   margin-bottom: 0;
 }
 

@@ -1340,7 +1340,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                     </div>
                     <div className="prompter-viewer-active-item-meta">
                       {activeDeckPrompt ? (
-                        <div className="prompter-viewer-active-item-time-prompt-row">
+                        <div className="prompter-viewer-active-item-time-prompt-inline">
                           <span className="prompter-viewer-active-item-time">
                             {formatTime(Math.floor(activeDeckPrompt.startSec))}
                           </span>
@@ -1357,7 +1357,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                 ) : activeDeckPrompt ? (
                   <div className="prompter-viewer-active-item-panel prompter-viewer-active-item-panel--prompt-only">
                     <div className="prompter-viewer-active-item-meta">
-                      <div className="prompter-viewer-active-item-time-prompt-row">
+                      <div className="prompter-viewer-active-item-time-prompt-inline">
                         <span className="prompter-viewer-active-item-time">
                           {formatTime(Math.floor(activeDeckPrompt.startSec))}
                         </span>
