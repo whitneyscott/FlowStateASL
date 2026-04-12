@@ -44,9 +44,8 @@ const webRoot = join(__dirname, '..', '..', 'web');
       ? [
           ServeStaticModule.forRoot({
             rootPath: webRoot,
-            exclude: ['/api*'],
-            serveRoot: '/',
-            renderPath: '*',
+            exclude: ['/api/{*rest}'],
+            renderPath: '{*any}',
           }),
         ]
       : []),
@@ -103,6 +102,6 @@ const webRoot = join(__dirname, '..', '..', 'web');
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
-    consumer.apply(BearerAuthMiddleware, RoutingLogMiddleware).forRoutes('*');
+    consumer.apply(BearerAuthMiddleware, RoutingLogMiddleware).forRoutes('/{*rest}');
   }
 }
