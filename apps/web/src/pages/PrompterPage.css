@@ -1114,7 +1114,17 @@
   box-sizing: border-box;
 }
 
-.prompter-viewer-video-wrap video {
+.prompter-viewer-video-shell {
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.prompter-viewer-video-wrap .prompter-viewer-video-shell video {
   width: 100%;
   max-width: 100%;
   height: auto;
@@ -1123,6 +1133,56 @@
   display: block;
   margin: 0 auto;
   object-fit: contain;
+}
+
+.prompter-viewer-video-loading-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 16px;
+  text-align: center;
+  background: rgba(0, 0, 0, 0.62);
+  color: #f5f5f5;
+  z-index: 2;
+  pointer-events: auto;
+  box-sizing: border-box;
+}
+
+.prompter-viewer-video-loading-overlay--error {
+  background: rgba(40, 0, 0, 0.75);
+}
+
+.prompter-viewer-video-spinner {
+  width: 44px;
+  height: 44px;
+  margin-bottom: 4px;
+  border: 3px solid rgba(255, 255, 255, 0.28);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: prompter-inline-spin 0.75s linear infinite;
+}
+
+.prompter-viewer-video-loading-text {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: inherit;
+}
+
+.prompter-viewer-video-loading-hint {
+  margin: 0;
+  max-width: 22rem;
+  font-size: 0.875rem;
+  line-height: 1.35;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.prompter-viewer-video-loading-overlay--error .prompter-viewer-video-loading-hint {
+  color: rgba(255, 230, 230, 0.9);
 }
 
 .prompter-viewer-video-wrap .prompter-viewer-dev-badge {

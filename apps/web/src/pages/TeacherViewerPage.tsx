@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
@@ -90,6 +90,33 @@ function resolveDeckTimeline(
   const fromBody = parseDeckTimelineFromBody(body);
   if (fromBody.length > 0) return fromBody;
   return parseDeckTimelineFromSubmissionComments(comments);
+}
+
+/**
+ * True when the video is safe for timeline scrubbing: known duration, enough decoded data,
+ * and seekable or buffered range covers (nearly) the full file. Uses progress-friendly checks
+ * so we update as data arrives instead of flipping on a single event.
+ */
+function isVideoScrubUiReady(video: HTMLVideoElement): boolean {
+  if (video.error) return false;
+  const d = video.duration;
+  if (!Number.isFinite(d) || d <= 0) return false;
+  if (video.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) return false;
+
+  const tol = d < 3 ? 0.5 : 1.5;
+
+  if (video.seekable.length > 0) {
+    const seekEnd = video.seekable.end(video.seekable.length - 1);
+    if (!Number.isFinite(seekEnd)) return true;
+    if (seekEnd >= d - tol) return true;
+  }
+
+  if (video.buffered.length > 0) {
+    const bufEnd = video.buffered.end(video.buffered.length - 1);
+    if (bufEnd >= d - tol) return true;
+  }
+
+  return false;
 }
 
 function activeDeckPromptAt(t: number, segments: DeckTimelineEntry[]): DeckTimelineEntry | null {
@@ -301,10 +328,13 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   const [configuredAssignments, setConfiguredAssignments] = useState<promptApi.ConfiguredAssignment[]>([]);
   const [loadingAssignments, setLoadingAssignments] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const videoPlaybackReadyRef = useRef(false);
   const leftSidebarRef = useRef<HTMLDivElement>(null);
   const rightSidebarRef = useRef<HTMLDivElement>(null);
   const resizeDebugLastSentAtRef = useRef(0);
   const [textPromptVisible, setTextPromptVisible] = useState(false);
+  const [videoPlaybackReady, setVideoPlaybackReady] = useState(false);
+  const [videoLoadError, setVideoLoadError] = useState(false);
 
   const isDev = typeof window !== 'undefined' && /^(localhost|127\.0\.0\.1)$/.test(window.location.hostname);
   const teacher = context && isTeacher(context.roles);
@@ -325,6 +355,84 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   }, [current?.submissionComments]);
 
   useEffect(() => { syncFeedbackFromCurrent(); }, [syncFeedbackFromCurrent]);
+
+  useEffect(() => {
+    videoPlaybackReadyRef.current = videoPlaybackReady;
+  }, [videoPlaybackReady]);
+
+  useLayoutEffect(() => {
+    if (!current?.videoUrl) {
+      setVideoPlaybackReady(false);
+      setVideoLoadError(false);
+      return;
+    }
+
+    setVideoPlaybackReady(false);
+    setVideoLoadError(false);
+
+    const v = videoRef.current;
+    if (!v) return;
+
+    let cancelled = false;
+    let intervalId: ReturnType<typeof setInterval> | undefined;
+
+    const clearPoll = () => {
+      if (intervalId != null) {
+        clearInterval(intervalId);
+        intervalId = undefined;
+      }
+    };
+
+    const evaluate = () => {
+      if (cancelled) return;
+      const node = videoRef.current;
+      if (!node || node !== v) return;
+      if (node.error) {
+        setVideoLoadError(true);
+        setVideoPlaybackReady(false);
+        clearPoll();
+        return;
+      }
+      if (isVideoScrubUiReady(node)) {
+        setVideoPlaybackReady(true);
+        clearPoll();
+      }
+    };
+
+    const onLoadStart = () => {
+      if (cancelled) return;
+      setVideoPlaybackReady(false);
+    };
+
+    const onError = () => {
+      if (cancelled) return;
+      setVideoLoadError(true);
+      setVideoPlaybackReady(false);
+      clearPoll();
+    };
+
+    v.addEventListener('loadstart', onLoadStart);
+    v.addEventListener('loadedmetadata', evaluate);
+    v.addEventListener('loadeddata', evaluate);
+    v.addEventListener('progress', evaluate);
+    v.addEventListener('canplay', evaluate);
+    v.addEventListener('canplaythrough', evaluate);
+    v.addEventListener('error', onError);
+    evaluate();
+    intervalId = setInterval(evaluate, 200);
+
+    return () => {
+      cancelled = true;
+      clearPoll();
+      v.removeEventListener('loadstart', onLoadStart);
+      v.removeEventListener('loadedmetadata', evaluate);
+      v.removeEventListener('loadeddata', evaluate);
+      v.removeEventListener('progress', evaluate);
+      v.removeEventListener('canplay', evaluate);
+      v.removeEventListener('canplaythrough', evaluate);
+      v.removeEventListener('error', onError);
+    };
+  }, [current?.videoUrl, current?.userId]);
 
   useEffect(() => {
     if (!current) return;
@@ -560,7 +668,9 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
             : s
         )
       );
-      videoRef.current.play().catch(() => {});
+      if (videoPlaybackReadyRef.current) {
+        videoRef.current.play().catch(() => {});
+      }
     } catch {
       setError('Failed to add comment');
     } finally {
@@ -582,18 +692,16 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
 
   const handleFeedbackClick = useCallback((time: number) => {
     const v = videoRef.current;
-    if (v) {
-      v.currentTime = time;
-      v.play().catch(() => {});
-    }
+    if (!v || !videoPlaybackReadyRef.current) return;
+    v.currentTime = time;
+    v.play().catch(() => {});
   }, []);
 
   const handleDeckTimelineClick = useCallback((startSec: number) => {
     const v = videoRef.current;
-    if (v) {
-      v.currentTime = startSec;
-      v.play().catch(() => {});
-    }
+    if (!v || !videoPlaybackReadyRef.current) return;
+    v.currentTime = startSec;
+    v.play().catch(() => {});
   }, []);
 
   const handleEditComment = useCallback(
@@ -1292,12 +1400,34 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
             {noSubmissionsInGradingMode ? (
               <p className="prompter-viewer-no-video">No submissions for this assignment.</p>
             ) : current?.videoUrl ? (
-              <video
-                ref={videoRef}
-                key={current?.userId ?? ''}
-                src={current.videoUrl}
-                controls
-              />
+              <div className="prompter-viewer-video-shell">
+                <video
+                  ref={videoRef}
+                  key={current?.userId ?? ''}
+                  src={current.videoUrl}
+                  controls={videoPlaybackReady}
+                  playsInline
+                  preload="auto"
+                />
+                {!videoLoadError && !videoPlaybackReady && (
+                  <div
+                    className="prompter-viewer-video-loading-overlay"
+                    role="status"
+                    aria-live="polite"
+                    aria-busy="true"
+                  >
+                    <div className="prompter-viewer-video-spinner" aria-hidden />
+                    <p className="prompter-viewer-video-loading-text">Preparing video…</p>
+                    <p className="prompter-viewer-video-loading-hint">Playback and timeline unlock when the file is ready to scrub.</p>
+                  </div>
+                )}
+                {videoLoadError && (
+                  <div className="prompter-viewer-video-loading-overlay prompter-viewer-video-loading-overlay--error" role="alert">
+                    <p className="prompter-viewer-video-loading-text">Could not load this video.</p>
+                    <p className="prompter-viewer-video-loading-hint">Try refreshing the page or opening the submission again.</p>
+                  </div>
+                )}
+              </div>
             ) : hasSubmissionNoVideo ? (
               <div className="prompter-viewer-processing">
                 <p>Your submission is being processed. Video will appear shortly. Refresh the page to check.</p>
