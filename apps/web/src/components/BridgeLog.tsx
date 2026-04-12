@@ -199,6 +199,22 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
       newLines.push('(No submission activity yet)');
     }
 
+    // Resize diagnostics (temporary viewer panel drag telemetry)
+    newLines.push('');
+    newLines.push('--- Resize Diagnostics (panel drag telemetry) ---');
+    const resizeLines = ltiLog.filter(
+      (line) =>
+        (line.includes('[resize]') ||
+          line.toLowerCase().includes('resize-drag') ||
+          line.toLowerCase().includes('leftstyleflex')) &&
+        !isSettingsBlobNoise(line)
+    );
+    if (resizeLines.length > 0) {
+      newLines.push(...resizeLines);
+    } else {
+      newLines.push('(No resize diagnostics yet)');
+    }
+
     // Viewer / Grading flow (assignment select → getSubmissions → grade)
     newLines.push('');
     newLines.push('--- Viewer / Grading (select assignment → submissions) ---');
@@ -212,6 +228,8 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
           line.includes('getVideoUrlFromCanvasSubmission') ||
           line.includes('ENTRY:') ||
           line.includes('[debug]') ||
+          line.includes('[resize]') ||
+          line.toLowerCase().includes('resize-drag') ||
           line.includes('PING') ||
           line.includes('SproutVideo fallback') ||
           line.includes('fallback for user')) &&
