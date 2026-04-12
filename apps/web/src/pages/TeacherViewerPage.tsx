@@ -741,12 +741,27 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     const handleLeft = document.getElementById('resize-handle-left');
     const handleRight = document.getElementById('resize-handle-right');
     if (!layout || !leftSidebar || !handleLeft) return;
-    const minW = 160;
-    const maxW = 400;
+    const minSidebarW = 160;
+    const minCenterW = 280;
+    const handleW = 10;
     const keyL = 'aslexpress_viewer_left_width';
     const keyR = 'aslexpress_viewer_right_width';
+    const handleCount = rightSidebar && handleRight ? 2 : 1;
+    const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+    const getMaxLeft = () => {
+      const total = layout.clientWidth;
+      const rightW = rightSidebar?.offsetWidth ?? 0;
+      const max = total - rightW - handleCount * handleW - minCenterW;
+      return Math.max(minSidebarW, max);
+    };
+    const getMaxRight = () => {
+      const total = layout.clientWidth;
+      const leftW = leftSidebar.offsetWidth;
+      const max = total - leftW - handleCount * handleW - minCenterW;
+      return Math.max(minSidebarW, max);
+    };
     const setLeft = (w: number) => {
-      const ww = Math.max(minW, Math.min(maxW, w));
+      const ww = clamp(w, minSidebarW, getMaxLeft());
       leftSidebar.style.flex = `0 0 ${ww}px`;
       try {
         localStorage.setItem(keyL, String(ww));
@@ -756,7 +771,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     };
     const setRight = (w: number) => {
       if (!rightSidebar) return;
-      const ww = Math.max(minW, Math.min(maxW, w));
+      const ww = clamp(w, minSidebarW, getMaxRight());
       rightSidebar.style.flex = `0 0 ${ww}px`;
       try {
         localStorage.setItem(keyR, String(ww));
@@ -778,13 +793,18 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     } catch {
       //
     }
+    const onResize = () => {
+      setLeft(leftSidebar.offsetWidth);
+      if (rightSidebar) setRight(rightSidebar.offsetWidth);
+    };
+    window.addEventListener('resize', onResize);
     const setupHandle = (
       handle: HTMLElement,
       col: HTMLElement,
       setW: (w: number) => void,
       invert: boolean
     ) => {
-      handle.addEventListener('mousedown', (e) => {
+      const onMouseDown = (e: MouseEvent) => {
         e.preventDefault();
         const startX = e.clientX;
         const startW = col.offsetWidth;
@@ -802,12 +822,20 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
         };
         document.addEventListener('mousemove', onMove);
         document.addEventListener('mouseup', onUp);
-      });
+      };
+      handle.addEventListener('mousedown', onMouseDown);
+      return () => handle.removeEventListener('mousedown', onMouseDown);
     };
-    setupHandle(handleLeft, leftSidebar, setLeft, false);
+    const cleanupLeftHandle = setupHandle(handleLeft, leftSidebar, setLeft, false);
+    let cleanupRightHandle: (() => void) | undefined;
     if (handleRight && rightSidebar) {
-      setupHandle(handleRight, rightSidebar, setRight, true);
+      cleanupRightHandle = setupHandle(handleRight, rightSidebar, setRight, true);
     }
+    return () => {
+      cleanupLeftHandle();
+      cleanupRightHandle?.();
+      window.removeEventListener('resize', onResize);
+    };
   }, [loading, textPromptVisible]);
 
   if (!context) {
