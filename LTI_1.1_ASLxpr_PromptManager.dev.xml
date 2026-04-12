@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<cartridge_basiclti_link xmlns="http://www.imsglobal.org/xsd/imslticc_v1p0"
+    xmlns:blti="http://www.imsglobal.org/xsd/imsbasiclti_v1p0"
+    xmlns:lticm="http://www.imsglobal.org/xsd/imslticm_v1p0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.imsglobal.org/xsd/imslticc_v1p0 http://www.imsglobal.org/xsd/lti/ltiv1p0/imslticc_v1p0.xsd
+                        http://www.imsglobal.org/xsd/imsbasiclti_v1p0 http://www.imsglobal.org/xsd/lti/ltiv1p0/imsbasiclti_v1p0.xsd
+                        http://www.imsglobal.org/xsd/imslticm_v1p0 http://www.imsglobal.org/xsd/lti/ltiv1p0/imslticm_v1p0.xsd">
+
+    <blti:title>ASLxpr Prompter (Dev)</blti:title>
+    <blti:launch_url>https://flowstateasl-dev.onrender.com/api/lti/launch/prompter</blti:launch_url>
+    <blti:secure_launch_url>https://flowstateasl-dev.onrender.com/api/lti/launch/prompter</blti:secure_launch_url>
+    
+    <blti:extensions platform="canvas.instructure.com">
+        <lticm:options name="course_navigation">
+            <lticm:property name="text">ASLxpr Prompter (Dev)</lticm:property>
+            <lticm:property name="visibility">admins,teachers</lticm:property>
+            <lticm:property name="selection_directive">force_new</lticm:property>
+            <lticm:options name="custom_fields">
+                <lticm:property name="custom_canvas_user_id">$Canvas.user.id</lticm:property>
+                <lticm:property name="custom_module_id">$Canvas.module.id</lticm:property>
+                <lticm:property name="custom_canvas_assignment_id">$Canvas.assignment.id</lticm:property>
+                <lticm:property name="custom_canvas_api_base_url">$Canvas.api.baseUrl</lticm:property>
+                <lticm:property name="custom_canvas_domain">$Canvas.api.domain</lticm:property>
+            </lticm:options>
+        </lticm:options>
+        
+        <lticm:options name="homework_submission">
+            <lticm:property name="text">ASLxpr Assessment (Dev)</lticm:property>
+            <lticm:options name="custom_fields">
+                <lticm:property name="custom_canvas_user_id">$Canvas.user.id</lticm:property>
+                <lticm:property name="custom_module_id">$Canvas.module.id</lticm:property>
+                <lticm:property name="custom_canvas_assignment_id">$Canvas.assignment.id</lticm:property>
+                <lticm:property name="custom_canvas_api_base_url">$Canvas.api.baseUrl</lticm:property>
+                <lticm:property name="custom_canvas_domain">$Canvas.api.domain</lticm:property>
+            </lticm:options>
+        </lticm:options>
+        
+        <lticm:options name="deep_linking">
+            <lticm:property name="text">ASLxpr Assessment (Dev)</lticm:property>
+            <lticm:options name="custom_fields">
+                <lticm:property name="custom_canvas_user_id">$Canvas.user.id</lticm:property>
+                <lticm:property name="custom_module_id">$Canvas.module.id</lticm:property>
+                <lticm:property name="custom_canvas_assignment_id">$Canvas.assignment.id</lticm:property>
+                <lticm:property name="custom_canvas_api_base_url">$Canvas.api.baseUrl</lticm:property>
+                <lticm:property name="custom_canvas_domain">$Canvas.api.domain</lticm:property>
+            </lticm:options>
+        </lticm:options>
+    </blti:extensions>
+    
+    <blti:custom>
+        <lticm:property name="course_id">$Canvas.course.id</lticm:property>
+        <lticm:property name="assignment_id">$Canvas.assignment.id</lticm:property>
+        <lticm:property name="canvas_user_id">$Canvas.user.id</lticm:property>
+        <lticm:property name="module_id">$Canvas.module.id</lticm:property>
+        <lticm:property name="roles">$Canvas.membership.roles</lticm:property>
+        <lticm:property name="lis_result_sourcedid">$Canvas.rlis.result_sourcedid</lticm:property>
+        <lticm:property name="lis_outcome_service_url">$Canvas.rlis.result_serviceurl</lticm:property>
+    </blti:custom>
+    
+    <blti:description>ASL Express Prompter (Dev) - Configure and submit video signing assessments with deck-based prompts.</blti:description>
+</cartridge_basiclti_link>
