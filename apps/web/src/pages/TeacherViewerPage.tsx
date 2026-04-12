@@ -92,18 +92,19 @@ function resolveDeckTimeline(
   return parseDeckTimelineFromSubmissionComments(comments);
 }
 
+const VIDEO_SCRUB_READY_MAX_WAIT_MS = 12_000;
+
 /**
- * True when the video is safe for timeline scrubbing: known duration, enough decoded data,
- * and seekable or buffered range covers (nearly) the full file. Uses progress-friendly checks
- * so we update as data arrives instead of flipping on a single event.
+ * Ideal: duration known, current frame available, and seekable/buffer covers (nearly) the whole file.
+ * Many encodes/CDNs expose full duration before the tail is buffered — without a fallback the UI spins forever.
  */
 function isVideoScrubUiReady(video: HTMLVideoElement): boolean {
   if (video.error) return false;
   const d = video.duration;
   if (!Number.isFinite(d) || d <= 0) return false;
-  if (video.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) return false;
+  if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return false;
 
-  const tol = d < 3 ? 0.5 : 1.5;
+  const tol = d < 3 ? 0.5 : Math.min(3, Math.max(1.25, d * 0.015));
 
   if (video.seekable.length > 0) {
     const seekEnd = video.seekable.end(video.seekable.length - 1);
@@ -117,6 +118,14 @@ function isVideoScrubUiReady(video: HTMLVideoElement): boolean {
   }
 
   return false;
+}
+
+/** After timeout: unlock controls if we can decode the current frame (scrub may still improve as data arrives). */
+function isVideoPlayUiMinReady(video: HTMLVideoElement): boolean {
+  if (video.error) return false;
+  const d = video.duration;
+  if (!Number.isFinite(d) || d <= 0) return false;
+  return video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA;
 }
 
 function activeDeckPromptAt(t: number, segments: DeckTimelineEntry[]): DeckTimelineEntry | null {
@@ -375,11 +384,20 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
 
     let cancelled = false;
     let intervalId: ReturnType<typeof setInterval> | undefined;
+    /** Timer id (DOM number vs Node Timeout — store opaquely for clearTimeout). */
+    let fallbackUnlockId: ReturnType<typeof globalThis.setTimeout> | undefined;
 
     const clearPoll = () => {
       if (intervalId != null) {
         clearInterval(intervalId);
         intervalId = undefined;
+      }
+    };
+
+    const clearFallback = () => {
+      if (fallbackUnlockId != null) {
+        globalThis.clearTimeout(fallbackUnlockId);
+        fallbackUnlockId = undefined;
       }
     };
 
@@ -391,11 +409,13 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
         setVideoLoadError(true);
         setVideoPlaybackReady(false);
         clearPoll();
+        clearFallback();
         return;
       }
       if (isVideoScrubUiReady(node)) {
         setVideoPlaybackReady(true);
         clearPoll();
+        clearFallback();
       }
     };
 
@@ -409,6 +429,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
       setVideoLoadError(true);
       setVideoPlaybackReady(false);
       clearPoll();
+      clearFallback();
     };
 
     v.addEventListener('loadstart', onLoadStart);
@@ -421,9 +442,22 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     evaluate();
     intervalId = setInterval(evaluate, 200);
 
+    fallbackUnlockId = globalThis.setTimeout(() => {
+      if (cancelled) return;
+      const node = videoRef.current;
+      if (!node || node !== v) return;
+      if (node.error) return;
+      if (isVideoPlayUiMinReady(node)) {
+        setVideoPlaybackReady(true);
+        clearPoll();
+        clearFallback();
+      }
+    }, VIDEO_SCRUB_READY_MAX_WAIT_MS);
+
     return () => {
       cancelled = true;
       clearPoll();
+      clearFallback();
       v.removeEventListener('loadstart', onLoadStart);
       v.removeEventListener('loadedmetadata', evaluate);
       v.removeEventListener('loadeddata', evaluate);
