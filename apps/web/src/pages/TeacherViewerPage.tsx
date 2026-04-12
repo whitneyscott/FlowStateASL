@@ -1250,40 +1250,40 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
             </div>
           )}
 
-          {gradingMode && current && pointsPossible != null && (
+          {gradingMode && current && (
             <div className="prompter-viewer-center-row prompter-viewer-center-row--grade">
               <div className="prompter-viewer-grade-row-full">
-                <label htmlFor="grade-input">Grade:</label>
-                <input
-                  id="grade-input"
-                  type="number"
-                  min={0}
-                  max={pointsPossible > 0 ? pointsPossible : undefined}
-                  step="any"
-                  value={gradeValue}
-                  onChange={(e) => setGradeValue(e.target.value)}
-                  placeholder="0"
-                />
-                <span className="prompter-viewer-points-label">/ {Math.round(pointsPossible)} pts</span>
-                <button type="button" onClick={handleGrade} disabled={saving} className="prompter-viewer-grade-btn">
-                  Save grade
-                </button>
-                {gradeSaveStatus && <span className="prompter-viewer-save-status">{gradeSaveStatus}</span>}
-              </div>
-            </div>
-          )}
-          {gradingMode && current && (
-            <div className="prompter-viewer-center-row prompter-viewer-center-row--reset">
-              <div className="prompter-viewer-reset-row">
-                <button
-                  type="button"
-                  onClick={handleReset}
-                  disabled={saving}
-                  className="prompter-viewer-reset-btn"
-                >
-                  Reset student&apos;s attempt
-                </button>
-                {resetStatus && <span className="prompter-viewer-reset-status">{resetStatus}</span>}
+                {pointsPossible != null && (
+                  <>
+                    <label htmlFor="grade-input">Grade:</label>
+                    <input
+                      id="grade-input"
+                      type="number"
+                      min={0}
+                      max={pointsPossible > 0 ? pointsPossible : undefined}
+                      step="any"
+                      value={gradeValue}
+                      onChange={(e) => setGradeValue(e.target.value)}
+                      placeholder="0"
+                    />
+                    <span className="prompter-viewer-points-label">/ {Math.round(pointsPossible)} pts</span>
+                    <button type="button" onClick={handleGrade} disabled={saving} className="prompter-viewer-grade-btn">
+                      Save grade
+                    </button>
+                    {gradeSaveStatus && <span className="prompter-viewer-save-status">{gradeSaveStatus}</span>}
+                  </>
+                )}
+                <div className="prompter-viewer-reset-inline">
+                  <button
+                    type="button"
+                    onClick={handleReset}
+                    disabled={saving}
+                    className="prompter-viewer-reset-btn"
+                  >
+                    Reset student&apos;s attempt
+                  </button>
+                  {resetStatus && <span className="prompter-viewer-reset-status">{resetStatus}</span>}
+                </div>
               </div>
             </div>
           )}
@@ -1340,7 +1340,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                     </div>
                     <div className="prompter-viewer-active-item-meta">
                       {activeDeckPrompt ? (
-                        <>
+                        <div className="prompter-viewer-active-item-time-prompt-row">
                           <span className="prompter-viewer-active-item-time">
                             {formatTime(Math.floor(activeDeckPrompt.startSec))}
                           </span>
@@ -1348,7 +1348,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                             className="prompter-viewer-active-item-prompt-html"
                             dangerouslySetInnerHTML={{ __html: activeDeckPrompt.title || '—' }}
                           />
-                        </>
+                        </div>
                       ) : (
                         <span className="prompter-viewer-active-item-placeholder">No card active at this time.</span>
                       )}
@@ -1357,13 +1357,15 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                 ) : activeDeckPrompt ? (
                   <div className="prompter-viewer-active-item-panel prompter-viewer-active-item-panel--prompt-only">
                     <div className="prompter-viewer-active-item-meta">
-                      <span className="prompter-viewer-active-item-time">
-                        {formatTime(Math.floor(activeDeckPrompt.startSec))}
-                      </span>
-                      <div
-                        className="prompter-viewer-active-item-prompt-html"
-                        dangerouslySetInnerHTML={{ __html: activeDeckPrompt.title || '—' }}
-                      />
+                      <div className="prompter-viewer-active-item-time-prompt-row">
+                        <span className="prompter-viewer-active-item-time">
+                          {formatTime(Math.floor(activeDeckPrompt.startSec))}
+                        </span>
+                        <div
+                          className="prompter-viewer-active-item-prompt-html"
+                          dangerouslySetInnerHTML={{ __html: activeDeckPrompt.title || '—' }}
+                        />
+                      </div>
                     </div>
                   </div>
                 ) : (
