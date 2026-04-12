@@ -4,6 +4,7 @@ import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
 import { resolveLtiContextValue } from '../utils/lti-context';
 import * as promptApi from '../api/prompt.api';
+import { ltiTokenHeaders } from '../api/lti-token';
 import './PrompterPage.css';
 
 interface FeedbackEntry {
@@ -175,6 +176,9 @@ const TEACHER_PATTERNS = [
   'ta',
 ];
 
+// TEMP DIAGNOSTIC FLAG: set to false (or remove block) to disable resize bridge logging.
+const ENABLE_RESIZE_DEBUG_LOG = true;
+
 function isTeacher(roles: string): boolean {
   if (!roles || typeof roles !== 'string') return false;
   return TEACHER_PATTERNS.some((p) => roles.toLowerCase().includes(p));
@@ -299,6 +303,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const leftSidebarRef = useRef<HTMLDivElement>(null);
   const rightSidebarRef = useRef<HTMLDivElement>(null);
+  const resizeDebugLastSentAtRef = useRef(0);
   const [textPromptVisible, setTextPromptVisible] = useState(false);
 
   const isDev = typeof window !== 'undefined' && /^(localhost|127\.0\.0\.1)$/.test(window.location.hostname);
@@ -779,6 +784,32 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
         //
       }
     };
+    const logResizeDebug = () => {
+      if (!ENABLE_RESIZE_DEBUG_LOG) return;
+      const now = Date.now();
+      if (now - resizeDebugLastSentAtRef.current < 100) return;
+      resizeDebugLastSentAtRef.current = now;
+      const payload = {
+        leftStyleFlex: leftSidebar.style.flex || '(unset)',
+        leftRendered: Number(leftSidebar.getBoundingClientRect().width.toFixed(2)),
+        layoutWidth: Number(layout.getBoundingClientRect().width.toFixed(2)),
+        rightRendered: Number((rightSidebar?.getBoundingClientRect().width ?? 0).toFixed(2)),
+        computedMax: Number(getMaxLeft().toFixed(2)),
+        minCenterW,
+      };
+      const message = `resize-drag ${JSON.stringify(payload)}`;
+      void fetch('/api/debug/lti-log', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          ...ltiTokenHeaders(),
+        },
+        body: JSON.stringify({ tag: 'resize', message }),
+      }).catch(() => {
+        // Non-blocking diagnostic only.
+      });
+    };
     try {
       const sl = localStorage.getItem(keyL);
       const sr = localStorage.getItem(keyR);
@@ -813,6 +844,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
         const onMove = (ev: MouseEvent) => {
           const dx = invert ? startX - ev.clientX : ev.clientX - startX;
           setW(startW + dx);
+          if (!invert) logResizeDebug();
         };
         const onUp = () => {
           document.removeEventListener('mousemove', onMove);
