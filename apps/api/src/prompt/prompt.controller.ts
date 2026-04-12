@@ -400,26 +400,18 @@ export class PromptController {
   }
 
   /**
-   * Mint a short-lived proxy grant for Canvas video URLs (Bearer auth).
-   * Client uses returned playbackUrl on &lt;video src&gt; (no JWT in query).
-   */
-  @Post('video-proxy-token')
-  @HttpCode(HttpStatus.OK)
-  async mintVideoProxyToken(@Req() req: Request, @Body() body: { url?: string }) {
-    const ctx = this.getCtx(req);
-    const url = (body?.url ?? '').toString().trim();
-    if (!url) throw new BadRequestException('url is required');
-    return this.prompt.mintVideoProxyGrant(ctx, url);
-  }
-
-  /**
-   * Stream Canvas video using proxy_token grant (no Bearer on &lt;video&gt;).
-   * Forwards Range for seeking; streams without buffering the full file.
+   * Stream Canvas video using per-course token (no Bearer on &lt;video&gt;).
+   * Requires course_id + url (+ optional canvas_base from server-built URLs). Range passthrough; streamed body.
    */
   @Get('video-proxy')
   async videoProxy(@Req() req: Request, @Res() res: Response) {
-    const q = req.query as { url?: string; proxy_token?: string | string[] };
-    const enc = (q?.url ?? '').toString().trim();
+    const q = req.query as {
+      url?: string | string[];
+      course_id?: string | string[];
+      canvas_base?: string | string[];
+    };
+    const encRaw = Array.isArray(q.url) ? q.url[0] : q.url;
+    const enc = (encRaw ?? '').toString().trim();
     if (!enc) {
       return res.status(400).send('Missing url parameter');
     }
@@ -429,20 +421,23 @@ export class PromptController {
     } catch {
       return res.status(400).send('Invalid url parameter');
     }
-    const rawPt = q.proxy_token;
-    const proxyToken = (Array.isArray(rawPt) ? rawPt[0] : rawPt)?.toString().trim() ?? '';
-    if (!proxyToken) {
-      return res.status(400).send('Missing proxy_token');
+    const cidRaw = Array.isArray(q.course_id) ? q.course_id[0] : q.course_id;
+    const courseId = (cidRaw ?? '').toString().trim();
+    if (!courseId) {
+      return res.status(400).send('Missing course_id');
     }
+    const cbRaw = Array.isArray(q.canvas_base) ? q.canvas_base[0] : q.canvas_base;
+    const canvasBase = (cbRaw ?? '').toString().trim() || undefined;
     try {
-      await this.prompt.pipeCanvasVideoProxyToResponse(
+      await this.prompt.pipeCanvasVideoProxyForCourse(
         res,
         req.headers.range as string | undefined,
         targetUrl,
-        proxyToken,
+        courseId,
+        canvasBase,
       );
     } catch (err) {
-      if (err instanceof ForbiddenException) throw err;
+      if (err instanceof ForbiddenException || err instanceof BadRequestException) throw err;
       if (!res.headersSent) {
         return res.status(502).send('Proxy failed');
       }

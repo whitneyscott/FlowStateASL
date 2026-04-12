@@ -20,14 +20,16 @@ import { QuizService } from '../quiz/quiz.service';
 import { SproutVideoService } from '../sproutvideo/sproutvideo.service';
 import { SproutPlaylistVideoEntity } from '../sproutvideo/entities/sprout-playlist-video.entity';
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
-import { canvasApiBaseFromLtiContext } from '../common/utils/canvas-base-url.util';
+import {
+  canvasApiBaseFromLtiContext,
+  normalizeToCanvasRestBase,
+} from '../common/utils/canvas-base-url.util';
 import { resolveCanvasApiUserId } from '../common/utils/canvas-api-user.util';
 import type { PromptConfigJson, PutPromptConfigDto } from './dto/prompt-config.dto';
-import { createHash, randomBytes, randomUUID } from 'crypto';
+import { randomUUID } from 'crypto';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { Response } from 'express';
-import { VideoProxyGrantEntity } from './entities/video-proxy-grant.entity';
 
 const PROMPT_MANAGER_SETTINGS_ASSIGNMENT_TITLE = 'Prompt Manager Settings';
 const PROMPT_MANAGER_SETTINGS_ANNOUNCEMENT_TITLE = 'ASL Express Prompt Manager Settings';
@@ -220,16 +222,21 @@ export class PromptService {
     private readonly sproutVideo: SproutVideoService,
     @InjectRepository(SproutPlaylistVideoEntity)
     private readonly sproutPlaylistVideoRepo: Repository<SproutPlaylistVideoEntity>,
-    @InjectRepository(VideoProxyGrantEntity)
-    private readonly videoProxyGrantRepo: Repository<VideoProxyGrantEntity>,
   ) {}
 
-  private static hashVideoProxyToken(raw: string): string {
-    return createHash('sha256').update(raw, 'utf8').digest('hex');
-  }
-
-  /** Same host allowlist as Canvas video proxy (SSRF guard). */
-  assertVideoProxyTargetAllowed(targetUrl: string, ctx: LtiContext): void {
+  /**
+   * SSRF guard for unauthenticated video-proxy: Instructure CDN/hosting + optional school host
+   * from `canvas_base` query (set by server in toViewerVideoUrl) or CANVAS_API_BASE_URL.
+   */
+  assertVideoProxyTargetForCourse(
+    targetUrl: string,
+    courseId: string,
+    canvasBaseFromQuery?: string | null,
+  ): void {
+    const cid = (courseId ?? '').trim();
+    if (!cid) {
+      throw new BadRequestException('course_id is required');
+    }
     let parsed: URL;
     try {
       parsed = new URL(targetUrl);
@@ -239,70 +246,51 @@ export class PromptService {
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
       throw new BadRequestException('Invalid video URL');
     }
-    const canvasBase = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
-    const canvasHost = canvasBase ? new URL(canvasBase).hostname : '';
-    const isSameCanvas = !!(canvasHost && parsed.hostname === canvasHost);
     const isInstructure =
       parsed.hostname === 'instructure.com' ||
       parsed.hostname.endsWith('.instructure.com') ||
       parsed.hostname === 'instructureusercontent.com' ||
       parsed.hostname.endsWith('.instructureusercontent.com');
-    if (!isSameCanvas && !isInstructure) {
-      throw new ForbiddenException('Video URL not allowed');
+    if (isInstructure) return;
+
+    let canvasHost = '';
+    const qBase = (canvasBaseFromQuery ?? '').trim();
+    if (qBase) {
+      try {
+        const decoded = decodeURIComponent(qBase);
+        const norm = normalizeToCanvasRestBase(decoded);
+        if (norm) canvasHost = new URL(norm).hostname;
+      } catch {
+        throw new BadRequestException('Invalid canvas_base');
+      }
     }
+    if (!canvasHost) {
+      const envBase = normalizeToCanvasRestBase(this.config.get<string>('CANVAS_API_BASE_URL'));
+      if (envBase) {
+        try {
+          canvasHost = new URL(envBase).hostname;
+        } catch {
+          //
+        }
+      }
+    }
+    if (canvasHost && parsed.hostname.toLowerCase() === canvasHost.toLowerCase()) return;
+    throw new ForbiddenException('Video URL not allowed');
   }
 
   /**
-   * Mint a short-lived DB-backed grant; client uses returned playbackUrl on <video src>.
-   * Token is multi-use until expiry (Range / seek).
+   * Stream Canvas video for grading viewer: no LTI session on &lt;video&gt; requests; uses per-course
+   * Canvas token from DB. Forwards Range for seeking; streams without buffering the full file.
    */
-  async mintVideoProxyGrant(
-    ctx: LtiContext,
-    targetUrl: string,
-  ): Promise<{ playbackUrl: string; expiresInSeconds: number }> {
-    const trimmed = targetUrl.trim();
-    if (!trimmed) {
-      throw new BadRequestException('url is required');
-    }
-    this.assertVideoProxyTargetAllowed(trimmed, ctx);
-    const courseId = (ctx.courseId ?? '').trim();
-    if (!courseId) {
-      throw new BadRequestException('courseId required for video proxy');
-    }
-    const rawToken = randomBytes(32).toString('hex');
-    const tokenHash = PromptService.hashVideoProxyToken(rawToken);
-    const ttlMs = 60_000;
-    const expiresAt = new Date(Date.now() + ttlMs);
-    const row = this.videoProxyGrantRepo.create({
-      tokenHash,
-      targetUrl: trimmed,
-      courseId,
-      expiresAt,
-      createdAt: new Date(),
-    });
-    await this.videoProxyGrantRepo.save(row);
-    const enc = encodeURIComponent(trimmed);
-    const playbackUrl = `/api/prompt/video-proxy?url=${enc}&proxy_token=${encodeURIComponent(rawToken)}`;
-    return { playbackUrl, expiresInSeconds: 60 };
-  }
-
-  /**
-   * Stream Canvas video to Express response; Range header forwarded for seeking.
-   */
-  async pipeCanvasVideoProxyToResponse(
+  async pipeCanvasVideoProxyForCourse(
     res: Response,
     clientRange: string | undefined,
     targetUrl: string,
-    rawProxyToken: string,
+    courseId: string,
+    canvasBaseFromQuery?: string | null,
   ): Promise<void> {
-    const tokenHash = PromptService.hashVideoProxyToken(rawProxyToken);
-    const grant = await this.videoProxyGrantRepo.findOne({ where: { tokenHash } });
-    const now = Date.now();
-    if (!grant || grant.expiresAt.getTime() <= now || grant.targetUrl !== targetUrl) {
-      if (!res.headersSent) res.status(404).end();
-      return;
-    }
-    const canvasToken = await this.courseSettings.getEffectiveCanvasToken(grant.courseId, undefined);
+    this.assertVideoProxyTargetForCourse(targetUrl, courseId, canvasBaseFromQuery);
+    const canvasToken = await this.courseSettings.getEffectiveCanvasToken(courseId.trim(), undefined);
     if (!canvasToken) {
       if (!res.headersSent) res.status(502).end();
       return;
@@ -2636,8 +2624,8 @@ export class PromptService {
   }
 
   /**
-   * Convert external Canvas video URL to our proxy base URL (no proxy_token).
-   * The client must POST /api/prompt/video-proxy-token to obtain a short-lived playback URL.
+   * Convert external Canvas video URL to our proxy URL for &lt;video src&gt; (no Bearer on requests).
+   * Includes course_id and optional canvas_base for SSRF + per-course Canvas token lookup.
    * Our own /api/prompt/submission/ URLs are returned as-is. Resolves relative Canvas URLs.
    */
   toViewerVideoUrl(videoUrl: string | undefined, ctx?: LtiContext): string | undefined {
@@ -2654,7 +2642,18 @@ export class PromptService {
       }
     }
     if (!videoUrl.startsWith('http://') && !videoUrl.startsWith('https://')) return videoUrl;
-    return `/api/prompt/video-proxy?url=${encodeURIComponent(videoUrl)}`;
+    const cid = (ctx?.courseId ?? '').trim();
+    if (!cid) {
+      return `/api/prompt/video-proxy?url=${encodeURIComponent(videoUrl)}`;
+    }
+    const canvasBase = ctx
+      ? canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'))
+      : undefined;
+    let out = `/api/prompt/video-proxy?url=${encodeURIComponent(videoUrl)}&course_id=${encodeURIComponent(cid)}`;
+    if (canvasBase) {
+      out += `&canvas_base=${encodeURIComponent(canvasBase)}`;
+    }
+    return out;
   }
 
   async grade(

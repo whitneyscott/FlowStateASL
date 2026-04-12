@@ -10,9 +10,6 @@ import { LtiModule } from '../lti/lti.module';
 import { QuizModule } from '../quiz/quiz.module';
 import { SproutVideoModule } from '../sproutvideo/sproutvideo.module';
 import { SproutPlaylistVideoEntity } from '../sproutvideo/entities/sprout-playlist-video.entity';
-import { VideoProxyGrantEntity } from './entities/video-proxy-grant.entity';
-import { VideoProxyGrantCleanupScheduler } from './video-proxy-grant-cleanup.scheduler';
-
 @Module({
   imports: [
     DataModule,
@@ -21,10 +18,10 @@ import { VideoProxyGrantCleanupScheduler } from './video-proxy-grant-cleanup.sch
     forwardRef(() => LtiModule),
     forwardRef(() => QuizModule),
     SproutVideoModule,
-    TypeOrmModule.forFeature([SproutPlaylistVideoEntity, VideoProxyGrantEntity]),
+    TypeOrmModule.forFeature([SproutPlaylistVideoEntity]),
   ],
   controllers: [PromptController],
-  providers: [PromptService, UploadResilienceService, VideoProxyGrantCleanupScheduler],
+  providers: [PromptService, UploadResilienceService],
   exports: [PromptService],
 })
 export class PromptModule {}
