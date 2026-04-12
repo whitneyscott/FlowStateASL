@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
 import { resolveLtiContextValue } from '../utils/lti-context';
+import { videoSrcWithBearerIfNeeded } from '../utils/viewer-video-src';
 import * as promptApi from '../api/prompt.api';
 import './PrompterPage.css';
 
@@ -886,6 +887,10 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   const promptUsed = getPromptFromComments(current?.body, current?.submissionComments, current?.promptHtml);
   const hasSubmissionNoVideo = current && !current.videoUrl;
   const noSubmissionsInGradingMode = gradingMode && submissions.length === 0;
+  const viewerVideoSrc = useMemo(
+    () => (current?.videoUrl ? videoSrcWithBearerIfNeeded(current.videoUrl) : undefined),
+    [current?.videoUrl, context],
+  );
 
   return (
     <div className="prompter-page prompter-page--viewer">
@@ -1215,10 +1220,10 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
           <div className="prompter-viewer-video-wrap">
             {noSubmissionsInGradingMode ? (
               <p className="prompter-viewer-no-video">No submissions for this assignment.</p>
-            ) : current?.videoUrl ? (
+            ) : viewerVideoSrc ? (
               <video
                 ref={videoRef}
-                src={current.videoUrl}
+                src={viewerVideoSrc}
                 controls
                 onError={() => setVideoLoadFailed(true)}
               />

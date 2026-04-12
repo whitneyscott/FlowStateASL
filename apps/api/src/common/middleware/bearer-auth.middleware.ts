@@ -18,7 +18,17 @@ export class BearerAuthMiddleware implements NestMiddleware {
 
   async use(req: Request, _res: Response, next: NextFunction): Promise<void> {
     const auth = (req.headers.authorization ?? '').trim();
-    const bearer = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7).trim() : '';
+    let bearer = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7).trim() : '';
+    // <video src> cannot send Authorization; allow same JWT via query on video-proxy only.
+    if (!bearer && req.method === 'GET') {
+      const path = (req.path ?? '').toString();
+      if (path.includes('video-proxy')) {
+        const q = req.query as { access_token?: string | string[] };
+        const raw = q.access_token;
+        const qt = Array.isArray(raw) ? raw[0] : raw;
+        if (typeof qt === 'string' && qt.trim()) bearer = qt.trim();
+      }
+    }
     const loaded = bearer ? await this.authSessions.getByBearerToken(bearer) : null;
 
     const session: MutableSession = {
