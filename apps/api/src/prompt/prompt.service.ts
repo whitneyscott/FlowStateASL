@@ -2163,6 +2163,19 @@ export class PromptService {
       source: video.filePath ? 'filepath' : 'buffer',
       captureProfile: options?.captureProfile ?? null,
     });
+    appendLtiLog('duration', 'uploadVideo: durationSeconds in options', {
+      present: options?.durationSeconds !== undefined,
+      value: options?.durationSeconds ?? null,
+      typeof:
+        options?.durationSeconds === undefined
+          ? 'undefined'
+          : typeof options.durationSeconds,
+      finitePositive:
+        options?.durationSeconds != null &&
+        typeof options.durationSeconds === 'number' &&
+        Number.isFinite(options.durationSeconds) &&
+        options.durationSeconds > 0,
+    });
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
     if (!token) {
       appendLtiLog('prompt-upload', 'upload-video FAIL: no token');
@@ -2286,6 +2299,9 @@ export class PromptService {
         commentPayload.durationSeconds = durationRounded;
       }
       const commentText = JSON.stringify(commentPayload);
+      appendLtiLog('duration', 'uploadVideo: Canvas comment payload (full JSON as sent)', {
+        commentJson: commentText,
+      });
       try {
         await this.canvas.putSubmissionTextComment(
           ctx.courseId,
@@ -2309,6 +2325,11 @@ export class PromptService {
           error: String(commentErr),
         });
       }
+    } else {
+      appendLtiLog('duration', 'uploadVideo: skipped Canvas comment (no prompt snapshot and no finite duration)', {
+        hasPromptSnapshot: !!promptSnapshotTrimmed,
+        durationSecondsOption: options?.durationSeconds ?? null,
+      });
     }
 
     const readVerify = (
@@ -2694,6 +2715,13 @@ export class PromptService {
         }
       }),
     );
+    for (const row of withQuizPrompts) {
+      appendLtiLog('duration', 'getSubmissions: submission row', {
+        userId: row.userId,
+        videoDurationSeconds: row.videoDurationSeconds,
+        durationSource: row.durationSource,
+      });
+    }
     return withQuizPrompts;
   }
 

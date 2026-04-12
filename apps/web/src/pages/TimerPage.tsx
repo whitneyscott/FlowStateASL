@@ -5,6 +5,7 @@ import { useDebug } from '../contexts/DebugContext';
 import * as promptApi from '../api/prompt.api';
 import { ManualTokenModal } from '../components/ManualTokenModal';
 import { resolveLtiContextValue } from '../utils/lti-context';
+import { ltiTokenHeaders } from '../api/lti-token';
 import { nextDeckIndexAfterAdvance } from '../utils/deck-advance';
 import './PrompterPage.css';
 
@@ -100,31 +101,47 @@ const VIDEO_DURATION_PROBE_MS = 1200;
  * Best-effort duration for a recorded blob (object URL + video loadedmetadata).
  * Resolves null on timeout, decode error, or non-finite duration.
  */
-function probeBlobVideoDurationSeconds(blob: Blob, timeoutMs = VIDEO_DURATION_PROBE_MS): Promise<number | null> {
+function probeBlobVideoDurationSeconds(
+  blob: Blob,
+  timeoutMs = VIDEO_DURATION_PROBE_MS,
+): Promise<{ seconds: number | null; reason: string }> {
   return new Promise((resolve) => {
     const url = URL.createObjectURL(blob);
     const video = document.createElement('video');
     let settled = false;
-    const finish = (v: number | null) => {
+    const finish = (seconds: number | null, reason: string) => {
       if (settled) return;
       settled = true;
       window.clearTimeout(tid);
       URL.revokeObjectURL(url);
       video.removeAttribute('src');
       video.load();
-      resolve(v);
+      resolve({ seconds, reason });
     };
-    const tid = window.setTimeout(() => finish(null), timeoutMs);
+    const tid = window.setTimeout(() => finish(null, 'timeout'), timeoutMs);
     video.preload = 'metadata';
     video.muted = true;
     video.playsInline = true;
     video.onloadedmetadata = () => {
       const d = video.duration;
-      finish(Number.isFinite(d) && d > 0 ? Math.round(d * 1000) / 1000 : null);
+      if (Number.isFinite(d) && d > 0) {
+        finish(Math.round(d * 1000) / 1000, 'loadedmetadata_ok');
+      } else {
+        finish(null, 'loadedmetadata_invalid_duration');
+      }
     };
-    video.onerror = () => finish(null);
+    video.onerror = () => finish(null, 'video_element_error');
     video.src = url;
   });
+}
+
+function appendDurationBridgeLog(message: string): void {
+  void fetch('/api/debug/lti-log', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json', ...ltiTokenHeaders() },
+    body: JSON.stringify({ tag: 'duration', message }),
+  }).catch(() => {});
 }
 
 function mapSubmitErrorForStudent(message: string): string {
@@ -229,13 +246,20 @@ export default function TimerPage({ context }: TimerPageProps) {
         );
       }
       let durationSeconds: number | null = null;
+      let probeReason = 'no_blob';
       if (blob) {
         try {
-          durationSeconds = await probeBlobVideoDurationSeconds(blob);
-        } catch {
+          const probe = await probeBlobVideoDurationSeconds(blob);
+          durationSeconds = probe.seconds;
+          probeReason = probe.reason;
+        } catch (e) {
           durationSeconds = null;
+          probeReason = `exception:${e instanceof Error ? e.message : String(e)}`;
         }
       }
+      appendDurationBridgeLog(
+        `TimerPage probeBlobVideoDurationSeconds: seconds=${durationSeconds === null ? 'null' : String(durationSeconds)} reason=${probeReason}`,
+      );
       setPhase(blob ? 'upload' : 'done');
       const isDeepLink = context?.messageType === 'LtiDeepLinkingRequest';
       const submitAttemptKey =

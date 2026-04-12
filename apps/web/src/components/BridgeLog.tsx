@@ -199,6 +199,16 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
       newLines.push('(No submission activity yet)');
     }
 
+    // Duration pipeline (client probe → upload comment JSON → grader rows)
+    newLines.push('');
+    newLines.push('--- Duration pipeline ---');
+    const durationLines = ltiLog.filter((line) => line.includes('] [duration] '));
+    if (durationLines.length > 0) {
+      newLines.push(...durationLines);
+    } else {
+      newLines.push('(No duration pipeline logs yet)');
+    }
+
     // Resize diagnostics (temporary viewer panel drag telemetry)
     newLines.push('');
     newLines.push('--- Resize Diagnostics (panel drag telemetry) ---');
@@ -220,6 +230,7 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
     newLines.push('--- Viewer / Grading (select assignment → submissions) ---');
     const viewerLines = ltiLog.filter(
       (line) =>
+        !line.includes('] [duration] ') &&
         !line.includes('listSubmissions') &&
         (line.includes('[viewer]') ||
           line.toLowerCase().includes('submissions') ||
