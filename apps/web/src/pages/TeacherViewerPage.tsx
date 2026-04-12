@@ -277,7 +277,11 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
 
   const [submissions, setSubmissions] = useState<promptApi.PromptSubmission[]>([]);
   const [submissionCount, setSubmissionCount] = useState<number | null>(null);
-  const [assignment, setAssignment] = useState<{ pointsPossible?: number; rubric?: Array<unknown> } | null>(null);
+  const [assignment, setAssignment] = useState<{
+    name?: string;
+    pointsPossible?: number;
+    rubric?: Array<unknown>;
+  } | null>(null);
   const [mySubmission, setMySubmission] = useState<promptApi.PromptSubmission | null>(null);
   const [loading, setLoading] = useState(true);
   const [index, setIndex] = useState(0);
@@ -316,10 +320,6 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   }, [current?.submissionComments]);
 
   useEffect(() => { syncFeedbackFromCurrent(); }, [syncFeedbackFromCurrent]);
-
-  useEffect(() => {
-    setVideoLoadFailed(false);
-  }, [current?.userId]);
 
   useEffect(() => {
     if (!current) return;
@@ -650,7 +650,6 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   };
 
   const [currentTime, setCurrentTime] = useState(0);
-  const [videoLoadFailed, setVideoLoadFailed] = useState(false);
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
@@ -1139,79 +1138,96 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
               </button>
             </div>
           )}
-          {gradingMode && submissions.length > 0 && (
-            <>
-              <div className="prompter-viewer-dropdown-row">
-                <label htmlFor="submission-select">Submission:</label>
-                <select
-                  id="submission-select"
-                  value={current?.userId ?? ''}
-                  onChange={handleStudentSelect}
-                >
-                  <option value="">— Select student —</option>
-                  {submissions.map((s) => (
-                    <option key={s.userId} value={s.userId}>
-                      {s.userName ?? s.userId}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="prompter-viewer-nav-row">
-                <button
-                  type="button"
-                  onClick={() => setIndex((i) => Math.max(0, i - 1))}
-                  disabled={index <= 0}
-                  className={`prompter-viewer-nav-btn ${index <= 0 ? 'disabled' : ''}`}
-                >
-                  ← Previous
-                </button>
-                <span className="prompter-viewer-nav-index">
-                  {index + 1} of {submissions.length}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setIndex((i) => Math.min(submissions.length - 1, i + 1))}
-                  disabled={index >= submissions.length - 1}
-                  className={`prompter-viewer-nav-btn ${index >= submissions.length - 1 ? 'disabled' : ''}`}
-                >
-                  Next →
-                </button>
-              </div>
-            </>
+
+          {assignmentId && (
+            <div className="prompter-viewer-center-row prompter-viewer-center-row--title">
+              <h1 className="prompter-viewer-assignment-title">
+                {assignment?.name?.trim() || `Assignment ${assignmentId}`}
+              </h1>
+            </div>
           )}
+
+          {gradingMode && submissions.length > 0 && (
+            <div className="prompter-viewer-center-row prompter-viewer-center-row--submission-nav">
+              <div className="prompter-viewer-submission-nav-inner">
+                <div className="prompter-viewer-dropdown-row prompter-viewer-dropdown-row--inline">
+                  <label htmlFor="submission-select">Submission:</label>
+                  <select
+                    id="submission-select"
+                    value={current?.userId ?? ''}
+                    onChange={handleStudentSelect}
+                  >
+                    <option value="">— Select student —</option>
+                    {submissions.map((s) => (
+                      <option key={s.userId} value={s.userId}>
+                        {s.userName ?? s.userId}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="prompter-viewer-nav-row prompter-viewer-nav-row--inline">
+                  <button
+                    type="button"
+                    onClick={() => setIndex((i) => Math.max(0, i - 1))}
+                    disabled={index <= 0}
+                    className={`prompter-viewer-nav-btn ${index <= 0 ? 'disabled' : ''}`}
+                  >
+                    ← Previous
+                  </button>
+                  <span className="prompter-viewer-nav-index">
+                    {index + 1} of {submissions.length}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setIndex((i) => Math.min(submissions.length - 1, i + 1))}
+                    disabled={index >= submissions.length - 1}
+                    className={`prompter-viewer-nav-btn ${index >= submissions.length - 1 ? 'disabled' : ''}`}
+                  >
+                    Next →
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {gradingMode && current && pointsPossible != null && (
-            <div className="prompter-viewer-grade-row-full">
-              <label htmlFor="grade-input">Grade:</label>
-              <input
-                id="grade-input"
-                type="number"
-                min={0}
-                max={pointsPossible > 0 ? pointsPossible : undefined}
-                step="any"
-                value={gradeValue}
-                onChange={(e) => setGradeValue(e.target.value)}
-                placeholder="0"
-              />
-              <span className="prompter-viewer-points-label">/ {Math.round(pointsPossible)} pts</span>
-              <button type="button" onClick={handleGrade} disabled={saving} className="prompter-viewer-grade-btn">
-                Save grade
-              </button>
-              {gradeSaveStatus && <span className="prompter-viewer-save-status">{gradeSaveStatus}</span>}
+            <div className="prompter-viewer-center-row prompter-viewer-center-row--grade">
+              <div className="prompter-viewer-grade-row-full">
+                <label htmlFor="grade-input">Grade:</label>
+                <input
+                  id="grade-input"
+                  type="number"
+                  min={0}
+                  max={pointsPossible > 0 ? pointsPossible : undefined}
+                  step="any"
+                  value={gradeValue}
+                  onChange={(e) => setGradeValue(e.target.value)}
+                  placeholder="0"
+                />
+                <span className="prompter-viewer-points-label">/ {Math.round(pointsPossible)} pts</span>
+                <button type="button" onClick={handleGrade} disabled={saving} className="prompter-viewer-grade-btn">
+                  Save grade
+                </button>
+                {gradeSaveStatus && <span className="prompter-viewer-save-status">{gradeSaveStatus}</span>}
+              </div>
             </div>
           )}
           {gradingMode && current && (
-            <div className="prompter-viewer-reset-row">
-              <button
-                type="button"
-                onClick={handleReset}
-                disabled={saving}
-                className="prompter-viewer-reset-btn"
-              >
-                Reset student&apos;s attempt
-              </button>
-              {resetStatus && <span className="prompter-viewer-reset-status">{resetStatus}</span>}
+            <div className="prompter-viewer-center-row prompter-viewer-center-row--reset">
+              <div className="prompter-viewer-reset-row">
+                <button
+                  type="button"
+                  onClick={handleReset}
+                  disabled={saving}
+                  className="prompter-viewer-reset-btn"
+                >
+                  Reset student&apos;s attempt
+                </button>
+                {resetStatus && <span className="prompter-viewer-reset-status">{resetStatus}</span>}
+              </div>
             </div>
           )}
+
           <div className="prompter-viewer-video-wrap">
             {noSubmissionsInGradingMode ? (
               <p className="prompter-viewer-no-video">No submissions for this assignment.</p>
@@ -1221,7 +1237,6 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                 key={current?.userId ?? ''}
                 src={current.videoUrl}
                 controls
-                onError={() => setVideoLoadFailed(true)}
               />
             ) : hasSubmissionNoVideo ? (
               <div className="prompter-viewer-processing">
@@ -1231,71 +1246,113 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
               <p className="prompter-viewer-no-video">No video</p>
             )}
           </div>
-          {isDeckPromptMode && activeDeckPrompt && (
-            <div className="prompter-viewer-now-playing prompter-viewer-now-playing-below">
-              <span>
-                <strong>{formatTime(Math.floor(activeDeckPrompt.startSec))}</strong>
-                {' — '}
-              </span>
-              <span dangerouslySetInnerHTML={{ __html: activeDeckPrompt.title || '—' }} />
-            </div>
-          )}
-          {isDeckPromptMode && activeDeckRubricRowIndex >= 0 && rubric[activeDeckRubricRowIndex] && (
-            <div className="prompter-viewer-center-rubric-controls">
-              <div className="prompter-viewer-feedback-title">Active rubric scoring</div>
-              <div className="prompter-viewer-rubric-ratings">
-                {rubric[activeDeckRubricRowIndex].ratings?.map((r) => {
-                  const c = rubric[activeDeckRubricRowIndex];
-                  const critId = String(c.id ?? activeDeckRubricRowIndex);
-                  const selectedRatingId =
-                    rubricDraft[critId]?.rating_id ?? (rubricAssessment[critId] ?? rubricAssessment[String(c.id)])?.rating_id;
-                  const rid = String(r.id ?? '');
-                  const pts = r.points ?? 0;
-                  const isSelected = selectedRatingId != null && String(selectedRatingId) === rid;
-                  return (
-                    <button
-                      key={`active-${rid}`}
-                      type="button"
-                      className={`prompter-viewer-rubric-rating ${isSelected ? 'selected' : ''}`}
-                      disabled={!teacher}
-                      onClick={() => teacher && handleRubricRatingClick(critId, rid, pts)}
-                    >
-                      {r.description ?? ''} ({pts} pts)
-                    </button>
-                  );
-                })}
+
+          {isDeckPromptMode && (
+            <>
+              <div className="prompter-viewer-center-row prompter-viewer-center-row--active-header">
+                <h2 className="prompter-viewer-section-heading">Active Item</h2>
               </div>
-            </div>
+              <div className="prompter-viewer-center-row prompter-viewer-center-row--active-item">
+                {activeDeckRubricRowIndex >= 0 && rubric[activeDeckRubricRowIndex] ? (
+                  <div className="prompter-viewer-active-item-panel">
+                    <div className="prompter-viewer-active-item-ratings">
+                      {rubric[activeDeckRubricRowIndex].ratings?.map((r) => {
+                        const c = rubric[activeDeckRubricRowIndex];
+                        const critId = String(c.id ?? activeDeckRubricRowIndex);
+                        const selectedRatingId =
+                          rubricDraft[critId]?.rating_id ??
+                          (rubricAssessment[critId] ?? rubricAssessment[String(c.id)])?.rating_id;
+                        const rid = String(r.id ?? '');
+                        const pts = r.points ?? 0;
+                        const isSelected = selectedRatingId != null && String(selectedRatingId) === rid;
+                        return (
+                          <button
+                            key={`active-${rid}`}
+                            type="button"
+                            className={`prompter-viewer-rubric-rating prompter-viewer-rubric-rating--active-item ${isSelected ? 'selected' : ''}`}
+                            disabled={!teacher}
+                            onClick={() => teacher && handleRubricRatingClick(critId, rid, pts)}
+                          >
+                            {r.description ?? ''} ({pts} pts)
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="prompter-viewer-active-item-meta">
+                      {activeDeckPrompt ? (
+                        <>
+                          <span className="prompter-viewer-active-item-time">
+                            {formatTime(Math.floor(activeDeckPrompt.startSec))}
+                          </span>
+                          <div
+                            className="prompter-viewer-active-item-prompt-html"
+                            dangerouslySetInnerHTML={{ __html: activeDeckPrompt.title || '—' }}
+                          />
+                        </>
+                      ) : (
+                        <span className="prompter-viewer-active-item-placeholder">No card active at this time.</span>
+                      )}
+                    </div>
+                  </div>
+                ) : activeDeckPrompt ? (
+                  <div className="prompter-viewer-active-item-panel prompter-viewer-active-item-panel--prompt-only">
+                    <div className="prompter-viewer-active-item-meta">
+                      <span className="prompter-viewer-active-item-time">
+                        {formatTime(Math.floor(activeDeckPrompt.startSec))}
+                      </span>
+                      <div
+                        className="prompter-viewer-active-item-prompt-html"
+                        dangerouslySetInnerHTML={{ __html: activeDeckPrompt.title || '—' }}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <p className="prompter-viewer-active-item-hint">Play the video to see the active deck item.</p>
+                )}
+              </div>
+            </>
           )}
+
           {isTextPromptMode && (
-            <div className="prompter-viewer-text-toggle-row">
-              <button
-                type="button"
-                className="prompter-viewer-grade-btn"
-                onClick={() => setTextPromptVisible((v) => !v)}
-              >
-                {textPromptVisible ? 'Hide Prompt' : 'Show Prompt'}
-              </button>
-            </div>
+            <>
+              <div className="prompter-viewer-center-row prompter-viewer-center-row--active-header">
+                <h2 className="prompter-viewer-section-heading">Prompt</h2>
+              </div>
+              <div className="prompter-viewer-center-row prompter-viewer-center-row--active-item">
+                <div className="prompter-viewer-text-prompt-inline-actions">
+                  <button
+                    type="button"
+                    className="prompter-viewer-grade-btn"
+                    onClick={() => setTextPromptVisible((v) => !v)}
+                  >
+                    {textPromptVisible ? 'Hide full prompt (side panel)' : 'Show full prompt (side panel)'}
+                  </button>
+                </div>
+              </div>
+            </>
           )}
-          {activeFeedback.length > 0 && (
-            <div className="prompter-viewer-now-playing prompter-viewer-now-playing-below">
-              {activeFeedback.map((f) => (
-                <span key={f.id}>
-                  <strong>{formatTime(f.time)}</strong>: {f.text}{' '}
-                </span>
-              ))}
-            </div>
-          )}
+
           {teacher && !noSubmissionsInGradingMode && (
-            <div className="prompter-viewer-textarea-wrap">
-              <textarea
-                id="comment"
-                value={commentText}
-                onChange={(e) => setCommentText(e.target.value)}
-                onKeyDown={handleCommentKeyDown}
-                placeholder="Type feedback and press Enter to add at current time..."
-              />
+            <div className="prompter-viewer-center-row prompter-viewer-center-row--freeform-feedback">
+              <h2 className="prompter-viewer-section-heading">Free-form feedback</h2>
+              {activeFeedback.length > 0 && (
+                <div className="prompter-viewer-feedback-at-playhead" aria-live="polite">
+                  {activeFeedback.map((f) => (
+                    <span key={f.id} className="prompter-viewer-feedback-at-playhead-item">
+                      <strong>{formatTime(f.time)}</strong>: {f.text}{' '}
+                    </span>
+                  ))}
+                </div>
+              )}
+              <div className="prompter-viewer-textarea-wrap">
+                <textarea
+                  id="comment"
+                  value={commentText}
+                  onChange={(e) => setCommentText(e.target.value)}
+                  onKeyDown={handleCommentKeyDown}
+                  placeholder="Type feedback and press Enter to add at current time..."
+                />
+              </div>
             </div>
           )}
         </main>

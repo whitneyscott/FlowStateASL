@@ -2828,6 +2828,7 @@ export class PromptService {
 
   /** Teacher only - guard applied at controller. */
   async getAssignmentForGrading(ctx: LtiContext): Promise<{
+    name?: string;
     pointsPossible?: number;
     rubric?: Array<unknown>;
   } | null> {
@@ -2846,7 +2847,8 @@ export class PromptService {
         if (fetched?.length) rubric = fetched;
       }
     }
-    return { pointsPossible: raw.points_possible, rubric: rubric ?? undefined };
+    const name = typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : undefined;
+    return { name, pointsPossible: raw.points_possible, rubric: rubric ?? undefined };
   }
 
   /** Teacher only. Returns configured assignments with names and counts from Canvas.

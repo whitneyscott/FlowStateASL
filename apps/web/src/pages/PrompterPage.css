@@ -874,9 +874,177 @@
   padding: 16px;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
   overflow-y: auto;
   min-width: 0;
+}
+
+.prompter-viewer-center-row {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.prompter-viewer-center-row--title {
+  margin-bottom: 12px;
+}
+
+.prompter-viewer-assignment-title {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: #1a1a1a;
+  line-height: 1.3;
+  text-align: left;
+}
+
+.prompter-viewer-center-row--submission-nav {
+  margin-bottom: 12px;
+}
+
+.prompter-viewer-submission-nav-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 20px;
+  justify-content: flex-start;
+}
+
+.prompter-viewer-dropdown-row--inline {
+  margin-bottom: 0;
+  flex: 1 1 220px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.prompter-viewer-dropdown-row--inline select {
+  max-width: none;
+  flex: 1;
+  min-width: 0;
+}
+
+.prompter-viewer-nav-row--inline {
+  margin-bottom: 0;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+}
+
+.prompter-viewer-center-row--grade,
+.prompter-viewer-center-row--reset {
+  margin-bottom: 10px;
+}
+
+.prompter-viewer-section-heading {
+  margin: 0 0 8px 0;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #333;
+  text-align: left;
+}
+
+.prompter-viewer-center-row--active-header {
+  margin-top: 4px;
+  margin-bottom: 6px;
+}
+
+.prompter-viewer-center-row--active-item {
+  margin-bottom: 14px;
+}
+
+.prompter-viewer-active-item-panel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 14px 20px;
+  padding: 12px 14px;
+  background: #f6faff;
+  border: 1px solid #d7e7fb;
+  border-radius: 8px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.prompter-viewer-active-item-panel--prompt-only {
+  background: #f9f9f9;
+}
+
+.prompter-viewer-active-item-ratings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.prompter-viewer-rubric-rating--active-item {
+  padding: 8px 14px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.prompter-viewer-active-item-meta {
+  flex: 1 1 200px;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 12px;
+}
+
+.prompter-viewer-active-item-time {
+  font-weight: 700;
+  color: var(--prompter-canvas-blue, #008ee2);
+  font-size: 15px;
+  flex-shrink: 0;
+}
+
+.prompter-viewer-active-item-prompt-html {
+  font-size: 14px;
+  line-height: 1.45;
+  color: #223;
+  min-width: 0;
+  flex: 1 1 160px;
+  word-break: break-word;
+}
+
+.prompter-viewer-active-item-prompt-html * {
+  max-width: 100%;
+}
+
+.prompter-viewer-active-item-placeholder,
+.prompter-viewer-active-item-hint {
+  margin: 0;
+  font-size: 14px;
+  color: #666;
+  text-align: left;
+}
+
+.prompter-viewer-text-prompt-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.prompter-viewer-center-row--freeform-feedback {
+  margin-top: 4px;
+}
+
+.prompter-viewer-feedback-at-playhead {
+  margin-bottom: 8px;
+  padding: 10px 12px;
+  background: #e8f4fc;
+  border-radius: 6px;
+  font-size: 14px;
+  text-align: left;
+}
+
+.prompter-viewer-feedback-at-playhead-item {
+  display: inline;
+  margin-right: 10px;
 }
 
 .prompter-viewer-prompt-label {
@@ -893,19 +1061,25 @@
 
 .prompter-viewer-video-wrap {
   width: 100%;
-  max-width: none;
+  max-width: 100%;
   min-width: 0;
   align-self: stretch;
   background: #000;
   border-radius: 8px;
   overflow: hidden;
   margin-bottom: 16px;
+  box-sizing: border-box;
 }
 
 .prompter-viewer-video-wrap video {
   width: 100%;
+  max-width: 100%;
+  height: auto;
+  max-height: min(70vh, 80dvh);
   min-width: 0;
   display: block;
+  margin: 0 auto;
+  object-fit: contain;
 }
 
 .prompter-viewer-video-wrap .prompter-viewer-dev-badge {
@@ -1435,10 +1609,16 @@
   display: flex;
 }
 
+.prompter-viewer-center-row--freeform-feedback .prompter-viewer-textarea-wrap {
+  margin-top: 0;
+}
+
 .prompter-viewer-textarea-wrap {
   width: 100%;
-  max-width: none;
+  max-width: 100%;
+  min-width: 0;
   margin-top: 12px;
+  box-sizing: border-box;
 }
 
 .prompter-viewer-textarea-wrap textarea {

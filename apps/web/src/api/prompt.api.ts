@@ -409,6 +409,7 @@ export async function resetAttempt(userId: string, assignmentId?: string | null)
 }
 
 export async function getAssignment(assignmentId?: string | null): Promise<{
+  name?: string;
   pointsPossible?: number;
   rubric?: Array<unknown>;
 } | null> {
@@ -416,6 +417,7 @@ export async function getAssignment(assignmentId?: string | null): Promise<{
 }
 
 export async function getAssignmentForViewer(assignmentId?: string | null): Promise<{
+  name?: string;
   pointsPossible?: number;
   rubric?: Array<unknown>;
 } | null> {
