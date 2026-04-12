@@ -893,7 +893,7 @@
 
 .prompter-viewer-video-wrap {
   width: 100%;
-  max-width: 800px;
+  max-width: none;
   min-width: 0;
   align-self: stretch;
   background: #000;
@@ -1008,7 +1008,7 @@
 
 .prompter-viewer-dropdown-row {
   width: 100%;
-  max-width: 800px;
+  max-width: none;
   margin-bottom: 12px;
   display: flex;
   align-items: center;
@@ -1031,7 +1031,7 @@
 
 .prompter-viewer-nav-row {
   width: 100%;
-  max-width: 800px;
+  max-width: none;
   margin-bottom: 12px;
   display: flex;
   align-items: center;
@@ -1067,7 +1067,7 @@
 
 .prompter-viewer-grade-row-full {
   width: 100%;
-  max-width: 800px;
+  max-width: none;
   margin-bottom: 16px;
   display: flex;
   align-items: center;
@@ -1103,7 +1103,7 @@
 
 .prompter-viewer-reset-row {
   width: 100%;
-  max-width: 800px;
+  max-width: none;
   margin-bottom: 12px;
 }
 
@@ -1146,6 +1146,171 @@
   margin-top: 20px;
   padding-top: 16px;
   border-top: 1px solid #ddd;
+}
+
+.prompter-viewer-text-left-split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  align-items: start;
+  min-width: 0;
+}
+
+.prompter-viewer-text-rubric-col,
+.prompter-viewer-text-timestamped-col {
+  min-width: 0;
+}
+
+.prompter-viewer-rubric-table--text-canvas th:nth-child(1),
+.prompter-viewer-rubric-table--text-canvas td:nth-child(1) {
+  width: 38%;
+}
+
+.prompter-viewer-rubric-table--text-canvas th:nth-child(2),
+.prompter-viewer-rubric-table--text-canvas td:nth-child(2) {
+  width: auto;
+}
+
+.prompter-viewer-canvas-criterion-desc {
+  font-size: 13px;
+  line-height: 1.35;
+  color: #223;
+}
+
+.prompter-viewer-criterion-pts {
+  color: #567;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.prompter-viewer-criterion-comment-wrap {
+  margin-top: 10px;
+}
+
+.prompter-viewer-criterion-comment-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  color: #445;
+  margin-bottom: 4px;
+}
+
+.prompter-viewer-criterion-comment-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  font-size: 12px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-family: inherit;
+  resize: vertical;
+  min-height: 44px;
+}
+
+.prompter-viewer-criterion-comment-save {
+  margin-top: 6px;
+  padding: 6px 12px !important;
+  font-size: 12px !important;
+}
+
+.prompter-viewer-timestamped-feedback-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 12px;
+}
+
+.prompter-viewer-timestamped-feedback-table th,
+.prompter-viewer-timestamped-feedback-table td {
+  border: 1px solid #dde5ef;
+  padding: 6px;
+  vertical-align: top;
+}
+
+.prompter-viewer-timestamped-time-cell {
+  width: 56px;
+  color: #567;
+  white-space: nowrap;
+}
+
+@media (max-width: 520px) {
+  .prompter-viewer-text-left-split {
+    grid-template-columns: 1fr;
+  }
+}
+
+.prompter-viewer-rubric-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.prompter-viewer-rubric-table th,
+.prompter-viewer-rubric-table td {
+  border: 1px solid #dde5ef;
+  padding: 8px;
+  vertical-align: top;
+}
+
+.prompter-viewer-rubric-table th {
+  font-size: 12px;
+  font-weight: 700;
+  color: #334;
+  text-align: left;
+  background: #f4f8fd;
+}
+
+.prompter-viewer-rubric-table th:nth-child(1),
+.prompter-viewer-rubric-table td:nth-child(1) {
+  width: 82px;
+}
+
+.prompter-viewer-rubric-table th:nth-child(3),
+.prompter-viewer-rubric-table td:nth-child(3) {
+  width: 230px;
+}
+
+.prompter-viewer-rubric-row.clickable {
+  cursor: pointer;
+}
+
+.prompter-viewer-rubric-row.clickable:hover {
+  background: #f2f8ff;
+}
+
+.prompter-viewer-rubric-row.active {
+  background: #e9f4ff;
+}
+
+.prompter-viewer-rubric-feedback-row td:first-child {
+  background: #fbfdff;
+}
+
+.prompter-viewer-feedback-empty-inline {
+  color: #888;
+  font-size: 12px;
+}
+
+.prompter-viewer-feedback-time-label {
+  font-size: 12px;
+  color: #567;
+  margin-right: 6px;
+}
+
+.prompter-viewer-feedback-seek-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  color: #125a9a;
+  cursor: pointer;
+  text-decoration: underline;
+  text-align: left;
+  font-size: 13px;
+}
+
+.prompter-viewer-feedback-seek-btn:hover {
+  color: #0c4371;
 }
 
 .prompter-viewer-rubric-criterion {
@@ -1257,9 +1422,22 @@
   cursor: not-allowed;
 }
 
+.prompter-viewer-center-rubric-controls {
+  width: 100%;
+  max-width: none;
+  margin-top: 10px;
+}
+
+.prompter-viewer-text-toggle-row {
+  width: 100%;
+  max-width: none;
+  margin-top: 10px;
+  display: flex;
+}
+
 .prompter-viewer-textarea-wrap {
   width: 100%;
-  max-width: 800px;
+  max-width: none;
   margin-top: 12px;
 }
 
@@ -1295,7 +1473,7 @@
 
 .prompter-viewer-now-playing-below {
   width: 100%;
-  max-width: 800px;
+  max-width: none;
 }
 
 .prompter-viewer-feedback-item {
@@ -1333,6 +1511,13 @@
 
 .prompter-viewer-comment-action-btn.danger:hover {
   background: #fdd;
+}
+
+.prompter-viewer-right-prompt-sticky {
+  position: sticky;
+  top: 0;
+  background: #fff;
+  padding-bottom: 8px;
 }
 
 /* Prompt Manager — deck picker (flashcard catalog) */

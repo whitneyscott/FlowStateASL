@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
@@ -191,6 +191,71 @@ type RubricCriterion = {
   ratings?: Array<{ id?: string; description?: string; points?: number }>;
 };
 
+type RubricCriterionDraft = {
+  rating_id?: string;
+  points?: number;
+  comments?: string;
+};
+
+function parseRubricAssessmentToDraft(
+  raw: Record<string, unknown> | undefined,
+  rubricList: RubricCriterion[],
+): Record<string, RubricCriterionDraft> {
+  const out: Record<string, RubricCriterionDraft> = {};
+  rubricList.forEach((c, idx) => {
+    const critId = String(c.id ?? idx);
+    const v = raw?.[critId] ?? raw?.[String(c.id)];
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      const o = v as Record<string, unknown>;
+      const rid = o.rating_id;
+      const pts = o.points;
+      const com = o.comments;
+      out[critId] = {
+        rating_id: rid != null ? String(rid) : undefined,
+        points: pts != null ? Number(pts) : undefined,
+        comments: typeof com === 'string' ? com : com != null ? String(com) : undefined,
+      };
+    } else {
+      out[critId] = {};
+    }
+  });
+  return out;
+}
+
+/** Build Canvas rubric_assessment payload; include rows with a rating and/or non-empty comments. */
+function buildRubricAssessmentPayload(
+  rubricList: RubricCriterion[],
+  draft: Record<string, RubricCriterionDraft>,
+): Record<string, Record<string, unknown>> {
+  const payload: Record<string, Record<string, unknown>> = {};
+  rubricList.forEach((c, idx) => {
+    const critId = String(c.id ?? idx);
+    const d = draft[critId];
+    if (!d) return;
+    const row: Record<string, unknown> = {};
+    if (d.rating_id != null && d.points != null) {
+      row.rating_id = d.rating_id;
+      row.points = d.points;
+    }
+    const cmt = (d.comments ?? '').trim();
+    if (cmt !== '') row.comments = cmt;
+    if (Object.keys(row).length > 0) payload[critId] = row;
+  });
+  return payload;
+}
+
+function rubricDraftHasPayload(rubricList: RubricCriterion[], draft: Record<string, RubricCriterionDraft>): boolean {
+  return Object.keys(buildRubricAssessmentPayload(rubricList, draft)).length > 0;
+}
+
+function rubricDraftHasAnyRating(rubricList: RubricCriterion[], draft: Record<string, RubricCriterionDraft>): boolean {
+  return rubricList.some((c, idx) => {
+    const critId = String(c.id ?? idx);
+    const d = draft[critId];
+    return d?.rating_id != null && d.points != null;
+  });
+}
+
 export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   const { setLastFunction, setLastApiResult, setLastApiError } = useDebug();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -213,12 +278,13 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   const [error, setError] = useState<string | null>(null);
   const [commentText, setCommentText] = useState('');
   const [feedbackEntries, setFeedbackEntries] = useState<FeedbackEntry[]>([]);
-  const [selectedRubric, setSelectedRubric] = useState<Record<string, { ratingId: string; points: number }>>({});
+  const [rubricDraft, setRubricDraft] = useState<Record<string, RubricCriterionDraft>>({});
   const [configuredAssignments, setConfiguredAssignments] = useState<promptApi.ConfiguredAssignment[]>([]);
   const [loadingAssignments, setLoadingAssignments] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const leftSidebarRef = useRef<HTMLDivElement>(null);
   const rightSidebarRef = useRef<HTMLDivElement>(null);
+  const [textPromptVisible, setTextPromptVisible] = useState(false);
 
   const isDev = typeof window !== 'undefined' && /^(localhost|127\.0\.0\.1)$/.test(window.location.hostname);
   const teacher = context && isTeacher(context.roles);
@@ -226,12 +292,15 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   const gradingMode = teacher && (gradingFromUrl || !!assignmentId);
   const current = gradingMode ? submissions[index] : mySubmission;
   const pointsPossible = assignment?.pointsPossible ?? 100;
-  const rubric = (assignment?.rubric ?? []) as RubricCriterion[];
+  const rubric = useMemo(() => (assignment?.rubric ?? []) as RubricCriterion[], [assignment?.rubric]);
   const currentAttempt = current?.attempt ?? 1;
-  const rubricAssessment = (current?.rubricAssessment ?? {}) as Record<string, { rating_id?: string; points?: number }>;
+  const rubricAssessment = (current?.rubricAssessment ?? {}) as Record<string, { rating_id?: string; points?: number; comments?: string }>;
 
   const syncFeedbackFromCurrent = useCallback(() => {
-    if (!current?.submissionComments) return;
+    if (!current?.submissionComments) {
+      setFeedbackEntries([]);
+      return;
+    }
     setFeedbackEntries(parseTimestampedFeedback(current.submissionComments));
   }, [current?.submissionComments]);
 
@@ -243,15 +312,8 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
 
   useEffect(() => {
     if (!current) return;
-    const raw = current?.rubricAssessment ?? {};
-    const assess: Record<string, { ratingId: string; points: number }> = {};
-    for (const [critId, v] of Object.entries(raw)) {
-      const rid = (v as { rating_id?: string })?.rating_id;
-      const pts = (v as { points?: number })?.points;
-      if (rid != null && pts != null) assess[String(critId)] = { ratingId: String(rid), points: Number(pts) };
-    }
-    setSelectedRubric(assess);
-  }, [current?.userId, current?.rubricAssessment]);
+    setRubricDraft(parseRubricAssessmentToDraft(current.rubricAssessment as Record<string, unknown> | undefined, rubric));
+  }, [current?.userId, current?.rubricAssessment, rubric]);
 
   const loadTeacher = useCallback(async () => {
     if (!teacher || !assignmentId) return;
@@ -344,6 +406,42 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     else await loadStudent();
   }, [gradingMode, loadTeacher, loadStudent]);
 
+  const persistRubricAssessment = useCallback(
+    async (draft: Record<string, RubricCriterionDraft>) => {
+      if (!teacher || !current || !assignmentId) return;
+      const payload = buildRubricAssessmentPayload(rubric, draft);
+      if (Object.keys(payload).length === 0) return;
+      setSaving(true);
+      setRubricSaveStatus('');
+      try {
+        setLastFunction('POST /api/prompt/grade');
+        await promptApi.submitGrade(
+          { userId: current.userId, score: 0, scoreMaximum: pointsPossible, rubricAssessment: payload },
+          assignmentId
+        );
+        setLastApiResult('POST /api/prompt/grade', 200, true);
+        setRubricSaveStatus('Saved.');
+        setTimeout(() => setRubricSaveStatus(''), 2000);
+        setSubmissions((prev) =>
+          prev.map((s, i) => {
+            if (i !== index) return s;
+            const prevRa = (s.rubricAssessment ?? {}) as Record<string, Record<string, unknown>>;
+            const merged: Record<string, unknown> = { ...prevRa };
+            for (const [critId, row] of Object.entries(payload)) {
+              merged[critId] = { ...(typeof merged[critId] === 'object' && merged[critId] ? (merged[critId] as object) : {}), ...row };
+            }
+            return { ...s, rubricAssessment: merged };
+          })
+        );
+      } catch {
+        setRubricSaveStatus('Failed');
+      } finally {
+        setSaving(false);
+      }
+    },
+    [teacher, current, assignmentId, pointsPossible, index, rubric, setLastFunction, setLastApiResult]
+  );
+
   const handleGrade = async () => {
     if (!current || !assignmentId) return;
     const score = parseFloat(gradeValue);
@@ -374,47 +472,34 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   const handleRubricRatingClick = useCallback(
     (criterionId: string, ratingId: string, points: number) => {
       if (!teacher || !current || !assignmentId) return;
-      const prev = selectedRubric[criterionId];
-      const wasSelected = prev?.ratingId === ratingId;
-      const nextSelected = { ...selectedRubric };
-      if (wasSelected) {
-        delete nextSelected[criterionId];
-      } else {
-        nextSelected[criterionId] = { ratingId, points };
-      }
-      setSelectedRubric(nextSelected);
-      const assessment: Record<string, { rating_id: string; points: number }> = {};
-      for (const [k, v] of Object.entries(nextSelected)) {
-        if (v?.ratingId != null && v?.points != null) assessment[k] = { rating_id: v.ratingId, points: v.points };
-      }
-      if (Object.keys(assessment).length === 0) return;
-      (async () => {
-        setSaving(true);
-        setRubricSaveStatus('');
-        try {
-          setLastFunction('POST /api/prompt/grade');
-          await promptApi.submitGrade(
-            { userId: current.userId, score: 0, scoreMaximum: pointsPossible, rubricAssessment: assessment },
-            assignmentId
-          );
-          setRubricSaveStatus('Saved.');
-          setTimeout(() => setRubricSaveStatus(''), 2000);
-          const rubricUpdate = Object.fromEntries(
-            Object.entries(assessment).map(([k, v]) => [k, { rating_id: v.rating_id, points: v.points }])
-          );
-          setSubmissions((prev) =>
-            prev.map((s, i) =>
-              i === index ? { ...s, rubricAssessment: rubricUpdate } : s
-            )
-          );
-        } catch {
-          setRubricSaveStatus('Failed');
-        } finally {
-          setSaving(false);
+      setRubricDraft((prev) => {
+        const prior = prev[criterionId] ?? {};
+        const wasSelected = prior.rating_id === ratingId;
+        const nextEntry: RubricCriterionDraft = wasSelected
+          ? { ...prior, rating_id: undefined, points: undefined }
+          : { ...prior, rating_id: ratingId, points };
+        const nextDraft = { ...prev, [criterionId]: nextEntry };
+        if (rubricDraftHasAnyRating(rubric, nextDraft)) {
+          void persistRubricAssessment(nextDraft);
         }
-      })();
+        return nextDraft;
+      });
     },
-    [teacher, selectedRubric, current, assignmentId, pointsPossible, index, setLastFunction]
+    [teacher, current, assignmentId, rubric, persistRubricAssessment]
+  );
+
+  const handleSaveRubricCriterionComment = useCallback(
+    (criterionId: string, comments: string) => {
+      if (!teacher || !current || !assignmentId) return;
+      setRubricDraft((prev) => {
+        const nextDraft = { ...prev, [criterionId]: { ...(prev[criterionId] ?? {}), comments } };
+        if (rubricDraftHasPayload(rubric, nextDraft)) {
+          void persistRubricAssessment(nextDraft);
+        }
+        return nextDraft;
+      });
+    },
+    [teacher, current, assignmentId, rubric, persistRubricAssessment]
   );
 
   const handleReset = async () => {
@@ -574,6 +659,8 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     () => resolveDeckTimeline(current?.body, current?.submissionComments),
     [current?.body, current?.submissionComments],
   );
+  const isDeckPromptMode = deckTimeline.length > 0;
+  const isTextPromptMode = !isDeckPromptMode;
   const activeDeckPrompt = useMemo(
     () => activeDeckPromptAt(currentTime, deckTimeline),
     [currentTime, deckTimeline],
@@ -593,13 +680,57 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     [rubric, deckTimeline],
   );
 
+  const resolvedRubricDeckIndexMap = useMemo(
+    () =>
+      rubricPromptIndexMap.map((mapped, idx) => {
+        if (mapped != null && mapped >= 0 && mapped < deckTimeline.length) return mapped;
+        if (idx >= 0 && idx < deckTimeline.length) return idx;
+        return null;
+      }),
+    [rubricPromptIndexMap, deckTimeline.length],
+  );
+
+  const feedbackByDeckRubricRow = useMemo(() => {
+    const byDeckIndex = new Map<number, FeedbackEntry[]>();
+    for (const entry of feedbackEntries) {
+      for (let i = 0; i < deckTimeline.length; i++) {
+        const start = deckTimeline[i].startSec;
+        const nextStart = i + 1 < deckTimeline.length ? deckTimeline[i + 1].startSec : Infinity;
+        if (entry.time >= start && entry.time < nextStart) {
+          const list = byDeckIndex.get(i) ?? [];
+          list.push(entry);
+          byDeckIndex.set(i, list);
+          break;
+        }
+      }
+    }
+    const out = new Map<number, FeedbackEntry[]>();
+    resolvedRubricDeckIndexMap.forEach((deckIdx, rowIdx) => {
+      if (deckIdx == null) {
+        out.set(rowIdx, []);
+        return;
+      }
+      out.set(rowIdx, [...(byDeckIndex.get(deckIdx) ?? [])].sort((a, b) => a.time - b.time));
+    });
+    return out;
+  }, [feedbackEntries, deckTimeline, resolvedRubricDeckIndexMap]);
+
+  const activeDeckRubricRowIndex = useMemo(() => {
+    if (activeDeckIndex < 0) return -1;
+    return resolvedRubricDeckIndexMap.findIndex((idx) => idx === activeDeckIndex);
+  }, [activeDeckIndex, resolvedRubricDeckIndexMap]);
+
+  useEffect(() => {
+    if (isDeckPromptMode) setTextPromptVisible(false);
+  }, [isDeckPromptMode]);
+
   useEffect(() => {
     const layout = document.getElementById('viewer-layout');
     const leftSidebar = leftSidebarRef.current;
     const rightSidebar = rightSidebarRef.current;
     const handleLeft = document.getElementById('resize-handle-left');
     const handleRight = document.getElementById('resize-handle-right');
-    if (!layout || !leftSidebar || !rightSidebar || !handleLeft || !handleRight) return;
+    if (!layout || !leftSidebar || !handleLeft) return;
     const minW = 160;
     const maxW = 400;
     const keyL = 'aslexpress_viewer_left_width';
@@ -614,6 +745,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
       }
     };
     const setRight = (w: number) => {
+      if (!rightSidebar) return;
       const ww = Math.max(minW, Math.min(maxW, w));
       rightSidebar.style.flex = `0 0 ${ww}px`;
       try {
@@ -629,7 +761,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
         const w = parseFloat(sl);
         if (!Number.isNaN(w)) setLeft(w);
       }
-      if (sr) {
+      if (sr && rightSidebar) {
         const w = parseFloat(sr);
         if (!Number.isNaN(w)) setRight(w);
       }
@@ -663,8 +795,10 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
       });
     };
     setupHandle(handleLeft, leftSidebar, setLeft, false);
-    setupHandle(handleRight, rightSidebar, setRight, true);
-  }, [loading]);
+    if (handleRight && rightSidebar) {
+      setupHandle(handleRight, rightSidebar, setRight, true);
+    }
+  }, [loading, textPromptVisible]);
 
   if (!context) {
     return (
@@ -750,66 +884,229 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
           className="prompter-viewer-sidebar"
           id="viewer-sidebar-left"
         >
-          <div className="prompter-viewer-prompt-label">Prompt</div>
-          <div
-            className="prompter-viewer-prompt-content-block"
-            dangerouslySetInnerHTML={{ __html: promptUsed }}
-          />
           {rubric.length > 0 && (
             <div className="prompter-viewer-rubric-container">
               <div className="prompter-viewer-feedback-title">Rubric</div>
-              {rubric.map((c, rowIdx) => {
-                const critId = String(c.id ?? '');
-                const assess = rubricAssessment[critId] ?? rubricAssessment[String(c.id)];
-                const selectedRatingId = assess?.rating_id;
-                const mappedDeckIdx = rubricPromptIndexMap[rowIdx];
-                const mappedDeckPrompt = mappedDeckIdx != null ? deckTimeline[mappedDeckIdx] : undefined;
-                const mappedDeckActive = mappedDeckIdx != null && mappedDeckIdx === activeDeckIndex;
-                return (
-                  <div key={critId} className="prompter-viewer-rubric-criterion" data-criterion-id={critId}>
-                    <div className="prompter-viewer-rubric-criterion-title">
-                      {c.description ?? 'Criterion'} ({c.points ?? 0} pts)
-                    </div>
-                    {mappedDeckPrompt && (
-                      <div
-                        className={`prompter-viewer-rubric-card-prompt ${mappedDeckActive ? 'active' : ''}`}
-                        title="Mapped deck prompt for this rubric row"
-                      >
-                        <div className="prompter-viewer-rubric-card-prompt-time">
-                          {formatTime(Math.floor(mappedDeckPrompt.startSec))}
-                        </div>
-                        <div
-                          className="prompter-viewer-rubric-card-prompt-text"
-                          dangerouslySetInnerHTML={{ __html: mappedDeckPrompt.title || '—' }}
-                        />
-                      </div>
-                    )}
-                    {c.ratings?.length ? (
-                      <div className="prompter-viewer-rubric-ratings">
-                        {c.ratings.map((r) => {
-                          const rid = String(r.id ?? '');
-                          const pts = r.points ?? 0;
-                          const isSelected = selectedRatingId != null && String(selectedRatingId) === rid;
-                          return (
-                            <button
-                              key={rid}
-                              type="button"
-                              className={`prompter-viewer-rubric-rating ${isSelected ? 'selected' : ''}`}
-                              data-criterion-id={critId}
-                              data-rating-id={rid}
-                              data-points={pts}
-                              disabled={!teacher}
-                              onClick={() => teacher && handleRubricRatingClick(critId, rid, pts)}
+              {isDeckPromptMode ? (
+                <table className="prompter-viewer-rubric-table">
+                    <thead>
+                      <tr>
+                        <th>Timestamp</th>
+                        <th>Prompt</th>
+                        <th>Rating</th>
+                        <th>Feedback</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rubric.map((c, rowIdx) => {
+                        const critId = String(c.id ?? rowIdx);
+                        const assess = rubricAssessment[critId] ?? rubricAssessment[String(c.id)];
+                        const mappedDeckIdx = resolvedRubricDeckIndexMap[rowIdx];
+                        const mappedDeckPrompt = mappedDeckIdx != null ? deckTimeline[mappedDeckIdx] : undefined;
+                        const mappedDeckActive = mappedDeckIdx != null && mappedDeckIdx === activeDeckIndex;
+                        const rowFeedback = feedbackByDeckRubricRow.get(rowIdx) ?? [];
+                        const selectedRatingId = rubricDraft[critId]?.rating_id ?? assess?.rating_id;
+                        return (
+                          <Fragment key={critId}>
+                            <tr
+                              className={`prompter-viewer-rubric-row ${mappedDeckPrompt ? 'clickable' : ''} ${mappedDeckActive ? 'active' : ''}`}
+                              onClick={() => mappedDeckPrompt && handleDeckTimelineClick(mappedDeckPrompt.startSec)}
+                              onKeyDown={(e) => {
+                                if (mappedDeckPrompt && e.key === 'Enter') handleDeckTimelineClick(mappedDeckPrompt.startSec);
+                              }}
+                              tabIndex={mappedDeckPrompt ? 0 : undefined}
                             >
-                              {r.description ?? ''} ({pts} pts)
-                            </button>
-                          );
-                        })}
-                      </div>
-                    ) : null}
+                              <td>{mappedDeckPrompt ? formatTime(Math.floor(mappedDeckPrompt.startSec)) : '—'}</td>
+                              <td>
+                                <div
+                                  className="prompter-viewer-rubric-card-prompt-text"
+                                  dangerouslySetInnerHTML={{ __html: mappedDeckPrompt?.title || (c.description ?? 'Criterion') }}
+                                />
+                              </td>
+                              <td>
+                                <div className="prompter-viewer-rubric-ratings">
+                                  {c.ratings?.map((r) => {
+                                    const rid = String(r.id ?? '');
+                                    const pts = r.points ?? 0;
+                                    const isSelected = selectedRatingId != null && String(selectedRatingId) === rid;
+                                    return (
+                                      <button
+                                        key={rid}
+                                        type="button"
+                                        className={`prompter-viewer-rubric-rating ${isSelected ? 'selected' : ''}`}
+                                        disabled={!teacher}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          teacher && handleRubricRatingClick(critId, rid, pts);
+                                        }}
+                                      >
+                                        {r.description ?? ''} ({pts} pts)
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </td>
+                              <td>{rowFeedback.length === 0 ? <span className="prompter-viewer-feedback-empty-inline">No feedback</span> : null}</td>
+                            </tr>
+                            {rowFeedback.map((f) => (
+                              <tr key={`deck-fb-${critId}-${f.id}`} className="prompter-viewer-rubric-feedback-row">
+                                <td colSpan={3} />
+                                <td>
+                                  <span className="prompter-viewer-feedback-time-label">{formatTime(f.time)}</span>{' '}
+                                  <button type="button" className="prompter-viewer-feedback-seek-btn" onClick={() => handleFeedbackClick(f.time)}>
+                                    {f.text || '—'}
+                                  </button>
+                                  {teacher && (
+                                    <div className="prompter-viewer-comment-actions">
+                                      <button type="button" className="prompter-viewer-comment-action-btn" onClick={() => handleEditComment(f)}>
+                                        Edit
+                                      </button>
+                                      <button type="button" className="prompter-viewer-comment-action-btn danger" onClick={() => handleDeleteComment(f)}>
+                                        Delete
+                                      </button>
+                                    </div>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </Fragment>
+                        );
+                      })}
+                    </tbody>
+                </table>
+              ) : (
+                <div className="prompter-viewer-text-left-split">
+                    <div className="prompter-viewer-text-rubric-col">
+                      <table className="prompter-viewer-rubric-table prompter-viewer-rubric-table--text-canvas">
+                        <thead>
+                          <tr>
+                            <th>Criterion</th>
+                            <th>Rating &amp; comment</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rubric.map((c, rowIdx) => {
+                            const critId = String(c.id ?? rowIdx);
+                            const assess = rubricAssessment[critId] ?? rubricAssessment[String(c.id)];
+                            const selectedRatingId = rubricDraft[critId]?.rating_id ?? assess?.rating_id;
+                            const commentVal = rubricDraft[critId]?.comments ?? '';
+                            return (
+                              <tr key={`text-${critId}`} className="prompter-viewer-rubric-row">
+                                <td>
+                                  <div className="prompter-viewer-canvas-criterion-desc">
+                                    {c.description ?? 'Criterion'}{' '}
+                                    <span className="prompter-viewer-criterion-pts">({c.points ?? 0} pts)</span>
+                                  </div>
+                                </td>
+                                <td>
+                                  <div className="prompter-viewer-rubric-ratings">
+                                    {c.ratings?.map((r) => {
+                                      const rid = String(r.id ?? '');
+                                      const pts = r.points ?? 0;
+                                      const isSelected = selectedRatingId != null && String(selectedRatingId) === rid;
+                                      return (
+                                        <button
+                                          key={rid}
+                                          type="button"
+                                          className={`prompter-viewer-rubric-rating ${isSelected ? 'selected' : ''}`}
+                                          disabled={!teacher}
+                                          onClick={() => teacher && handleRubricRatingClick(critId, rid, pts)}
+                                        >
+                                          {r.description ?? ''} ({pts} pts)
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                  <div className="prompter-viewer-criterion-comment-wrap">
+                                    <label className="prompter-viewer-criterion-comment-label" htmlFor={`rubric-comment-${critId}`}>
+                                      Criterion comment
+                                    </label>
+                                    <textarea
+                                      id={`rubric-comment-${critId}`}
+                                      className="prompter-viewer-criterion-comment-textarea"
+                                      rows={2}
+                                      value={commentVal}
+                                      onChange={(e) =>
+                                        setRubricDraft((prev) => ({
+                                          ...prev,
+                                          [critId]: { ...(prev[critId] ?? {}), comments: e.target.value },
+                                        }))
+                                      }
+                                      disabled={!teacher}
+                                      placeholder="Optional — saved to Canvas rubric for this row"
+                                    />
+                                    {teacher && (
+                                      <button
+                                        type="button"
+                                        className="prompter-viewer-criterion-comment-save prompter-viewer-grade-btn"
+                                        onClick={() => handleSaveRubricCriterionComment(critId, rubricDraft[critId]?.comments ?? '')}
+                                      >
+                                        Save comment
+                                      </button>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="prompter-viewer-text-timestamped-col">
+                      <div className="prompter-viewer-feedback-title">Timestamped feedback</div>
+                      <table className="prompter-viewer-timestamped-feedback-table">
+                        <thead>
+                          <tr>
+                            <th>Time</th>
+                            <th>Feedback</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {feedbackEntries.length === 0 ? (
+                            <tr>
+                              <td colSpan={2}>
+                                <span className="prompter-viewer-feedback-empty-inline">No timestamped feedback</span>
+                              </td>
+                            </tr>
+                          ) : (
+                            feedbackEntries.map((f) => (
+                              <tr key={`ts-${f.id}`}>
+                                <td className="prompter-viewer-timestamped-time-cell">{formatTime(f.time)}</td>
+                                <td>
+                                  <button
+                                    type="button"
+                                    className="prompter-viewer-feedback-seek-btn"
+                                    onClick={() => handleFeedbackClick(f.time)}
+                                  >
+                                    {f.text || '—'}
+                                  </button>
+                                  {teacher && (
+                                    <div className="prompter-viewer-comment-actions">
+                                      <button
+                                        type="button"
+                                        className="prompter-viewer-comment-action-btn"
+                                        onClick={() => handleEditComment(f)}
+                                      >
+                                        Edit
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="prompter-viewer-comment-action-btn danger"
+                                        onClick={() => handleDeleteComment(f)}
+                                      >
+                                        Delete
+                                      </button>
+                                    </div>
+                                  )}
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
-                );
-              })}
+              )}
               {teacher && rubricSaveStatus && (
                 <span className="prompter-viewer-rubric-save-status">{rubricSaveStatus}</span>
               )}
@@ -922,13 +1219,51 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
               <p className="prompter-viewer-no-video">No video</p>
             )}
           </div>
-          {activeDeckPrompt && deckTimeline.length > 0 && (
+          {isDeckPromptMode && activeDeckPrompt && (
             <div className="prompter-viewer-now-playing prompter-viewer-now-playing-below">
               <span>
                 <strong>{formatTime(Math.floor(activeDeckPrompt.startSec))}</strong>
                 {' — '}
               </span>
               <span dangerouslySetInnerHTML={{ __html: activeDeckPrompt.title || '—' }} />
+            </div>
+          )}
+          {isDeckPromptMode && activeDeckRubricRowIndex >= 0 && rubric[activeDeckRubricRowIndex] && (
+            <div className="prompter-viewer-center-rubric-controls">
+              <div className="prompter-viewer-feedback-title">Active rubric scoring</div>
+              <div className="prompter-viewer-rubric-ratings">
+                {rubric[activeDeckRubricRowIndex].ratings?.map((r) => {
+                  const c = rubric[activeDeckRubricRowIndex];
+                  const critId = String(c.id ?? activeDeckRubricRowIndex);
+                  const selectedRatingId =
+                    rubricDraft[critId]?.rating_id ?? (rubricAssessment[critId] ?? rubricAssessment[String(c.id)])?.rating_id;
+                  const rid = String(r.id ?? '');
+                  const pts = r.points ?? 0;
+                  const isSelected = selectedRatingId != null && String(selectedRatingId) === rid;
+                  return (
+                    <button
+                      key={`active-${rid}`}
+                      type="button"
+                      className={`prompter-viewer-rubric-rating ${isSelected ? 'selected' : ''}`}
+                      disabled={!teacher}
+                      onClick={() => teacher && handleRubricRatingClick(critId, rid, pts)}
+                    >
+                      {r.description ?? ''} ({pts} pts)
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          {isTextPromptMode && (
+            <div className="prompter-viewer-text-toggle-row">
+              <button
+                type="button"
+                className="prompter-viewer-grade-btn"
+                onClick={() => setTextPromptVisible((v) => !v)}
+              >
+                {textPromptVisible ? 'Hide Prompt' : 'Show Prompt'}
+              </button>
             </div>
           )}
           {activeFeedback.length > 0 && (
@@ -952,101 +1287,24 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
             </div>
           )}
         </main>
-        <div className="prompter-viewer-resize-handle" id="resize-handle-right" title="Drag to resize" />
-        <aside
-          ref={rightSidebarRef}
-          className="prompter-viewer-sidebar prompter-viewer-sidebar-right"
-          id="viewer-sidebar-right"
-        >
-          {deckTimeline.length > 0 && (
-            <>
-              <div className="prompter-viewer-feedback-title">Prompt cards</div>
-              <ul className="prompter-viewer-feedback-list">
-                {deckTimeline.map((seg, i) => (
-                  <li
-                    key={`deck-${i}-${seg.startSec}`}
-                    role="button"
-                    tabIndex={0}
-                    className={i === activeDeckIndex ? 'active' : ''}
-                    onClick={() => handleDeckTimelineClick(seg.startSec)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleDeckTimelineClick(seg.startSec)}
-                  >
-                    <div className="prompter-viewer-feedback-item">
-                      <div className="prompter-viewer-feedback-content">
-                        <div className="prompter-viewer-feedback-time">{formatTime(Math.floor(seg.startSec))}</div>
-                        <div
-                          className="prompter-viewer-feedback-text"
-                          dangerouslySetInnerHTML={{ __html: seg.title || '—' }}
-                        />
-                      </div>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-          <div className="prompter-viewer-feedback-title">Feedback</div>
-          <ul className="prompter-viewer-feedback-list">
-            {feedbackEntries.length === 0 && (
-              <li className="prompter-viewer-feedback-empty">No timestamped feedback.</li>
-            )}
-            {feedbackEntries.map((f, i) => {
-              const isActive = Math.abs(currentTime - f.time) <= 2;
-              return (
-                <li
-                  key={f.id}
-                  role="button"
-                  tabIndex={0}
-                  className={isActive ? 'active' : ''}
-                  onClick={() => handleFeedbackClick(f.time)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleFeedbackClick(f.time)}
-                >
-                  <div className="prompter-viewer-feedback-item">
-                    <div className="prompter-viewer-feedback-content">
-                      <div className="prompter-viewer-feedback-time">{formatTime(f.time)}</div>
-                      <div className="prompter-viewer-feedback-text">{f.text || '—'}</div>
-                    </div>
-                    {teacher && f.id && (
-                      <div className="prompter-viewer-comment-actions">
-                        <button
-                          type="button"
-                          className="prompter-viewer-comment-action-btn"
-                          title="Edit"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleEditComment(f);
-                          }}
-                        >
-                          ✎
-                        </button>
-                        <button
-                          type="button"
-                          className="prompter-viewer-comment-action-btn danger"
-                          title="Delete"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDeleteComment(f);
-                          }}
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-          {activeFeedback.length > 0 && (
-            <div className="prompter-viewer-now-playing">
-              {activeFeedback.map((f) => (
-                <div key={f.id}>
-                  <strong>{formatTime(f.time)}</strong>: {f.text}
-                </div>
-              ))}
-            </div>
-          )}
-        </aside>
+        {isTextPromptMode && textPromptVisible && (
+          <>
+            <div className="prompter-viewer-resize-handle" id="resize-handle-right" title="Drag to resize" />
+            <aside
+              ref={rightSidebarRef}
+              className="prompter-viewer-sidebar prompter-viewer-sidebar-right"
+              id="viewer-sidebar-right"
+            >
+              <div className="prompter-viewer-right-prompt-sticky">
+                <div className="prompter-viewer-prompt-label">Prompt</div>
+                <div
+                  className="prompter-viewer-prompt-content-block"
+                  dangerouslySetInnerHTML={{ __html: promptUsed }}
+                />
+              </div>
+            </aside>
+          </>
+        )}
       </div>
     </div>
   );
