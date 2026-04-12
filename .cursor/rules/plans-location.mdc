@@ -1,0 +1,12 @@
+---
+description: Where to save new plan documents in this repo
+alwaysApply: true
+---
+
+# Plan file location
+
+When creating or saving a **new plan** (including from Create Plan / checklist workflows), write it under **`.cursor/plans/active/`** in this workspace unless the user explicitly asks for a different path.
+
+- **Canonical directory:** `FlowStateASL\.cursor\plans` (same as `.cursor/plans/` in the repo).
+- **Do not** use a top-level `plans/` folder at the repo root for new plans.
+- See [.cursor/plans/README.md](../plans/README.md) for `active` / `archive` / `setup` conventions.
