@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { NavLink } from 'react-router-dom';
 import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
 import * as promptApi from '../api/prompt.api';
@@ -795,19 +794,7 @@ export default function TimerPage({ context }: TimerPageProps) {
   }
 
   if (teacherViewingTimer) {
-    return (
-      <div className="prompter-page">
-        <div className="prompter-card prompter-teacher-timer-placeholder">
-          <h1 className="prompter-settings-card-title">Student recording view</h1>
-          <p className="prompter-info-message">
-            Teachers set up prompts, deck mode, and warm-up under <strong>Config</strong>. The student timer and recorder are not shown here.
-          </p>
-          <NavLink to="/config" className="prompter-btn-ready prompter-btn-full prompter-btn-lg">
-            Open Prompt Manager (Config)
-          </NavLink>
-        </div>
-      </div>
-    );
+    return <div className="prompter-page" />;
   }
 
   if (phase === 'access' && needsAccessCode) {
