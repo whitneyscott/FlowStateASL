@@ -8,7 +8,7 @@ alwaysApply: true
 When you **complete a task that the user asked for** (implementation, fixes, refactors, etc.):
 
 1. **Stage and commit** the changes with a clear message.
-2. **Push to GitHub** (typically `origin main`) as part of closing out that task.
+2. **Push to GitHub** to the branch the user cares about (see workspace rule **flowstateasl-dev-branch** for this repo: usually `origin/fix/viewer-panel-scaling`, not `main`).
 
 Do **not** leave completed work only on the local machine unless the user explicitly opts out (e.g. "don't push", "commit only", "local only").
 
