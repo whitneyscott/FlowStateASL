@@ -210,11 +210,13 @@ function parseRubricAssessmentToDraft(
       const rid = o.rating_id;
       const pts = o.points;
       const com = o.comments;
-      out[critId] = {
+      const entry: RubricCriterionDraft = {
         rating_id: rid != null ? String(rid) : undefined,
         points: pts != null ? Number(pts) : undefined,
-        comments: typeof com === 'string' ? com : com != null ? String(com) : undefined,
       };
+      if (typeof com === 'string') entry.comments = com;
+      else if (com != null) entry.comments = String(com);
+      out[critId] = entry;
     } else {
       out[critId] = {};
     }
@@ -222,7 +224,10 @@ function parseRubricAssessmentToDraft(
   return out;
 }
 
-/** Build Canvas rubric_assessment payload; include rows with a rating and/or non-empty comments. */
+/**
+ * Build Canvas rubric_assessment payload.
+ * Include `comments` when the draft has a `comments` property (including empty string) so clearing the UI sends "" to Canvas.
+ */
 function buildRubricAssessmentPayload(
   rubricList: RubricCriterion[],
   draft: Record<string, RubricCriterionDraft>,
@@ -237,15 +242,21 @@ function buildRubricAssessmentPayload(
       row.rating_id = d.rating_id;
       row.points = d.points;
     }
-    const cmt = (d.comments ?? '').trim();
-    if (cmt !== '') row.comments = cmt;
+    if ('comments' in d) {
+      row.comments = typeof d.comments === 'string' ? d.comments.trim() : '';
+    }
     if (Object.keys(row).length > 0) payload[critId] = row;
   });
   return payload;
 }
-
 function rubricDraftHasPayload(rubricList: RubricCriterion[], draft: Record<string, RubricCriterionDraft>): boolean {
-  return Object.keys(buildRubricAssessmentPayload(rubricList, draft)).length > 0;
+  return rubricList.some((c, idx) => {
+    const critId = String(c.id ?? idx);
+    const d = draft[critId];
+    if (!d) return false;
+    if (d.rating_id != null && d.points != null) return true;
+    return 'comments' in d;
+  });
 }
 
 function rubricDraftHasAnyRating(rubricList: RubricCriterion[], draft: Record<string, RubricCriterionDraft>): boolean {
