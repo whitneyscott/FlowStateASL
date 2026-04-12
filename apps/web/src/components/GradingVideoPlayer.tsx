@@ -175,14 +175,17 @@ export function GradingVideoPlayer({
 
   return (
     <div className="prompter-viewer-video-stack">
-      <video
-        ref={videoRef as Ref<HTMLVideoElement>}
-        key={videoKey}
-        src={src}
-        playsInline
-        preload="metadata"
-        className="prompter-viewer-video-element"
-      />
+      {/* Frame clips only the picture; bar stays outside so tall videos cannot hide controls. */}
+      <div className="prompter-viewer-video-frame">
+        <video
+          ref={videoRef as Ref<HTMLVideoElement>}
+          key={videoKey}
+          src={src}
+          playsInline
+          preload="metadata"
+          className="prompter-viewer-video-element"
+        />
+      </div>
       <div className="prompter-viewer-video-bar" role="group" aria-label="Video playback">
         <button
           type="button"
