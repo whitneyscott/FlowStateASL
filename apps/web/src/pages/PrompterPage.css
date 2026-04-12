@@ -1001,18 +1001,29 @@
 .prompter-viewer-active-item-time-prompt-inline .prompter-viewer-active-item-time {
   display: inline;
   font-weight: 700;
-  color: var(--prompter-canvas-blue, #008ee2);
+  color: #1a1a1a;
   font-size: 15px;
   margin-right: 0.35em;
   vertical-align: baseline;
 }
 
+/* Prompt emphasis: 19px bold = WCAG 2.1 “large” text; #166534 ≈6.8:1 on #f6faff / #f9f9f9 (AA 4.5:1 for normal text). */
 .prompter-viewer-active-item-time-prompt-inline .prompter-viewer-active-item-prompt-html {
   display: inline;
   margin: 0;
   padding: 0;
   vertical-align: baseline;
   min-width: 0;
+  font-size: 1.1875rem;
+  font-weight: 700;
+  line-height: 1.4;
+  color: #166534;
+}
+
+.prompter-viewer-active-item-time-prompt-inline .prompter-viewer-active-item-prompt-html * {
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
 }
 
 /* Flatten common block markup from deck titles so flow stays inline after the timestamp. */
