@@ -1,9 +1,8 @@
+import { createPublicKey, type JsonWebKey } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as jose from 'jose';
 import * as jwt from 'jsonwebtoken';
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const jwkToPem = require('jwk-to-pem') as (jwk: { kty: string; n?: string; e?: string }) => string;
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
 import { appendLtiLog } from '../common/last-error.store';
 import { resolveLtiContextValue } from '../common/utils/lti-context-value.util';
@@ -146,7 +145,7 @@ export class Lti13LaunchService {
       const jwk = kid ? keys.find((k) => k.kid === kid) : keys[0];
       if (!jwk || jwk.kty !== 'RSA') return null;
 
-      const pem = jwkToPem(jwk as { kty: string; n?: string; e?: string });
+      const publicKey = createPublicKey({ key: jwk as JsonWebKey, format: 'jwk' });
       const aud = expectedAud
         ? Array.isArray(expectedAud) && expectedAud.length > 0
           ? expectedAud[0]
@@ -154,14 +153,14 @@ export class Lti13LaunchService {
             ? expectedAud
             : undefined
         : undefined;
-      const verifyOpts = {
+      const verifyOpts: jwt.VerifyOptions & { allowInsecureKeySizes?: boolean } = {
         algorithms: ['RS256'],
         issuer: iss,
         audience: aud,
         clockTolerance: 60,
         allowInsecureKeySizes: true,
       };
-      const payload = jwt.verify(idToken, pem, verifyOpts as jwt.VerifyOptions) as jose.JWTPayload;
+      const payload = jwt.verify(idToken, publicKey, verifyOpts) as jose.JWTPayload;
       return payload;
     } catch {
       return null;
