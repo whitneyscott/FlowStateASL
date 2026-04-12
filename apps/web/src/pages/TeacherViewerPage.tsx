@@ -5,6 +5,7 @@ import { useDebug } from '../contexts/DebugContext';
 import { resolveLtiContextValue } from '../utils/lti-context';
 import * as promptApi from '../api/prompt.api';
 import { ltiTokenHeaders } from '../api/lti-token';
+import { GradingVideoPlayer } from '../components/GradingVideoPlayer';
 import './PrompterPage.css';
 
 interface FeedbackEntry {
@@ -1292,11 +1293,12 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
             {noSubmissionsInGradingMode ? (
               <p className="prompter-viewer-no-video">No submissions for this assignment.</p>
             ) : current?.videoUrl ? (
-              <video
-                ref={videoRef}
-                key={current?.userId ?? ''}
+              <GradingVideoPlayer
                 src={current.videoUrl}
-                controls
+                videoKey={current.userId ?? ''}
+                videoRef={videoRef}
+                videoDurationSeconds={current.videoDurationSeconds}
+                durationSource={current.durationSource}
               />
             ) : hasSubmissionNoVideo ? (
               <div className="prompter-viewer-processing">

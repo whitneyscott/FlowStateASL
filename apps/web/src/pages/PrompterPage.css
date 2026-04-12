@@ -1108,7 +1108,8 @@
   box-sizing: border-box;
 }
 
-.prompter-viewer-video-wrap video {
+.prompter-viewer-video-wrap video,
+.prompter-viewer-video-wrap .prompter-viewer-video-element {
   width: 100%;
   max-width: 100%;
   height: auto;
@@ -1117,6 +1118,102 @@
   display: block;
   margin: 0 auto;
   object-fit: contain;
+}
+
+.prompter-viewer-video-stack {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+}
+
+.prompter-viewer-video-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+  padding: 10px 12px;
+  background: #1a1a1a;
+  border-top: 1px solid #333;
+  box-sizing: border-box;
+}
+
+.prompter-viewer-video-bar-btn {
+  flex: 0 0 auto;
+  min-width: 4.5rem;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #e8e8e8;
+  background: #2d2d2d;
+  border: 1px solid #444;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.prompter-viewer-video-bar-btn:hover {
+  background: #3a3a3a;
+}
+
+.prompter-viewer-video-bar-btn:focus-visible {
+  outline: 2px solid var(--prompter-canvas-blue, #0374b5);
+  outline-offset: 2px;
+}
+
+.prompter-viewer-video-bar-scrub-wrap {
+  flex: 1 1 160px;
+  min-width: 120px;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.prompter-viewer-video-scrub {
+  width: 100%;
+  height: 6px;
+  accent-color: var(--prompter-canvas-blue, #0374b5);
+  cursor: pointer;
+}
+
+.prompter-viewer-video-scrub:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.prompter-viewer-video-scrub-indeterminate-track {
+  width: 100%;
+  height: 8px;
+  border-radius: 4px;
+  background: repeating-linear-gradient(
+    -60deg,
+    #3a3a3a 0,
+    #3a3a3a 8px,
+    #4a4a4a 8px,
+    #4a4a4a 16px
+  );
+  background-size: 24px 100%;
+  animation: prompter-viewer-scrub-indeterminate 1.2s linear infinite;
+  opacity: 0.9;
+}
+
+@keyframes prompter-viewer-scrub-indeterminate {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 24px 0;
+  }
+}
+
+.prompter-viewer-video-bar-time {
+  flex: 0 0 auto;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: #c8c8c8;
+  min-width: 7.5rem;
+  text-align: center;
 }
 
 .prompter-viewer-video-wrap .prompter-viewer-dev-badge {
