@@ -2065,6 +2065,25 @@ export class PromptService {
     }));
   }
 
+  /** v1: YouTube-only; extend with pdf|audio|video refs when media sequence ships. */
+  private sanitizeMediaStimulusInput(
+    raw: unknown,
+  ): { kind: 'youtube'; videoId: string; clipStartSec: number; clipEndSec: number; label?: string } | undefined {
+    if (!raw || typeof raw !== 'object') return undefined;
+    const o = raw as Record<string, unknown>;
+    if (o.kind !== 'youtube') return undefined;
+    const videoId = String(o.videoId ?? '').trim();
+    if (!/^[\w-]{6,20}$/.test(videoId)) return undefined;
+    let clipStartSec = Math.floor(Number(o.clipStartSec));
+    if (!Number.isFinite(clipStartSec) || clipStartSec < 0) clipStartSec = 0;
+    let clipEndSec = Math.floor(Number(o.clipEndSec));
+    if (!Number.isFinite(clipEndSec) || clipEndSec <= clipStartSec) return undefined;
+    if (clipEndSec - clipStartSec > 86400) return undefined;
+    const labelRaw = String(o.label ?? '').trim();
+    const label = labelRaw ? labelRaw.slice(0, 500) : undefined;
+    return { kind: 'youtube', videoId, clipStartSec, clipEndSec, ...(label ? { label } : {}) };
+  }
+
   /**
    * Latest JSON submission comment that includes a non-empty `deckTimeline` (multi-attempt safe).
    */
@@ -2300,6 +2319,8 @@ export class PromptService {
     filename: string,
     options?: {
       deckTimeline?: Array<{ title: string; startSec: number; videoId?: string }>;
+      /** Pre-recording stimulus (e.g. YouTube clip) for grading replay; stored in upload JSON comment. */
+      mediaStimulus?: unknown;
       /** Client-measured recording length (seconds). */
       durationSeconds?: number;
       captureProfile?: {
@@ -2463,8 +2484,9 @@ export class PromptService {
     const sanitizedCommentDeck = this.sanitizeDeckTimelineInput(
       options?.deckTimeline as Array<{ title?: unknown; startSec?: unknown; videoId?: unknown }> | undefined,
     );
+    const sanitizedMediaStimulus = this.sanitizeMediaStimulusInput(options?.mediaStimulus);
 
-    if (sanitizedCommentDeck?.length || durationRounded != null) {
+    if (sanitizedCommentDeck?.length || durationRounded != null || sanitizedMediaStimulus) {
       const commentPayload: Record<string, unknown> = {
         submittedAt: new Date().toISOString(),
       };
@@ -2473,6 +2495,9 @@ export class PromptService {
       }
       if (durationRounded != null) {
         commentPayload.durationSeconds = durationRounded;
+      }
+      if (sanitizedMediaStimulus) {
+        commentPayload.mediaStimulus = sanitizedMediaStimulus;
       }
       const commentText = JSON.stringify(commentPayload);
       appendLtiLog('duration', 'uploadVideo: Canvas comment payload (full JSON as sent)', {
@@ -2487,12 +2512,13 @@ export class PromptService {
           domainOverride,
           token,
         );
-        appendLtiLog('prompt-submit', 'post-upload: deck/duration stored as submission comment', {
+        appendLtiLog('prompt-submit', 'post-upload: deck/duration/media stored as submission comment', {
           assignmentId,
           studentUserId,
           commentJsonLength: commentText.length,
           hasDeckTimeline: !!sanitizedCommentDeck?.length,
           hasDuration: durationRounded != null,
+          hasMediaStimulus: !!sanitizedMediaStimulus,
         });
       } catch (commentErr) {
         appendLtiLog('prompt-submit', 'post-upload: submission comment failed (non-fatal)', {
@@ -2502,8 +2528,9 @@ export class PromptService {
         });
       }
     } else {
-      appendLtiLog('duration', 'uploadVideo: skipped Canvas comment (no deck timeline and no finite duration)', {
+      appendLtiLog('duration', 'uploadVideo: skipped Canvas comment (no deck timeline, duration, or media stimulus)', {
         durationSecondsOption: options?.durationSeconds ?? null,
+        hasMediaStimulusOption: options?.mediaStimulus != null,
       });
     }
 

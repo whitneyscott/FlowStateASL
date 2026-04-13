@@ -332,6 +332,19 @@ export default function TimerPage({ context }: TimerPageProps) {
               blobSize: blob.size,
             });
             setLastFunction('POST /api/prompt/upload-video');
+            const yc = config?.youtubePromptConfig;
+            const mediaStimulus: promptApi.MediaStimulusPayload | undefined =
+              yc?.videoId &&
+              Number.isFinite(Number(yc.clipEndSec)) &&
+              Math.floor(Number(yc.clipEndSec)) > Math.max(0, Math.floor(Number(yc.clipStartSec ?? 0)))
+                ? {
+                    kind: 'youtube',
+                    videoId: String(yc.videoId).trim(),
+                    clipStartSec: Math.max(0, Math.floor(Number(yc.clipStartSec ?? 0))),
+                    clipEndSec: Math.floor(Number(yc.clipEndSec)),
+                    ...(yc.label?.trim() ? { label: yc.label.trim() } : {}),
+                  }
+                : undefined;
             const result = await promptApi.uploadVideo(
               blob,
               `asl_submission_${Date.now()}.webm`,
@@ -341,6 +354,7 @@ export default function TimerPage({ context }: TimerPageProps) {
                 idempotencyKey: `upload-${submitAttemptKey}`,
                 captureProfile: captureProfile ?? undefined,
                 ...(durationSeconds != null ? { durationSeconds } : {}),
+                ...(mediaStimulus ? { mediaStimulus } : {}),
               },
             );
             setLastApiResult('POST /api/prompt/upload-video', 200, true);
@@ -364,6 +378,7 @@ export default function TimerPage({ context }: TimerPageProps) {
     [
       context?.messageType,
       captureProfile,
+      config?.youtubePromptConfig,
       setLastFunction,
       setLastApiResult,
       setLastApiError,

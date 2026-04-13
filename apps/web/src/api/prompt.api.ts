@@ -260,12 +260,18 @@ export type PromptUploadVideoResult = {
   verify?: PromptUploadVideoVerify;
 };
 
+/** Stored on submission after upload (JSON comment) for grading replay. */
+export type MediaStimulusPayload =
+  | { kind: 'youtube'; videoId: string; clipStartSec: number; clipEndSec: number; label?: string };
+
 export async function uploadVideo(
   blob: Blob,
   filename: string,
   assignmentId?: string | null,
   options?: {
     deckTimeline?: DeckTimelineEntry[];
+    /** Pre-recording stimulus (e.g. YouTube clip) shown in TeacherViewer. */
+    mediaStimulus?: MediaStimulusPayload;
     idempotencyKey?: string;
     /** Client-measured recording length (seconds); omitted if unknown. */
     durationSeconds?: number;
@@ -287,6 +293,9 @@ export async function uploadVideo(
   form.append('video', blob, filename);
   if (options?.deckTimeline?.length) {
     form.append('deckTimeline', JSON.stringify(options.deckTimeline));
+  }
+  if (options?.mediaStimulus) {
+    form.append('mediaStimulus', JSON.stringify(options.mediaStimulus));
   }
   if (options?.captureProfile) {
     form.append('captureProfile', JSON.stringify(options.captureProfile));

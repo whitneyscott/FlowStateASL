@@ -1,22 +1,22 @@
 ---
 name: Media file prompt types
-overview: "Add teacher-configurable PDF, audio, video file, and YouTube stimuli as assignment prompts, flowing through the same conceptual pipeline as today’s text and deck modes: Prompt Manager settings blob → GET /config → TimerPage recording UX → submission metadata → TeacherViewer grading. YouTube supports paste of watch URL, youtu.be, or full embed code; server normalizes to a video id for safe iframe embed in the LTI tool. Multi-sprint effort; estimates assume one experienced full-stack engineer unless noted."
+overview: "Add teacher-configurable PDF, audio, video file, and YouTube stimuli as assignment prompts, flowing through the same conceptual pipeline as today’s text and deck modes: Prompt Manager settings blob → GET /config → TimerPage recording UX → submission metadata → TeacherViewer grading. YouTube supports paste of watch URL, youtu.be, or full embed code; server normalizes to a video id for safe iframe embed in the LTI tool. Multi-sprint effort; estimates assume one experienced full-stack engineer unless noted. **Shipped on branch (YouTube path):** clip bounds in config + teacher UI + Timer stimulus/record + `mediaStimulus` JSON on upload comment + TeacherViewer replay. **Not yet shipped:** unified `media`/`file_sequence` mode, Canvas file uploads for PDF/audio/video, PDF proxy, full `mediaTimeline` rubric alignment, hardening pass."
 todos:
   - id: decide-storage
-    content: "Decision: Canvas file storage vs object storage; auth and URL strategy for student LTI iframe"
+    content: "Decision: Canvas file storage vs object storage; auth and URL strategy for student LTI iframe (deferred until `media` / file-sequence mode)"
     status: pending
   - id: schema-api
     content: Extend PromptConfigJson + putConfig/getConfig validation; optional new upload endpoints; YouTube URL/embed parse and normalize to videoId; **YouTube clip bounds** (`clipStartSec` / `clipEndSec` or equivalent) with validation—retire standalone `durationSec` for YouTube-only config when Timer ships
-    status: pending
+    status: completed
   - id: teacher-ui
     content: "TeacherConfigPage: upload, reorder, per-asset settings for new promptMode; YouTube URL or embed paste + inline preview; **clip start + clip end** (not a single stimulus duration) for bounded segment"
-    status: pending
+    status: completed
   - id: timer-student
     content: "TimerPage: render PDF/audio/video/YouTube sequence, timings, MediaRecorder coexistence, mediaTimeline in submit; **YouTube iframe uses embed `start`/`end`** matching teacher clip bounds (same semantics as a YouTube Clip segment)"
-    status: pending
+    status: completed
   - id: viewer-grading
     content: "TeacherViewerPage: parse timeline, render stimuli, align with rubric/active item"
-    status: pending
+    status: completed
   - id: hardening
     content: Security limits, CSP/proxy, mobile QA, docs, feature flag rollout
     status: pending

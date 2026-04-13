@@ -244,6 +244,7 @@ export class PromptController {
       deckTimeline?: string;
       captureProfile?: string;
       durationSeconds?: string;
+      mediaStimulus?: string;
     };
     let captureProfile:
       | {
@@ -289,6 +290,15 @@ export class PromptController {
       const n = Number.parseFloat(String(rawDuration).trim());
       if (Number.isFinite(n) && n > 0) {
         durationSeconds = Math.round(n * 1000) / 1000;
+      }
+    }
+    let mediaStimulus: unknown | undefined;
+    const rawMedia = body?.mediaStimulus;
+    if (typeof rawMedia === 'string' && rawMedia.trim()) {
+      try {
+        mediaStimulus = JSON.parse(rawMedia) as unknown;
+      } catch {
+        // ignore invalid mediaStimulus JSON
       }
     }
     const rawCapture = body?.captureProfile;
@@ -359,6 +369,7 @@ export class PromptController {
           ...(deckTimeline?.length ? { deckTimeline } : {}),
           ...(captureProfile ? { captureProfile } : {}),
           ...(durationSeconds != null ? { durationSeconds } : {}),
+          ...(mediaStimulus !== undefined ? { mediaStimulus } : {}),
         },
       );
       this.uploadResilience.markCompleted(idemKey, result);
