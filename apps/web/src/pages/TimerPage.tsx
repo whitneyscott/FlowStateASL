@@ -34,8 +34,10 @@ function simpleFingerprint(): string {
   return btoa(ua + '|' + lang).slice(0, 32);
 }
 
-/** When duration is unknown — must match `DECK_DEFAULT_TOTAL_SECONDS_UNKNOWN` in prompt.service.ts */
-const DECK_FALLBACK_TOTAL_SECONDS = 4;
+/** Must match prompt.service.ts: min prompt floor (2.5s) + cognitive transition (1s). */
+const DECK_MIN_VIDEO_FLOOR_SECONDS = 2.5;
+const DECK_COGNITIVE_TRANSITION_SECONDS = 1;
+const DECK_FALLBACK_TOTAL_SECONDS = DECK_MIN_VIDEO_FLOOR_SECONDS + DECK_COGNITIVE_TRANSITION_SECONDS;
 
 /** Deck-based prompt with timing info */
 interface DeckPromptItem {
@@ -157,7 +159,8 @@ function mapSubmitErrorForStudent(message: string): string {
 function recordSecondsForDeckCard(item: DeckPromptItem | undefined): number {
   const d = item?.duration;
   if (typeof d === 'number' && Number.isFinite(d) && d > 0) {
-    return Math.max(1, Math.ceil(d));
+    const total = Math.max(DECK_MIN_VIDEO_FLOOR_SECONDS, d) + DECK_COGNITIVE_TRANSITION_SECONDS;
+    return Math.max(1, Math.ceil(total));
   }
   return Math.max(1, Math.ceil(DECK_FALLBACK_TOTAL_SECONDS));
 }

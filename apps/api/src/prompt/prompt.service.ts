@@ -37,10 +37,11 @@ const PROMPT_MANAGER_SETTINGS_ANNOUNCEMENT_TITLE = 'ASL Express Prompt Manager S
 const PROMPT_LEDGER_ASSIGNMENT_TITLE = 'ASL Express Prompt Ledger';
 
 /**
- * Deck card timing (mirrors TimerPage): unknown length → fixed total; known → ceil(video) + buffer.
+ * Deck card timing (mirrors TimerPage): minimum prompt floor + cognitive transition.
  */
-const DECK_DEFAULT_TOTAL_SECONDS_UNKNOWN = 4;
-const DECK_KNOWN_VIDEO_EXTRA_SECONDS = 1;
+const DECK_MIN_VIDEO_FLOOR_SECONDS = 2.5;
+const DECK_COGNITIVE_TRANSITION_SECONDS = 1;
+const DECK_MIN_TOTAL_SECONDS = DECK_MIN_VIDEO_FLOOR_SECONDS + DECK_COGNITIVE_TRANSITION_SECONDS;
 
 /** Canvas submission and file-upload API paths require a numeric user id, not LTI `sub` (opaque). */
 function isCanvasNumericUserId(id: string): boolean {
@@ -411,9 +412,10 @@ export class PromptService {
       Number.isFinite(videoDurationSec) &&
       videoDurationSec > 0
     ) {
-      return Math.max(1, Math.ceil(videoDurationSec) + DECK_KNOWN_VIDEO_EXTRA_SECONDS);
+      const total = Math.max(DECK_MIN_VIDEO_FLOOR_SECONDS, videoDurationSec) + DECK_COGNITIVE_TRANSITION_SECONDS;
+      return Math.round(total * 1000) / 1000;
     }
-    return DECK_DEFAULT_TOTAL_SECONDS_UNKNOWN;
+    return DECK_MIN_TOTAL_SECONDS;
   }
 
   private async loadVideoDurationsFromDb(videoIds: string[]): Promise<Map<string, number>> {
@@ -1026,7 +1028,7 @@ export class PromptService {
                   duration:
                     Number.isFinite(Number(p?.duration)) && Number(p?.duration) > 0
                       ? Number(p?.duration)
-                      : DECK_DEFAULT_TOTAL_SECONDS_UNKNOWN,
+                      : DECK_MIN_TOTAL_SECONDS,
                 }))
                 .filter((p) => p.title)
             : [],
@@ -2099,6 +2101,37 @@ export class PromptService {
     return null;
   }
 
+  /**
+   * Fallback for older submissions without durationSeconds:
+   * use the last deck prompt start time + minimum prompt total window.
+   */
+  private estimateDurationFromDeckTimelineMinWindow(
+    submissionComments: Array<{ id?: number; comment?: string }> | undefined,
+  ): number | null {
+    if (!submissionComments?.length) return null;
+    for (let i = submissionComments.length - 1; i >= 0; i--) {
+      const raw = (submissionComments[i].comment ?? '').trim();
+      if (!raw) continue;
+      try {
+        const parsed = JSON.parse(raw) as { deckTimeline?: unknown };
+        const rows = Array.isArray(parsed.deckTimeline) ? parsed.deckTimeline : [];
+        let lastStartSec: number | null = null;
+        for (const row of rows) {
+          if (!row || typeof row !== 'object') continue;
+          const start = Number((row as { startSec?: unknown }).startSec);
+          if (!Number.isFinite(start)) continue;
+          if (lastStartSec == null || start > lastStartSec) lastStartSec = start;
+        }
+        if (lastStartSec != null) {
+          return Math.round((lastStartSec + DECK_MIN_TOTAL_SECONDS) * 1000) / 1000;
+        }
+      } catch {
+        // not JSON — skip
+      }
+    }
+    return null;
+  }
+
   /** Sum of card `duration` across all stored prompt banks (deck timing from prompt_configs). */
   private totalDurationSecondsFromStoredPromptBanks(config: PromptConfigJson | null | undefined): number | null {
     const banks = config?.videoPromptConfig?.storedPromptBanks;
@@ -2675,10 +2708,14 @@ export class PromptService {
     const withQuizPrompts = await Promise.all(
       baseRows.map(async (row) => {
         const fromSubmission = this.extractDurationSecondsFromSubmissionComments(row.submissionComments);
+        const fromDeckTimeline = this.estimateDurationFromDeckTimelineMinWindow(row.submissionComments);
         let videoDurationSeconds: number | null = null;
         let durationSource: 'submission' | 'prompts' | 'unknown' = 'unknown';
         if (fromSubmission != null) {
           videoDurationSeconds = fromSubmission;
+          durationSource = 'submission';
+        } else if (fromDeckTimeline != null) {
+          videoDurationSeconds = fromDeckTimeline;
           durationSource = 'submission';
         } else if (promptsFallbackDuration != null) {
           videoDurationSeconds = promptsFallbackDuration;
@@ -2931,10 +2968,14 @@ export class PromptService {
       promptsFallbackDuration = null;
     }
     const fromSubmission = this.extractDurationSecondsFromSubmissionComments(mappedComments);
+    const fromDeckTimeline = this.estimateDurationFromDeckTimelineMinWindow(mappedComments);
     let videoDurationSeconds: number | null = null;
     let durationSource: 'submission' | 'prompts' | 'unknown' = 'unknown';
     if (fromSubmission != null) {
       videoDurationSeconds = fromSubmission;
+      durationSource = 'submission';
+    } else if (fromDeckTimeline != null) {
+      videoDurationSeconds = fromDeckTimeline;
       durationSource = 'submission';
     } else if (promptsFallbackDuration != null) {
       videoDurationSeconds = promptsFallbackDuration;
