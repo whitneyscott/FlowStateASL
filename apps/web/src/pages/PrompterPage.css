@@ -964,6 +964,33 @@
   max-width: 100%;
 }
 
+.prompter-viewer-active-item-source-row {
+  flex: 1 1 100%;
+  width: 100%;
+}
+
+.prompter-viewer-show-source-card-btn {
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  background: #fff;
+  border: 1px solid var(--prompter-canvas-blue, #036);
+  color: var(--prompter-canvas-blue, #036);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.prompter-viewer-show-source-card-btn:hover:not(:disabled) {
+  background: #f0f8ff;
+}
+
+.prompter-viewer-show-source-card-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  border-color: #ccc;
+  color: #777;
+}
+
 .prompter-viewer-rubric-rating--active-item {
   padding: 8px 14px;
   font-size: 14px;

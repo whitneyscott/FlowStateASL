@@ -6,6 +6,7 @@ import { resolveLtiContextValue } from '../utils/lti-context';
 import * as promptApi from '../api/prompt.api';
 import { ltiTokenHeaders } from '../api/lti-token';
 import { GradingVideoPlayer } from '../components/GradingVideoPlayer';
+import { SproutSourceCardModal } from '../components/SproutSourceCardModal';
 import './PrompterPage.css';
 
 interface FeedbackEntry {
@@ -353,6 +354,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     name?: string;
     pointsPossible?: number;
     rubric?: Array<unknown>;
+    sproutAccountId?: string;
   } | null>(null);
   const [mySubmission, setMySubmission] = useState<promptApi.PromptSubmission | null>(null);
   const [loading, setLoading] = useState(true);
@@ -373,6 +375,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   const rightSidebarRef = useRef<HTMLDivElement>(null);
   const resizeDebugLastSentAtRef = useRef(0);
   const [textPromptVisible, setTextPromptVisible] = useState(false);
+  const [sourceCardPreviewVideoId, setSourceCardPreviewVideoId] = useState<string | null>(null);
 
   const isDev = typeof window !== 'undefined' && /^(localhost|127\.0\.0\.1)$/.test(window.location.hostname);
   const teacher = context && isTeacher(context.roles);
@@ -411,6 +414,10 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     if (!s) return '';
     return `s:${String(s.userId ?? '')}:${String(s.attempt ?? 1)}`;
   }, [gradingMode, submissions, index, mySubmission]);
+
+  useEffect(() => {
+    setSourceCardPreviewVideoId(null);
+  }, [rubricDraftBootstrapKey]);
 
   const currentRef = useRef(current);
   currentRef.current = current;
@@ -815,6 +822,23 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     () => activeDeckPromptAt(currentTime, deckTimeline),
     [currentTime, deckTimeline],
   );
+
+  const sproutAccountIdForEmbed = assignment?.sproutAccountId?.trim() ?? '';
+
+  const closeSourceCardModal = useCallback(() => {
+    setSourceCardPreviewVideoId(null);
+  }, []);
+
+  const openSourceCardModal = useCallback(() => {
+    const vid = activeDeckPrompt?.videoId?.trim();
+    if (!vid || !sproutAccountIdForEmbed) return;
+    videoRef.current?.pause();
+    setSourceCardPreviewVideoId(vid);
+  }, [activeDeckPrompt?.videoId, sproutAccountIdForEmbed]);
+
+  const activeDeckSourceVideoId = activeDeckPrompt?.videoId?.trim() ?? '';
+  const showSourceCardButton = teacher && !!activeDeckSourceVideoId;
+
   const activeDeckIndex = useMemo(() => {
     if (!activeDeckPrompt) return -1;
     return deckTimeline.findIndex(
@@ -1495,6 +1519,21 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                           </button>
                         );
                       })}
+                      {showSourceCardButton && (
+                        <button
+                          type="button"
+                          className="prompter-viewer-show-source-card-btn"
+                          disabled={!sproutAccountIdForEmbed}
+                          title={
+                            !sproutAccountIdForEmbed
+                              ? 'Sprout embed is not configured for this environment'
+                              : 'Pause submission video and open the Sprout source for this card'
+                          }
+                          onClick={openSourceCardModal}
+                        >
+                          Show me the card
+                        </button>
+                      )}
                     </div>
                     <div className="prompter-viewer-active-item-meta">
                       {activeDeckPrompt ? (
@@ -1514,6 +1553,23 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                   </div>
                 ) : activeDeckPrompt ? (
                   <div className="prompter-viewer-active-item-panel prompter-viewer-active-item-panel--prompt-only">
+                    {showSourceCardButton && (
+                      <div className="prompter-viewer-active-item-source-row">
+                        <button
+                          type="button"
+                          className="prompter-viewer-show-source-card-btn"
+                          disabled={!sproutAccountIdForEmbed}
+                          title={
+                            !sproutAccountIdForEmbed
+                              ? 'Sprout embed is not configured for this environment'
+                              : 'Pause submission video and open the Sprout source for this card'
+                          }
+                          onClick={openSourceCardModal}
+                        >
+                          Show me the card
+                        </button>
+                      </div>
+                    )}
                     <div className="prompter-viewer-active-item-meta">
                       <div className="prompter-viewer-active-item-time-prompt-inline">
                         <span className="prompter-viewer-active-item-time">
@@ -1595,6 +1651,12 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
           </>
         )}
       </div>
+      <SproutSourceCardModal
+        isOpen={sourceCardPreviewVideoId != null}
+        onClose={closeSourceCardModal}
+        sproutAccountId={sproutAccountIdForEmbed}
+        videoId={sourceCardPreviewVideoId ?? ''}
+      />
     </div>
   );
 }

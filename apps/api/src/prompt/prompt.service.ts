@@ -3099,6 +3099,8 @@ export class PromptService {
     name?: string;
     pointsPossible?: number;
     rubric?: Array<unknown>;
+    /** Sprout account id for embed URLs (same source as flashcard / course settings). */
+    sproutAccountId?: string;
   } | null> {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
     if (!token) return null;
@@ -3116,7 +3118,8 @@ export class PromptService {
       }
     }
     const name = typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : undefined;
-    return { name, pointsPossible: raw.points_possible, rubric: rubric ?? undefined };
+    const sproutAccountId = this.config.get<string>('SPROUT_ACCOUNT_ID')?.trim() || undefined;
+    return { name, pointsPossible: raw.points_possible, rubric: rubric ?? undefined, sproutAccountId };
   }
 
   /** Teacher only. Returns configured assignments with names and counts from Canvas.

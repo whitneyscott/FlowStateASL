@@ -421,6 +421,7 @@ export async function getAssignment(assignmentId?: string | null): Promise<{
   name?: string;
   pointsPossible?: number;
   rubric?: Array<unknown>;
+  sproutAccountId?: string;
 } | null> {
   return fetchJson(withAssignmentId(base + '/assignment', assignmentId));
 }
@@ -429,6 +430,7 @@ export async function getAssignmentForViewer(assignmentId?: string | null): Prom
   name?: string;
   pointsPossible?: number;
   rubric?: Array<unknown>;
+  sproutAccountId?: string;
 } | null> {
   return fetchJson(withAssignmentId(base + '/assignment-for-viewer', assignmentId));
 }
