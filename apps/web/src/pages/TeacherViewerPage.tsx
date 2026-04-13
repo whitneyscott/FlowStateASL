@@ -700,10 +700,19 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     () =>
       rubricPromptIndexMap.map((mapped, idx) => {
         if (mapped != null && mapped >= 0 && mapped < deckTimeline.length) return mapped;
-        if (idx >= 0 && idx < deckTimeline.length) return idx;
+        // Do not assign deck slots by row index when rubric row count ≠ deck segments (e.g. "Overall"
+        // + N cards would otherwise steal deck 0 and the active-item buttons would target the wrong criterion).
+        if (
+          mapped == null &&
+          rubric.length === deckTimeline.length &&
+          idx >= 0 &&
+          idx < deckTimeline.length
+        ) {
+          return idx;
+        }
         return null;
       }),
-    [rubricPromptIndexMap, deckTimeline.length],
+    [rubricPromptIndexMap, deckTimeline.length, rubric.length],
   );
 
   const feedbackByDeckRubricRow = useMemo(() => {
@@ -731,10 +740,24 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     return out;
   }, [feedbackEntries, deckTimeline, resolvedRubricDeckIndexMap]);
 
+  /** Rubric row for the deck segment at the playhead (middle panel + quick ratings). Prefer explicit card mapping when multiple rows tie to the same deck index. */
   const activeDeckRubricRowIndex = useMemo(() => {
     if (activeDeckIndex < 0) return -1;
-    return resolvedRubricDeckIndexMap.findIndex((idx) => idx === activeDeckIndex);
-  }, [activeDeckIndex, resolvedRubricDeckIndexMap]);
+    const matches: number[] = [];
+    for (let i = 0; i < resolvedRubricDeckIndexMap.length; i++) {
+      if (resolvedRubricDeckIndexMap[i] === activeDeckIndex) matches.push(i);
+    }
+    if (matches.length === 0) return -1;
+    if (matches.length === 1) return matches[0];
+    const explicit = matches.filter(
+      (i) => rubricPromptIndexMap[i] != null && rubricPromptIndexMap[i] === activeDeckIndex,
+    );
+    if (explicit.length === 1) return explicit[0];
+    if (explicit.length > 1) return explicit.sort((a, b) => a - b)[0];
+    const aligned = matches.find((i) => i === activeDeckIndex);
+    if (aligned != null) return aligned;
+    return matches.sort((a, b) => a - b)[0];
+  }, [activeDeckIndex, resolvedRubricDeckIndexMap, rubricPromptIndexMap]);
 
   useEffect(() => {
     if (isDeckPromptMode) setTextPromptVisible(false);
