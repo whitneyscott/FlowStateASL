@@ -540,7 +540,7 @@ export class PromptController {
   @UseGuards(TeacherRoleGuard)
   async grade(@Req() req: Request, @Body() dto: GradeDto) {
     const ctx = this.getCtxWithAssignment(req);
-    await this.prompt.grade(
+    const gradeResult = await this.prompt.grade(
       ctx,
       dto.userId,
       dto.score,
@@ -548,7 +548,7 @@ export class PromptController {
       dto.resultContent,
       dto.rubricAssessment,
     );
-    return { ok: true };
+    return { ok: true, ...gradeResult };
   }
 
   @Post('comment/add')

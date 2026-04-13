@@ -349,6 +349,8 @@ export async function getSubmissions(assignmentId?: string | null): Promise<Prom
   return fetchJson<PromptSubmission[]>(withAssignmentId(base + '/submissions', assignmentId));
 }
 
+export type SubmitGradeResponse = { ok?: boolean; score?: number; grade?: string };
+
 export async function submitGrade(
   dto: {
     userId: string;
@@ -358,13 +360,13 @@ export async function submitGrade(
     rubricAssessment?: Record<string, unknown>;
   },
   assignmentId?: string | null
-): Promise<void> {
+): Promise<SubmitGradeResponse> {
   const url = withAssignmentId(base + '/grade', assignmentId);
-  await fetch(url, apiInit({
+  return fetchJson<SubmitGradeResponse>(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(dto),
-  }));
+  });
 }
 
 export async function addComment(

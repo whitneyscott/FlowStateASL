@@ -202,6 +202,34 @@ type RubricCriterionDraft = {
   comments?: string;
 };
 
+/** Canvas sometimes uses `_<criterionId>` keys in rubric_assessment. */
+function pickRubricCriterionAssessment(
+  raw: Record<string, unknown> | undefined,
+  c: RubricCriterion,
+  critId: string,
+): Record<string, unknown> | undefined {
+  if (!raw) return undefined;
+  const keys = [
+    ...new Set(
+      [critId, String(c.id), c.id != null ? `_${String(c.id)}` : '', `_${critId}`].filter((k) => k.length > 0),
+    ),
+  ];
+  for (const key of keys) {
+    const v = raw[key];
+    if (v && typeof v === 'object' && !Array.isArray(v)) return v as Record<string, unknown>;
+  }
+  return undefined;
+}
+
+function getRubricRowAssessment(
+  assessMap: Record<string, { rating_id?: string; points?: number; comments?: string }>,
+  c: RubricCriterion,
+  critId: string,
+): { rating_id?: string; points?: number; comments?: string } | undefined {
+  const row = pickRubricCriterionAssessment(assessMap as Record<string, unknown>, c, critId);
+  return row as { rating_id?: string; points?: number; comments?: string } | undefined;
+}
+
 function parseRubricAssessmentToDraft(
   raw: Record<string, unknown> | undefined,
   rubricList: RubricCriterion[],
@@ -209,9 +237,8 @@ function parseRubricAssessmentToDraft(
   const out: Record<string, RubricCriterionDraft> = {};
   rubricList.forEach((c, idx) => {
     const critId = String(c.id ?? idx);
-    const v = raw?.[critId] ?? raw?.[String(c.id)];
-    if (v && typeof v === 'object' && !Array.isArray(v)) {
-      const o = v as Record<string, unknown>;
+    const o = pickRubricCriterionAssessment(raw, c, critId);
+    if (o) {
       const rid = o.rating_id;
       const pts = o.points;
       const com = o.comments;
@@ -227,6 +254,31 @@ function parseRubricAssessmentToDraft(
     }
   });
   return out;
+}
+
+/** Sum earned points from draft (preferred) or loaded Canvas assessment when at least one criterion is rated. */
+function sumRubricEarnedPoints(
+  rubricList: RubricCriterion[],
+  draft: Record<string, RubricCriterionDraft>,
+  assess: Record<string, { rating_id?: string; points?: number }>,
+): number | null {
+  if (!rubricList.length) return null;
+  let sum = 0;
+  let anyRated = false;
+  for (let idx = 0; idx < rubricList.length; idx++) {
+    const c = rubricList[idx];
+    const critId = String(c.id ?? idx);
+    const d = draft[critId];
+    const a = getRubricRowAssessment(assess, c, critId);
+    let pts: number | undefined;
+    if (d?.rating_id != null && d.points != null && Number.isFinite(d.points)) pts = d.points;
+    else if (a?.rating_id != null && a.points != null && Number.isFinite(Number(a.points))) pts = Number(a.points);
+    if (pts != null) {
+      anyRated = true;
+      sum += pts;
+    }
+  }
+  return anyRated ? sum : null;
 }
 
 /**
@@ -328,9 +380,12 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   useEffect(() => { syncFeedbackFromCurrent(); }, [syncFeedbackFromCurrent]);
 
   useEffect(() => {
-    if (!current) return;
+    if (!current) {
+      setRubricDraft({});
+      return;
+    }
     setRubricDraft(parseRubricAssessmentToDraft(current.rubricAssessment as Record<string, unknown> | undefined, rubric));
-  }, [current?.userId, current?.rubricAssessment, rubric]);
+  }, [current, rubric]);
 
   const loadTeacher = useCallback(async () => {
     if (!teacher || !assignmentId) return;
@@ -412,11 +467,24 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     else setLoading(false);
   }, [gradingMode, assignmentId, context, loadTeacher, loadStudent]);
 
+  const rubricEarnedSum = useMemo(() => {
+    if (!rubric.length || !current) return null;
+    return sumRubricEarnedPoints(rubric, rubricDraft, rubricAssessment);
+  }, [rubric, rubricDraft, rubricAssessment, current]);
+
   useEffect(() => {
-    if (current?.grade != null) setGradeValue(String(current.grade));
-    else if (current?.score != null) setGradeValue(String(current.score));
+    if (!current) {
+      setGradeValue('');
+      return;
+    }
+    if (rubric.length > 0 && rubricEarnedSum != null) {
+      setGradeValue(String(rubricEarnedSum));
+      return;
+    }
+    if (current.grade != null) setGradeValue(String(current.grade));
+    else if (current.score != null) setGradeValue(String(current.score));
     else setGradeValue('');
-  }, [current]);
+  }, [current, rubric.length, rubricEarnedSum]);
 
   const reloadCurrent = useCallback(async () => {
     if (gradingMode) await loadTeacher();
@@ -432,7 +500,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
       setRubricSaveStatus('');
       try {
         setLastFunction('POST /api/prompt/grade');
-        await promptApi.submitGrade(
+        const gradeResult = await promptApi.submitGrade(
           { userId: current.userId, score: 0, scoreMaximum: pointsPossible, rubricAssessment: payload },
           assignmentId
         );
@@ -447,7 +515,12 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
             for (const [critId, row] of Object.entries(payload)) {
               merged[critId] = { ...(typeof merged[critId] === 'object' && merged[critId] ? (merged[critId] as object) : {}), ...row };
             }
-            return { ...s, rubricAssessment: merged };
+            return {
+              ...s,
+              rubricAssessment: merged,
+              ...(gradeResult.score != null ? { score: gradeResult.score } : {}),
+              ...(gradeResult.grade != null ? { grade: gradeResult.grade } : {}),
+            };
           })
         );
       } catch {
@@ -468,7 +541,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     setError(null);
     try {
       setLastFunction('POST /api/prompt/grade');
-      await promptApi.submitGrade(
+      const gradeResult = await promptApi.submitGrade(
         { userId: current.userId, score, scoreMaximum: pointsPossible },
         assignmentId
       );
@@ -476,7 +549,15 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
       setGradeSaveStatus('Saved.');
       setTimeout(() => setGradeSaveStatus(''), 2000);
       setSubmissions((prev) =>
-        prev.map((s, i) => (i === index ? { ...s, score, grade: gradeValue } : s))
+        prev.map((s, i) =>
+          i === index
+            ? {
+                ...s,
+                score: gradeResult.score ?? score,
+                grade: gradeResult.grade ?? gradeValue,
+              }
+            : s
+        )
       );
     } catch (e) {
       setGradeSaveStatus('Failed');
@@ -994,7 +1075,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                     <tbody>
                       {rubric.map((c, rowIdx) => {
                         const critId = String(c.id ?? rowIdx);
-                        const assess = rubricAssessment[critId] ?? rubricAssessment[String(c.id)];
+                        const assess = getRubricRowAssessment(rubricAssessment, c, critId);
                         const mappedDeckIdx = resolvedRubricDeckIndexMap[rowIdx];
                         const mappedDeckPrompt = mappedDeckIdx != null ? deckTimeline[mappedDeckIdx] : undefined;
                         const mappedDeckActive = mappedDeckIdx != null && mappedDeckIdx === activeDeckIndex;
@@ -1081,7 +1162,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                         <tbody>
                           {rubric.map((c, rowIdx) => {
                             const critId = String(c.id ?? rowIdx);
-                            const assess = rubricAssessment[critId] ?? rubricAssessment[String(c.id)];
+                            const assess = getRubricRowAssessment(rubricAssessment, c, critId);
                             const selectedRatingId = rubricDraft[critId]?.rating_id ?? assess?.rating_id;
                             const commentVal = rubricDraft[critId]?.comments ?? '';
                             return (
@@ -1345,8 +1426,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                         const c = rubric[activeDeckRubricRowIndex];
                         const critId = String(c.id ?? activeDeckRubricRowIndex);
                         const selectedRatingId =
-                          rubricDraft[critId]?.rating_id ??
-                          (rubricAssessment[critId] ?? rubricAssessment[String(c.id)])?.rating_id;
+                          rubricDraft[critId]?.rating_id ?? getRubricRowAssessment(rubricAssessment, c, critId)?.rating_id;
                         const rid = String(r.id ?? '');
                         const pts = r.points ?? 0;
                         const isSelected = selectedRatingId != null && String(selectedRatingId) === rid;

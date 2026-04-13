@@ -26,6 +26,7 @@ import {
 } from '../common/utils/canvas-base-url.util';
 import { resolveCanvasApiUserId } from '../common/utils/canvas-api-user.util';
 import type { PromptConfigJson, PutPromptConfigDto } from './dto/prompt-config.dto';
+import { normalizeCanvasRubricAssessment } from './canvas-rubric-assessment.util';
 import { randomUUID } from 'crypto';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -2532,6 +2533,7 @@ export class PromptService {
       promptHtml?: string;
       videoDurationSeconds: number | null;
       durationSource: 'submission' | 'prompts' | 'unknown';
+      rubricAssessment?: Record<string, unknown>;
     }>
   > {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
@@ -2572,6 +2574,9 @@ export class PromptService {
         }
       }
       videoUrl = this.toViewerVideoUrl(videoUrl, ctx) ?? videoUrl;
+      const rubricAssessment = normalizeCanvasRubricAssessment(
+        (s as { rubric_assessment?: Record<string, unknown> }).rubric_assessment,
+      );
       return {
         userId,
         userName: s.user?.name,
@@ -2583,6 +2588,7 @@ export class PromptService {
             ?.filter((c) => c.id != null && c.comment != null)
             .map((c) => ({ id: c.id!, comment: c.comment! })) ?? [],
         videoUrl,
+        ...(rubricAssessment ? { rubricAssessment } : {}),
       };
     });
     const ledgerPromptByUser = new Map<string, string>();
@@ -2765,7 +2771,7 @@ export class PromptService {
     scoreMaximum: number,
     resultContent?: string,
     rubricAssessment?: Record<string, unknown>,
-  ): Promise<void> {
+  ): Promise<{ score?: number; grade?: string }> {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
     if (!token) {
       throw new Error('Canvas OAuth token required');
@@ -2774,7 +2780,7 @@ export class PromptService {
     const assignmentId = await this.getPrompterAssignmentId(ctx);
 
     if (rubricAssessment && Object.keys(rubricAssessment).length > 0) {
-      await this.canvas.putSubmissionGrade(
+      return await this.canvas.putSubmissionGrade(
         ctx.courseId,
         assignmentId,
         userId,
@@ -2782,15 +2788,15 @@ export class PromptService {
         domainOverride,
         token,
       );
-    } else {
-      const scoreMax = scoreMaximum > 0 ? scoreMaximum : 100;
-      await this.ltiAgs.submitGradeViaAgs(ctx, {
-        score,
-        scoreMaximum: scoreMax,
-        resultContent: resultContent ?? undefined,
-        userId,
-      });
     }
+    const scoreMax = scoreMaximum > 0 ? scoreMaximum : 100;
+    await this.ltiAgs.submitGradeViaAgs(ctx, {
+      score,
+      scoreMaximum: scoreMax,
+      resultContent: resultContent ?? undefined,
+      userId,
+    });
+    return { score };
   }
 
   /** Teacher only - guard applied at controller. */
@@ -2942,7 +2948,9 @@ export class PromptService {
       submissionComments: mappedComments,
       videoUrl,
       attempt: sub.attempt ?? 1,
-      rubricAssessment: sub.rubric_assessment as Record<string, unknown> | undefined,
+      rubricAssessment: normalizeCanvasRubricAssessment(
+        sub.rubric_assessment as Record<string, unknown> | undefined,
+      ),
       promptHtml,
       videoDurationSeconds,
       durationSource,

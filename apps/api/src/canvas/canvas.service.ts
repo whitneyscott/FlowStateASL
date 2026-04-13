@@ -2756,10 +2756,11 @@ export class CanvasService {
         versioned_attachments?: Array<Array<{ url?: string; download_url?: string }>>;
         submission_type?: string;
       }>;
+      rubric_assessment?: Record<string, unknown>;
     }>
   > {
     const base = this.getBaseUrl(domainOverride);
-    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions?include[]=user&include[]=submission_comments&include[]=submission_history&per_page=100`;
+    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions?include[]=user&include[]=submission_comments&include[]=submission_history&include[]=rubric_assessment&per_page=100`;
     const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
     if (!res.ok) {
       const text = await res.text();
@@ -2854,7 +2855,7 @@ export class CanvasService {
     options: { postedGrade?: string | null; rubricAssessment?: Record<string, unknown> },
     domainOverride?: string,
     tokenOverride?: string | null,
-  ): Promise<{ score?: number }> {
+  ): Promise<{ score?: number; grade?: string }> {
     const base = this.getBaseUrl(domainOverride);
     const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${userId}`;
     const body: { submission?: { posted_grade?: string | null }; rubric_assessment?: Record<string, unknown> } = {};
@@ -2869,8 +2870,15 @@ export class CanvasService {
       const text = await res.text();
       throw new Error(`Canvas put grade failed: ${res.status} ${text}`);
     }
-    const data = (await res.json()) as { score?: number };
-    return { score: data.score };
+    const data = (await res.json()) as Record<string, unknown>;
+    let score: number | undefined;
+    if (typeof data.score === 'number' && Number.isFinite(data.score)) score = data.score;
+    else if (typeof data.score === 'string') {
+      const n = Number.parseFloat(data.score);
+      if (Number.isFinite(n)) score = n;
+    }
+    const grade = typeof data.grade === 'string' ? data.grade : undefined;
+    return { score, grade };
   }
 
   // --- Announcement API (Settings storage: Flashcard + Prompt Manager) ---
