@@ -2,6 +2,8 @@
 export class DeckTimelineEntryDto {
   title: string;
   startSec: number;
+  /** Sprout video id for the prompt source clip (optional; older clients omit). */
+  videoId?: string;
 }
 
 export class SubmitPromptDto {

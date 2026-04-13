@@ -202,7 +202,7 @@ export default function TimerPage({ context }: TimerPageProps) {
   const lastDeckTimelineRef = useRef<promptApi.DeckTimelineEntry[] | undefined>(undefined);
   /** MediaRecorder `onstart` time; used to mark deck card boundaries in the real recording timeline. */
   const recordStartPerfRef = useRef(0);
-  const deckBoundaryListRef = useRef<Array<{ title: string; startSec: number }>>([]);
+  const deckBoundaryListRef = useRef<Array<{ title: string; startSec: number; videoId?: string }>>([]);
   const autoFinishFiredRef = useRef(false);
   /** Prevents double-handling when per-card timer hits 0 (React strict / re-renders). */
   const deckZeroHandledForIndexRef = useRef<number>(-1);
@@ -657,10 +657,13 @@ export default function TimerPage({ context }: TimerPageProps) {
     const nextPrompt = deckMode ? nextDeckIndexAfterAdvance(promptIndex, deckPrompts.length) : undefined;
     if (nextPrompt !== undefined) {
       const elapsed = (performance.now() - recordStartPerfRef.current) / 1000;
-      const title = deckPrompts[nextPrompt]?.title ?? '';
+      const nextItem = deckPrompts[nextPrompt];
+      const title = nextItem?.title ?? '';
+      const videoId = nextItem?.videoId?.trim();
       deckBoundaryListRef.current.push({
         title,
         startSec: Math.round(elapsed * 1000) / 1000,
+        ...(videoId ? { videoId } : {}),
       });
       setPromptIndex(nextPrompt);
       // Avoid a frame where index advanced but seconds stayed 0 (would re-trigger this effect).
@@ -707,7 +710,11 @@ export default function TimerPage({ context }: TimerPageProps) {
       recordStartPerfRef.current = performance.now();
       deckBoundaryListRef.current = [];
       if (deckPrompts.length > 0) {
-        deckBoundaryListRef.current.push({ title: deckPrompts[0]?.title ?? '', startSec: 0 });
+        deckBoundaryListRef.current.push({
+          title: deckPrompts[0]?.title ?? '',
+          startSec: 0,
+          ...(deckPrompts[0]?.videoId?.trim() ? { videoId: deckPrompts[0].videoId.trim() } : {}),
+        });
       }
       setCaptureProfile((prev) => ({
         ...(prev ?? {}),
@@ -733,7 +740,11 @@ export default function TimerPage({ context }: TimerPageProps) {
         const promptSnapshot = pendingPromptRef.current.trim();
         const deckTimeline =
           deckBoundaryListRef.current.length > 0
-            ? deckBoundaryListRef.current.map((e) => ({ title: e.title, startSec: e.startSec }))
+            ? deckBoundaryListRef.current.map((e) => ({
+                title: e.title,
+                startSec: e.startSec,
+                ...(e.videoId ? { videoId: e.videoId } : {}),
+              }))
             : undefined;
         lastDeckTimelineRef.current = deckTimeline;
         console.log('[TimerPage:recorder.onstop] Calling doSubmit...');

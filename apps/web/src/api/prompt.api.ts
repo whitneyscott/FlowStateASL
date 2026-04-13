@@ -183,6 +183,8 @@ export async function verifyAccess(
 export interface DeckTimelineEntry {
   title: string;
   startSec: number;
+  /** Sprout source video id for this prompt card (when deck mode used Sprout-backed items). */
+  videoId?: string;
 }
 
 export async function savePrompt(promptText: string, assignmentId?: string | null): Promise<void> {

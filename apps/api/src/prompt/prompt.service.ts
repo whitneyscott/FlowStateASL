@@ -1957,10 +1957,37 @@ export class PromptService {
     });
   }
 
+  /**
+   * Normalize deck timeline for Canvas submission body / JSON comments.
+   * Preserves optional Sprout `videoId` per row when present (non-empty string).
+   */
+  private sanitizeDeckTimelineInput(
+    deckTimeline: Array<{ title?: unknown; startSec?: unknown; videoId?: unknown }> | undefined,
+  ): Array<{ title: string; startSec: number; videoId?: string }> | undefined {
+    if (!Array.isArray(deckTimeline) || deckTimeline.length === 0) return undefined;
+    const rows = deckTimeline
+      .map((e) => {
+        const title = String(e?.title ?? '');
+        const startSec = Number(e?.startSec);
+        const vidRaw = (e as { videoId?: unknown }).videoId;
+        const videoId =
+          vidRaw != null && String(vidRaw).trim().length > 0 ? String(vidRaw).trim() : undefined;
+        return { title, startSec, videoId };
+      })
+      .filter((r) => Number.isFinite(r.startSec));
+    if (rows.length === 0) return undefined;
+    rows.sort((a, b) => a.startSec - b.startSec);
+    return rows.map((r) => ({
+      title: r.title,
+      startSec: Math.round(r.startSec * 1000) / 1000,
+      ...(r.videoId ? { videoId: r.videoId } : {}),
+    }));
+  }
+
   async submit(
     ctx: LtiContext,
     promptSnapshotHtml: string,
-    deckTimeline?: Array<{ title?: unknown; startSec?: unknown }>,
+    deckTimeline?: Array<{ title?: unknown; startSec?: unknown; videoId?: unknown }>,
   ): Promise<void> {
     appendLtiLog('prompt-submit', 'submit ENTER', {
       assignmentId: ctx.assignmentId,
@@ -1976,22 +2003,7 @@ export class PromptService {
     }
     const assignmentId = await this.getPrompterAssignmentId(ctx);
     appendLtiLog('prompt-submit', 'submit: got assignmentId', { assignmentId });
-    let sanitizedDeckTimeline: Array<{ title: string; startSec: number }> | undefined;
-    if (Array.isArray(deckTimeline) && deckTimeline.length > 0) {
-      const rows = deckTimeline
-        .map((e) => ({
-          title: String(e?.title ?? ''),
-          startSec: Number(e?.startSec),
-        }))
-        .filter((r) => Number.isFinite(r.startSec));
-      if (rows.length > 0) {
-        rows.sort((a, b) => a.startSec - b.startSec);
-        sanitizedDeckTimeline = rows.map((r) => ({
-          title: r.title,
-          startSec: Math.round(r.startSec * 1000) / 1000,
-        }));
-      }
-    }
+    const sanitizedDeckTimeline = this.sanitizeDeckTimelineInput(deckTimeline);
     const bodyPayload: Record<string, unknown> = {
       promptSnapshotHtml,
       submittedAt: new Date().toISOString(),
@@ -2157,7 +2169,7 @@ export class PromptService {
     filename: string,
     options?: {
       promptSnapshotHtml?: string;
-      deckTimeline?: Array<{ title: string; startSec: number }>;
+      deckTimeline?: Array<{ title: string; startSec: number; videoId?: string }>;
       /** Client-measured recording length (seconds). */
       durationSeconds?: number;
       captureProfile?: {
@@ -2326,8 +2338,11 @@ export class PromptService {
       if (promptSnapshotTrimmed) {
         commentPayload.promptSnapshotHtml = promptSnapshotTrimmed;
       }
-      if (options?.deckTimeline?.length) {
-        commentPayload.deckTimeline = options.deckTimeline;
+      const sanitizedCommentDeck = this.sanitizeDeckTimelineInput(
+        options?.deckTimeline as Array<{ title?: unknown; startSec?: unknown; videoId?: unknown }> | undefined,
+      );
+      if (sanitizedCommentDeck?.length) {
+        commentPayload.deckTimeline = sanitizedCommentDeck;
       }
       if (durationRounded != null) {
         commentPayload.durationSeconds = durationRounded;

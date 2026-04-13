@@ -34,6 +34,8 @@ function parseTimestampedFeedback(comments: Array<{ id: number; comment: string 
 interface DeckTimelineEntry {
   title: string;
   startSec: number;
+  /** Sprout source video id for this prompt (optional on older submissions). */
+  videoId?: string;
 }
 
 function deckTimelineFromParsedJson(parsed: { deckTimeline?: unknown }): DeckTimelineEntry[] {
@@ -42,11 +44,12 @@ function deckTimelineFromParsedJson(parsed: { deckTimeline?: unknown }): DeckTim
   const out: DeckTimelineEntry[] = [];
   for (const item of raw) {
     if (!item || typeof item !== 'object') continue;
-    const o = item as { title?: unknown; startSec?: unknown };
+    const o = item as { title?: unknown; startSec?: unknown; videoId?: unknown };
     const title = String(o.title ?? '');
     const startSec = Number(o.startSec);
     if (!Number.isFinite(startSec)) continue;
-    out.push({ title, startSec });
+    const vid = String(o.videoId ?? '').trim();
+    out.push({ title, startSec, ...(vid ? { videoId: vid } : {}) });
   }
   out.sort((a, b) => a.startSec - b.startSec);
   return out;

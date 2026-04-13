@@ -237,17 +237,23 @@ export class PromptController {
           audioBitsPerSecond?: number;
         }
       | undefined;
-    let deckTimeline: Array<{ title: string; startSec: number }> | undefined;
+    let deckTimeline: Array<{ title: string; startSec: number; videoId?: string }> | undefined;
     const rawDeck = body?.deckTimeline;
     if (typeof rawDeck === 'string' && rawDeck.trim()) {
       try {
         const parsed = JSON.parse(rawDeck) as unknown;
         if (Array.isArray(parsed)) {
           const rows = parsed
-            .map((e) => ({
-              title: String((e as { title?: unknown })?.title ?? ''),
-              startSec: Number((e as { startSec?: unknown })?.startSec),
-            }))
+            .map((e) => {
+              const vidRaw = (e as { videoId?: unknown })?.videoId;
+              const videoId =
+                vidRaw != null && String(vidRaw).trim().length > 0 ? String(vidRaw).trim() : undefined;
+              return {
+                title: String((e as { title?: unknown })?.title ?? ''),
+                startSec: Number((e as { startSec?: unknown })?.startSec),
+                ...(videoId ? { videoId } : {}),
+              };
+            })
             .filter((r) => Number.isFinite(r.startSec));
           if (rows.length > 0) deckTimeline = rows;
         }
