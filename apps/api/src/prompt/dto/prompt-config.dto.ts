@@ -1,3 +1,10 @@
+/** Persisted YouTube stimulus (normalized id only — never a raw URL). */
+export interface YoutubePromptConfig {
+  videoId: string;
+  label?: string;
+  durationSec: number;
+}
+
 export interface VideoPromptConfig {
   selectedDecks: Array<{ id: string; title: string }>;
   totalCards: number;
@@ -34,8 +41,9 @@ export interface PromptConfigJson {
   version?: string;
   
   // NEW: Deck-based prompts from flashcard decks
-  promptMode?: 'text' | 'decks'; // defaults to 'text' if absent
+  promptMode?: 'text' | 'decks' | 'youtube'; // defaults to 'text' if absent
   videoPromptConfig?: VideoPromptConfig;
+  youtubePromptConfig?: YoutubePromptConfig;
 }
 
 export class PutPromptConfigDto {
@@ -56,11 +64,18 @@ export class PutPromptConfigDto {
   version?: string;
   
   // NEW: Deck-based prompts from flashcard decks
-  promptMode?: 'text' | 'decks';
+  promptMode?: 'text' | 'decks' | 'youtube';
   videoPromptConfig?: {
     selectedDecks?: Array<{ id?: string; title?: string }>;
     totalCards?: number;
     storedPromptBanks?: Array<Array<{ title?: string; videoId?: string; duration?: number }>>;
     staticFallbackPrompts?: string[];
+  };
+  /** Teacher may send urlOrId or videoId for normalization; persisted shape is YoutubePromptConfig only. */
+  youtubePromptConfig?: {
+    urlOrId?: string;
+    videoId?: string;
+    label?: string;
+    durationSec?: number;
   };
 }

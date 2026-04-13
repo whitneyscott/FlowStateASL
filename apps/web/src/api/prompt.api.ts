@@ -82,6 +82,20 @@ export interface VideoPromptConfig {
   staticFallbackPrompts?: string[];
 }
 
+export interface YoutubePromptConfig {
+  videoId: string;
+  label?: string;
+  durationSec: number;
+}
+
+/** Client → PUT /config for youtube mode (server normalizes urlOrId/videoId to persisted YoutubePromptConfig). */
+export interface YoutubePromptConfigInput {
+  urlOrId?: string;
+  videoId?: string;
+  label?: string;
+  durationSec?: number;
+}
+
 export interface PromptConfig {
   /** From GET /config: submission target after server resolution from Prompt Manager Settings. */
   resolvedAssignmentId?: string;
@@ -99,8 +113,9 @@ export interface PromptConfig {
   unlockAt?: string;
   lockAt?: string;
   allowedAttempts?: number;
-  promptMode?: 'text' | 'decks';
+  promptMode?: 'text' | 'decks' | 'youtube';
   videoPromptConfig?: VideoPromptConfig;
+  youtubePromptConfig?: YoutubePromptConfig;
 }
 
 export interface DeckPromptItem {
@@ -144,7 +159,10 @@ export async function getPromptConfig(assignmentId?: string | null): Promise<Pro
   return fetchJsonWithOAuthRedirect<PromptConfig | null>(withAssignmentId(base + '/config', assignmentId));
 }
 
-export async function putPromptConfig(config: Partial<PromptConfig>, assignmentId?: string | null): Promise<void> {
+export async function putPromptConfig(
+  config: Omit<Partial<PromptConfig>, 'youtubePromptConfig'> & { youtubePromptConfig?: YoutubePromptConfigInput },
+  assignmentId?: string | null
+): Promise<void> {
   const res = await fetch(withAssignmentId(base + '/config', assignmentId), apiInit({
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },

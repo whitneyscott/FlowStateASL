@@ -8,6 +8,7 @@ import * as flashcardTeacherApi from '../api/flashcard-teacher.api';
 import type { PlaylistHierarchyRow } from '../api/flashcard-teacher.api';
 import { ManualTokenModal } from '../components/ManualTokenModal';
 import { computeDeckHubFilters } from '../utils/deckHierarchyFilters';
+import { normalizeYoutubeInputToVideoIdClient } from '../utils/youtube-video-id';
 import '../components/TeacherSettings.css';
 import './PrompterPage.css';
 
@@ -82,7 +83,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const [showManualTokenModal, setShowManualTokenModal] = useState(false);
   
   // Deck mode state
-  const [promptMode, setPromptMode] = useState<'text' | 'decks'>('text');
+  const [promptMode, setPromptMode] = useState<'text' | 'decks' | 'youtube'>('text');
   const [selectedDecks, setSelectedDecks] = useState<promptApi.DeckConfig[]>([]);
   const [totalCards, setTotalCards] = useState(10);
   const [deckPromptWarning, setDeckPromptWarning] = useState<string | null>(null);
@@ -95,6 +96,12 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const [deckPickerError, setDeckPickerError] = useState<string | null>(null);
   const [deckPickerRefreshKey, setDeckPickerRefreshKey] = useState(0);
   const [pendingDeckFilterSeedIds, setPendingDeckFilterSeedIds] = useState<string[] | null>(null);
+
+  const [youtubeUrlOrId, setYoutubeUrlOrId] = useState('');
+  const [youtubeLabel, setYoutubeLabel] = useState('');
+  const [youtubeDurationSec, setYoutubeDurationSec] = useState(60);
+  const [youtubePreviewVideoId, setYoutubePreviewVideoId] = useState<string | null>(null);
+  const [youtubeFieldError, setYoutubeFieldError] = useState<string | null>(null);
 
   const teacher = context && isTeacher(context.roles);
   const hasLti = context?.courseId && context.userId !== 'standalone';
@@ -188,12 +195,34 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         setAllowedAttempts(Math.max(1, Number(data.allowedAttempts ?? 1) || 1));
         setInstructions(data.instructions ?? '');
         setPromptMode(data.promptMode ?? 'text');
-        if (data.videoPromptConfig) {
+        if (data.promptMode === 'youtube' && data.youtubePromptConfig?.videoId) {
+          const vid = data.youtubePromptConfig.videoId;
+          setYoutubeUrlOrId(`https://www.youtube.com/watch?v=${encodeURIComponent(vid)}`);
+          setYoutubeLabel(data.youtubePromptConfig.label ?? '');
+          setYoutubeDurationSec(
+            Number.isFinite(Number(data.youtubePromptConfig.durationSec))
+              ? Math.max(1, Math.floor(Number(data.youtubePromptConfig.durationSec)))
+              : 60
+          );
+          setYoutubePreviewVideoId(vid);
+          setYoutubeFieldError(null);
+          setSelectedDecks([]);
+          setTotalCards(10);
+          setDeckFilterCurricula([]);
+          setDeckFilterUnits([]);
+          setDeckFilterSections([]);
+          setPendingDeckFilterSeedIds(null);
+        } else if (data.videoPromptConfig) {
           const loadedDecks = data.videoPromptConfig.selectedDecks ?? [];
           setSelectedDecks(loadedDecks);
           setTotalCards(data.videoPromptConfig.totalCards ?? 10);
           const deckIds = loadedDecks.map((d) => d.id).filter(Boolean);
           setPendingDeckFilterSeedIds(deckIds.length ? deckIds : null);
+          setYoutubeUrlOrId('');
+          setYoutubeLabel('');
+          setYoutubeDurationSec(60);
+          setYoutubePreviewVideoId(null);
+          setYoutubeFieldError(null);
         } else {
           setSelectedDecks([]);
           setTotalCards(10);
@@ -201,6 +230,11 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
           setDeckFilterUnits([]);
           setDeckFilterSections([]);
           setPendingDeckFilterSeedIds(null);
+          setYoutubeUrlOrId('');
+          setYoutubeLabel('');
+          setYoutubeDurationSec(60);
+          setYoutubePreviewVideoId(null);
+          setYoutubeFieldError(null);
         }
       } else {
         setMinutes(5);
@@ -216,10 +250,18 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         setLockAt('');
         setAllowedAttempts(1);
         setInstructions('');
+        setPromptMode('text');
+        setSelectedDecks([]);
+        setTotalCards(10);
         setDeckFilterCurricula([]);
         setDeckFilterUnits([]);
         setDeckFilterSections([]);
         setPendingDeckFilterSeedIds(null);
+        setYoutubeUrlOrId('');
+        setYoutubeLabel('');
+        setYoutubeDurationSec(60);
+        setYoutubePreviewVideoId(null);
+        setYoutubeFieldError(null);
       }
     } catch (e: unknown) {
       if (e instanceof promptApi.NeedsManualTokenError) {
@@ -360,11 +402,44 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     }
   }, [pendingDeckFilterSeedIds, deckHierarchyPlaylists]);
 
+  const handleYoutubeUrlBlur = () => {
+    setYoutubeFieldError(null);
+    const t = youtubeUrlOrId.trim();
+    if (!t) {
+      setYoutubePreviewVideoId(null);
+      return;
+    }
+    try {
+      setYoutubePreviewVideoId(normalizeYoutubeInputToVideoIdClient(t));
+    } catch (e) {
+      setYoutubePreviewVideoId(null);
+      setYoutubeFieldError(e instanceof Error ? e.message : 'Invalid YouTube URL or video ID.');
+    }
+  };
+
   const handleSave = async () => {
     if (!teacher || !hasLti) return;
     if (promptMode === 'decks' && selectedDecks.length === 0) {
       setError('Select at least one flashcard deck when using Deck Prompts.');
       return;
+    }
+    if (promptMode === 'youtube') {
+      const raw = youtubeUrlOrId.trim();
+      if (!raw) {
+        setError('Enter a YouTube URL or video ID.');
+        return;
+      }
+      try {
+        normalizeYoutubeInputToVideoIdClient(raw);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Invalid YouTube URL or video ID.');
+        return;
+      }
+      const dur = Number(youtubeDurationSec);
+      if (!Number.isFinite(dur) || dur < 1) {
+        setError('Stimulus duration must be at least 1 second.');
+        return;
+      }
     }
     setSaving(true);
     setError(null);
@@ -409,6 +484,14 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
           allowedAttempts,
           promptMode,
           videoPromptConfig: promptMode === 'decks' ? { selectedDecks, totalCards } : undefined,
+          youtubePromptConfig:
+            promptMode === 'youtube'
+              ? {
+                  urlOrId: youtubeUrlOrId.trim(),
+                  label: youtubeLabel.trim() || undefined,
+                  durationSec: Math.max(1, Math.floor(Number(youtubeDurationSec) || 1)),
+                }
+              : undefined,
         },
         targetId!
       );
@@ -630,6 +713,11 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setDeckFilterSections([]);
     setPendingDeckFilterSeedIds(null);
     setDeckPickerError(null);
+    setYoutubeUrlOrId('');
+    setYoutubeLabel('');
+    setYoutubeDurationSec(60);
+    setYoutubePreviewVideoId(null);
+    setYoutubeFieldError(null);
     if (!assignmentId) {
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
@@ -932,10 +1020,16 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                         <input type="number" min={1} max={60} step={0.1} value={minutes} onChange={(e) => setMinutes(Number(e.target.value) || 5)} className="prompter-settings-input prompter-settings-input-narrow" />
                         <p className="prompter-hint">Shown to students before recording (text prompt mode only).</p>
                       </div>
-                    ) : (
+                    ) : promptMode === 'decks' ? (
                       <div className="prompter-settings-section">
                         <p className="prompter-hint">
                           <strong>Deck mode:</strong> students skip the long warm-up. After camera setup they see a short &quot;Get Ready!&quot; 3-2-1 countdown, then recording starts with the first prompt. Timing per card comes from each Sprout video.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="prompter-settings-section">
+                        <p className="prompter-hint">
+                          <strong>YouTube mode:</strong> students see your YouTube clip for the duration you set, then continue into recording (Timer flow is configured in the next implementation phase).
                         </p>
                       </div>
                     )}
@@ -1033,6 +1127,16 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                         />
                         {' '}Deck Prompts (from flashcard decks)
                       </label>
+                      <label className="prompter-settings-label prompter-settings-label-block">
+                        <input
+                          type="radio"
+                          name="promptMode"
+                          value="youtube"
+                          checked={promptMode === 'youtube'}
+                          onChange={() => setPromptMode('youtube')}
+                        />
+                        {' '}YouTube video prompt
+                      </label>
                     </div>
                     
                     {promptMode === 'text' ? (
@@ -1058,7 +1162,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                           </div>
                         ))}
                       </>
-                    ) : (
+                    ) : promptMode === 'decks' ? (
                       <div className="prompter-settings-section prompter-deck-config-section">
                         <label className="prompter-settings-label"><strong>Deck Configuration</strong></label>
                         <p className="prompter-hint">
@@ -1199,6 +1303,65 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
 
                         {estimatedSessionLength && (
                           <p className="prompter-hint">Estimated session length: {estimatedSessionLength}</p>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="prompter-settings-section prompter-youtube-config-section">
+                        <label className="prompter-settings-label" htmlFor="youtube-url-or-id">
+                          YouTube URL or Video ID
+                        </label>
+                        <input
+                          id="youtube-url-or-id"
+                          type="text"
+                          className="prompter-settings-input"
+                          value={youtubeUrlOrId}
+                          onChange={(e) => setYoutubeUrlOrId(e.target.value)}
+                          onBlur={handleYoutubeUrlBlur}
+                          placeholder="https://www.youtube.com/watch?v=… or paste embed code"
+                        />
+                        {youtubeFieldError && <p className="prompter-error-message">{youtubeFieldError}</p>}
+                        <div className="prompter-settings-field">
+                          <label className="prompter-settings-label" htmlFor="youtube-duration">
+                            Stimulus duration (seconds)
+                          </label>
+                          <input
+                            id="youtube-duration"
+                            type="number"
+                            min={1}
+                            max={7200}
+                            step={1}
+                            value={youtubeDurationSec}
+                            onChange={(e) => setYoutubeDurationSec(Math.max(1, Number(e.target.value) || 1))}
+                            className="prompter-settings-input prompter-settings-input-narrow"
+                            required
+                          />
+                          <p className="prompter-hint">How long the YouTube clip plays before recording continues (required).</p>
+                        </div>
+                        <div className="prompter-settings-field">
+                          <label className="prompter-settings-label" htmlFor="youtube-label">
+                            Label (optional)
+                          </label>
+                          <input
+                            id="youtube-label"
+                            type="text"
+                            className="prompter-settings-input"
+                            value={youtubeLabel}
+                            onChange={(e) => setYoutubeLabel(e.target.value)}
+                            placeholder="e.g. Warm-up dialogue"
+                          />
+                        </div>
+                        {youtubePreviewVideoId && (
+                          <div className="prompter-youtube-preview-wrap">
+                            <p className="prompter-hint">Preview (nocookie embed)</p>
+                            <div className="prompter-youtube-preview-frame">
+                              <iframe
+                                title="YouTube preview"
+                                src={`https://www.youtube-nocookie.com/embed/${encodeURIComponent(youtubePreviewVideoId)}`}
+                                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                allowFullScreen
+                              />
+                            </div>
+                          </div>
                         )}
                       </div>
                     )}

@@ -26,6 +26,7 @@ import {
 } from '../common/utils/canvas-base-url.util';
 import { resolveCanvasApiUserId } from '../common/utils/canvas-api-user.util';
 import type { PromptConfigJson, PutPromptConfigDto } from './dto/prompt-config.dto';
+import { normalizeYoutubeInputToVideoId } from './youtube-video-id.util';
 import { normalizeCanvasRubricAssessment } from './canvas-rubric-assessment.util';
 import { randomUUID } from 'crypto';
 import { Readable } from 'node:stream';
@@ -1262,6 +1263,38 @@ export class PromptService {
           : undefined,
       }),
     };
+
+    const mode = merged.promptMode ?? 'text';
+    if (mode === 'youtube') {
+      const y = dto.youtubePromptConfig;
+      if (!y) {
+        throw new BadRequestException('youtubePromptConfig is required when promptMode is youtube.');
+      }
+      const rawInput = String(y.urlOrId ?? y.videoId ?? '').trim();
+      if (!rawInput) {
+        throw new BadRequestException('YouTube URL or video ID is required.');
+      }
+      const videoId = normalizeYoutubeInputToVideoId(rawInput);
+      const dur = Number(y.durationSec);
+      if (!Number.isFinite(dur) || dur <= 0) {
+        throw new BadRequestException('YouTube stimulus duration (seconds) must be a positive number.');
+      }
+      const durationSec = Math.floor(dur);
+      if (durationSec < 1) {
+        throw new BadRequestException('YouTube stimulus duration (seconds) must be at least 1.');
+      }
+      merged.youtubePromptConfig = {
+        videoId,
+        durationSec,
+        ...(y.label != null && String(y.label).trim() ? { label: String(y.label).trim() } : {}),
+      };
+      delete (merged as { videoPromptConfig?: unknown }).videoPromptConfig;
+    } else {
+      delete (merged as { youtubePromptConfig?: unknown }).youtubePromptConfig;
+      if (mode === 'text') {
+        delete (merged as { videoPromptConfig?: unknown }).videoPromptConfig;
+      }
+    }
 
     if (merged.promptMode === 'decks' && merged.videoPromptConfig?.selectedDecks?.length) {
       const selectedDecks = merged.videoPromptConfig.selectedDecks;

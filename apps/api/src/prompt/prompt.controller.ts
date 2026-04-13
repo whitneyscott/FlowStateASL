@@ -95,6 +95,20 @@ export class PromptController {
         throw new BadRequestException('videoPromptConfig.totalCards must be an integer greater than or equal to 1');
       }
     }
+    if (dto.promptMode === 'youtube') {
+      const y = dto.youtubePromptConfig;
+      if (!y) {
+        throw new BadRequestException('youtubePromptConfig is required when promptMode is youtube');
+      }
+      const raw = String(y.urlOrId ?? y.videoId ?? '').trim();
+      if (!raw) {
+        throw new BadRequestException('YouTube URL or video ID is required when promptMode is youtube');
+      }
+      const dur = Number(y.durationSec);
+      if (!Number.isFinite(dur) || dur <= 0) {
+        throw new BadRequestException('youtubePromptConfig.durationSec must be a positive number');
+      }
+    }
   }
 
   @Get('config')
