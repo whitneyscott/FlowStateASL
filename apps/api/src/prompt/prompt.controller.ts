@@ -104,9 +104,16 @@ export class PromptController {
       if (!raw) {
         throw new BadRequestException('YouTube URL or video ID is required when promptMode is youtube');
       }
-      const dur = Number(y.durationSec);
-      if (!Number.isFinite(dur) || dur <= 0) {
-        throw new BadRequestException('youtubePromptConfig.durationSec must be a positive number');
+      const start = Number(y.clipStartSec);
+      const end = Number(y.clipEndSec);
+      const hasClipBounds =
+        Number.isFinite(start) && Number.isFinite(end) && Math.floor(end) > Math.max(0, Math.floor(start));
+      const legacyDur = Number(y.durationSec);
+      const hasLegacyDuration = Number.isFinite(legacyDur) && legacyDur >= 1;
+      if (!hasClipBounds && !hasLegacyDuration) {
+        throw new BadRequestException(
+          'youtubePromptConfig requires clipStartSec and clipEndSec (end > start), or legacy durationSec',
+        );
       }
     }
   }

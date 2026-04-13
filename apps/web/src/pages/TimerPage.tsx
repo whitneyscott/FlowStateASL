@@ -6,6 +6,7 @@ import { ManualTokenModal } from '../components/ManualTokenModal';
 import { resolveLtiContextValue } from '../utils/lti-context';
 import { ltiTokenHeaders } from '../api/lti-token';
 import { nextDeckIndexAfterAdvance } from '../utils/deck-advance';
+import { buildYoutubeNocookieEmbedSrc } from '../utils/youtube-embed';
 import './PrompterPage.css';
 
 const TEACHER_ROLE_PATTERNS = [
@@ -170,7 +171,7 @@ export default function TimerPage({ context }: TimerPageProps) {
   const [config, setConfig] = useState<promptApi.PromptConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [phase, setPhase] = useState<
-    'access' | 'warmup' | 'getReady' | 'preflight' | 'record' | 'upload' | 'done'
+    'access' | 'warmup' | 'getReady' | 'youtubeStimulus' | 'preflight' | 'record' | 'upload' | 'done'
   >('access');
   const [accessCode, setAccessCode] = useState('');
   const [accessError, setAccessError] = useState<string | null>(null);
@@ -190,6 +191,10 @@ export default function TimerPage({ context }: TimerPageProps) {
   const [deckPrompts, setDeckPrompts] = useState<DeckPromptItem[]>([]);
   /** True when assignment is configured for deck prompts (used before deck list finishes loading). */
   const [studentDeckFlow, setStudentDeckFlow] = useState(false);
+  /** YouTube clip → then camera recording (no deck cards). */
+  const [studentYoutubeFlow, setStudentYoutubeFlow] = useState(false);
+  /** Wall-clock countdown while the YouTube iframe segment plays (not recorded). */
+  const [youtubeStimulusSecondsLeft, setYoutubeStimulusSecondsLeft] = useState(0);
   /** 3 → 2 → 1 → record (deck flow only). */
   const [getReadyTick, setGetReadyTick] = useState(3);
   
@@ -467,7 +472,13 @@ export default function TimerPage({ context }: TimerPageProps) {
       const isDeckAssignment =
         data?.promptMode === 'decks' &&
         (data.videoPromptConfig?.selectedDecks?.length ?? 0) > 0;
+      const isYoutubeAssignment =
+        data?.promptMode === 'youtube' &&
+        !!data.youtubePromptConfig?.videoId &&
+        Math.floor(Number(data.youtubePromptConfig.clipEndSec)) >
+          Math.max(0, Math.floor(Number(data.youtubePromptConfig.clipStartSec ?? 0)));
       setStudentDeckFlow(!!isDeckAssignment);
+      setStudentYoutubeFlow(!!isYoutubeAssignment);
 
       // If deck mode, fetch the prompt list
       if (data?.promptMode === 'decks' && data?.videoPromptConfig?.selectedDecks && data.videoPromptConfig.selectedDecks.length > 0) {
@@ -512,7 +523,7 @@ export default function TimerPage({ context }: TimerPageProps) {
       }
 
       if (!data?.accessCode?.trim()) {
-        if (isDeckAssignment) {
+        if (isDeckAssignment || isYoutubeAssignment) {
           setPhase('preflight');
         } else {
           setPhase('warmup');
@@ -525,6 +536,7 @@ export default function TimerPage({ context }: TimerPageProps) {
       }
       setConfig(null);
       setStudentDeckFlow(false);
+      setStudentYoutubeFlow(false);
     } finally {
       setLoading(false);
     }
@@ -566,12 +578,34 @@ export default function TimerPage({ context }: TimerPageProps) {
   useEffect(() => {
     if (phase !== 'getReady') return;
     if (getReadyTick <= 0) {
-      setPhase('record');
+      setPhase(studentYoutubeFlow ? 'youtubeStimulus' : 'record');
       return;
     }
     const id = window.setTimeout(() => setGetReadyTick((t) => t - 1), 1000);
     return () => window.clearTimeout(id);
-  }, [phase, getReadyTick]);
+  }, [phase, getReadyTick, studentYoutubeFlow]);
+
+  useEffect(() => {
+    if (phase !== 'youtubeStimulus') return;
+    const yc = config?.youtubePromptConfig;
+    if (!yc?.videoId) return;
+    const wall = Math.max(
+      1,
+      Math.floor(Number(yc.clipEndSec)) - Math.max(0, Math.floor(Number(yc.clipStartSec ?? 0))),
+    );
+    setYoutubeStimulusSecondsLeft(wall);
+  }, [phase, config]);
+
+  useEffect(() => {
+    if (phase !== 'youtubeStimulus' || youtubeStimulusSecondsLeft <= 0) return;
+    const id = window.setInterval(() => setYoutubeStimulusSecondsLeft((s) => s - 1), 1000);
+    return () => window.clearInterval(id);
+  }, [phase, youtubeStimulusSecondsLeft]);
+
+  useEffect(() => {
+    if (phase !== 'youtubeStimulus' || youtubeStimulusSecondsLeft > 0) return;
+    setPhase('record');
+  }, [phase, youtubeStimulusSecondsLeft]);
 
   const handleVerifyAccess = async () => {
     setAccessError(null);
@@ -590,7 +624,12 @@ export default function TimerPage({ context }: TimerPageProps) {
       }
       const deckAfterAccess =
         config?.promptMode === 'decks' && (config.videoPromptConfig?.selectedDecks?.length ?? 0) > 0;
-      if (deckAfterAccess) {
+      const youtubeAfterAccess =
+        config?.promptMode === 'youtube' &&
+        !!config.youtubePromptConfig?.videoId &&
+        Math.floor(Number(config.youtubePromptConfig.clipEndSec)) >
+          Math.max(0, Math.floor(Number(config.youtubePromptConfig.clipStartSec ?? 0)));
+      if (deckAfterAccess || youtubeAfterAccess) {
         setPhase('preflight');
       } else {
         setPhase('warmup');
@@ -604,7 +643,8 @@ export default function TimerPage({ context }: TimerPageProps) {
   const startPreflight = () => {
     if (!streamRef.current) return;
     const useDeckCountdown = studentDeckFlow && deckPrompts.length > 0;
-    if (useDeckCountdown) {
+    const useYoutubeCountdown = studentYoutubeFlow;
+    if (useDeckCountdown || useYoutubeCountdown) {
       setPromptIndex(0);
       setGetReadyTick(3);
       setPhase('getReady');
@@ -620,13 +660,25 @@ export default function TimerPage({ context }: TimerPageProps) {
 
   const finishAndSubmit = useCallback(() => {
     // One continuous video for the whole deck: snapshot lists every prompt (newline-separated).
+    const youtubeSnapshot =
+      studentYoutubeFlow && config?.youtubePromptConfig
+        ? [
+            config.youtubePromptConfig.label?.trim() || 'YouTube clip response',
+            `videoId=${config.youtubePromptConfig.videoId}`,
+            `clip=${Math.floor(Number(config.youtubePromptConfig.clipStartSec ?? 0))}-${Math.floor(Number(config.youtubePromptConfig.clipEndSec))}`,
+          ]
+            .filter(Boolean)
+            .join('\n')
+        : '';
     pendingPromptRef.current =
       deckMode && displayPrompts.length > 0
         ? displayPrompts.join('\n\n')
-        : (displayPrompts[promptIndex] ?? displayPrompts[0] ?? '');
+        : studentYoutubeFlow
+          ? youtubeSnapshot
+          : (displayPrompts[promptIndex] ?? displayPrompts[0] ?? '');
     submitOnStopRef.current = true;
     stopRecording();
-  }, [deckMode, displayPrompts, promptIndex, stopRecording]);
+  }, [deckMode, displayPrompts, promptIndex, stopRecording, studentYoutubeFlow, config]);
 
   const retryLastSubmit = useCallback(() => {
     if (!recordedBlob) {
@@ -875,6 +927,49 @@ export default function TimerPage({ context }: TimerPageProps) {
     );
   }
 
+  if (phase === 'youtubeStimulus') {
+    const yc = config?.youtubePromptConfig;
+    const vid = yc?.videoId?.trim();
+    if (!vid || !yc) {
+      return (
+        <div className="prompter-page">
+          <div className="prompter-card">
+            <p className="prompter-error-message">
+              This assignment is missing valid YouTube settings. Please contact your instructor.
+            </p>
+          </div>
+        </div>
+      );
+    }
+    const startSec = Math.max(0, Math.floor(Number(yc.clipStartSec ?? 0)));
+    const endSec = Math.floor(Number(yc.clipEndSec));
+    const src = buildYoutubeNocookieEmbedSrc(vid, { startSec, endSec: endSec > startSec ? endSec : startSec + 1 });
+    const m = Math.floor(youtubeStimulusSecondsLeft / 60);
+    const s = youtubeStimulusSecondsLeft % 60;
+    return (
+      <div className="prompter-page">
+        <div className="prompter-card prompter-youtube-stimulus-card">
+          <h1 className="prompter-youtube-stimulus-heading">Watch the clip</h1>
+          <p className="prompter-info-message prompter-info-message-spaced">
+            Your camera is not recording yet. Keep this tab open until the timer reaches zero.
+          </p>
+          <div className="prompter-timer-display-sm" aria-live="polite">
+            {m}:{s < 10 ? '0' : ''}
+            {s}
+          </div>
+          <div className="prompter-youtube-stimulus-frame">
+            <iframe
+              title="Assignment stimulus video"
+              src={src}
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              allowFullScreen
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (phase === 'preflight') {
     return (
       <div className="prompter-page">
@@ -904,12 +999,16 @@ export default function TimerPage({ context }: TimerPageProps) {
             disabled={
               !preflightReady ||
               !!preflightError ||
-              (studentDeckFlow && deckPrompts.length === 0)
+              (studentDeckFlow && deckPrompts.length === 0) ||
+              (studentYoutubeFlow &&
+                (!config?.youtubePromptConfig?.videoId ||
+                  Math.floor(Number(config.youtubePromptConfig.clipEndSec)) <=
+                    Math.max(0, Math.floor(Number(config.youtubePromptConfig.clipStartSec ?? 0)))))
             }
           >
             {studentDeckFlow && deckPrompts.length === 0
               ? 'Loading prompts…'
-              : studentDeckFlow
+              : studentDeckFlow || studentYoutubeFlow
                 ? 'Continue'
                 : 'Everything Looks Good - Start'}
           </button>
@@ -921,6 +1020,16 @@ export default function TimerPage({ context }: TimerPageProps) {
   if (phase === 'record') {
     const rm = Math.floor(recordSecondsLeft / 60);
     const rs = recordSecondsLeft % 60;
+    const recordPromptText =
+      deckMode
+        ? currentPromptText
+        : studentYoutubeFlow
+          ? config?.youtubePromptConfig?.label?.trim() ||
+            (config?.instructions?.trim()
+              ? `${config.instructions.trim().slice(0, 500)}${config.instructions.trim().length > 500 ? '…' : ''}`
+              : '') ||
+            'Record your response to the clip you just watched.'
+          : currentPromptText;
     return (
       <div className="prompter-page">
         <div className="prompter-card">
@@ -932,6 +1041,11 @@ export default function TimerPage({ context }: TimerPageProps) {
               Item {promptIndex + 1} of {deckPrompts.length} — one continuous recording for all prompts
             </p>
           )}
+          {studentYoutubeFlow && !deckMode && (
+            <p className="prompter-info-message prompter-deck-progress-hint">
+              Recording your response — the YouTube clip is finished
+            </p>
+          )}
           <div className="prompter-record-layout">
             {deckMode ? (
               <div className="prompter-deck-prompt-shell prompter-deck-prompt-shell--record">
@@ -941,7 +1055,7 @@ export default function TimerPage({ context }: TimerPageProps) {
               </div>
             ) : (
               <div className="prompter-prompt-column" style={{ flex: '1 1 300px', maxWidth: 480 }}>
-                <div>{currentPromptText}</div>
+                <div>{recordPromptText}</div>
               </div>
             )}
             <div className="prompter-record-video-col">

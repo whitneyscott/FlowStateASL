@@ -9,6 +9,7 @@ import type { PlaylistHierarchyRow } from '../api/flashcard-teacher.api';
 import { ManualTokenModal } from '../components/ManualTokenModal';
 import { computeDeckHubFilters } from '../utils/deckHierarchyFilters';
 import { normalizeYoutubeInputToVideoIdClient } from '../utils/youtube-video-id';
+import { buildYoutubeNocookieEmbedSrc } from '../utils/youtube-embed';
 import '../components/TeacherSettings.css';
 import './PrompterPage.css';
 
@@ -99,7 +100,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
 
   const [youtubeUrlOrId, setYoutubeUrlOrId] = useState('');
   const [youtubeLabel, setYoutubeLabel] = useState('');
-  const [youtubeDurationSec, setYoutubeDurationSec] = useState(60);
+  const [youtubeClipStartSec, setYoutubeClipStartSec] = useState(0);
+  const [youtubeClipEndSec, setYoutubeClipEndSec] = useState(60);
   const [youtubePreviewVideoId, setYoutubePreviewVideoId] = useState<string | null>(null);
   const [youtubeFieldError, setYoutubeFieldError] = useState<string | null>(null);
 
@@ -197,13 +199,21 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         setPromptMode(data.promptMode ?? 'text');
         if (data.promptMode === 'youtube' && data.youtubePromptConfig?.videoId) {
           const vid = data.youtubePromptConfig.videoId;
+          const yc = data.youtubePromptConfig;
           setYoutubeUrlOrId(`https://www.youtube.com/watch?v=${encodeURIComponent(vid)}`);
-          setYoutubeLabel(data.youtubePromptConfig.label ?? '');
-          setYoutubeDurationSec(
-            Number.isFinite(Number(data.youtubePromptConfig.durationSec))
-              ? Math.max(1, Math.floor(Number(data.youtubePromptConfig.durationSec)))
-              : 60
-          );
+          setYoutubeLabel(yc.label ?? '');
+          const hasClip =
+            Number.isFinite(Number(yc.clipStartSec)) &&
+            Number.isFinite(Number(yc.clipEndSec)) &&
+            Math.floor(Number(yc.clipEndSec)) > Math.max(0, Math.floor(Number(yc.clipStartSec)));
+          if (hasClip) {
+            setYoutubeClipStartSec(Math.max(0, Math.floor(Number(yc.clipStartSec))));
+            setYoutubeClipEndSec(Math.floor(Number(yc.clipEndSec)));
+          } else {
+            const legacyDur = Math.floor(Number((yc as { durationSec?: number }).durationSec));
+            setYoutubeClipStartSec(0);
+            setYoutubeClipEndSec(Number.isFinite(legacyDur) && legacyDur >= 1 ? legacyDur : 60);
+          }
           setYoutubePreviewVideoId(vid);
           setYoutubeFieldError(null);
           setSelectedDecks([]);
@@ -220,7 +230,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
           setPendingDeckFilterSeedIds(deckIds.length ? deckIds : null);
           setYoutubeUrlOrId('');
           setYoutubeLabel('');
-          setYoutubeDurationSec(60);
+          setYoutubeClipStartSec(0);
+          setYoutubeClipEndSec(60);
           setYoutubePreviewVideoId(null);
           setYoutubeFieldError(null);
         } else {
@@ -232,7 +243,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
           setPendingDeckFilterSeedIds(null);
           setYoutubeUrlOrId('');
           setYoutubeLabel('');
-          setYoutubeDurationSec(60);
+          setYoutubeClipStartSec(0);
+          setYoutubeClipEndSec(60);
           setYoutubePreviewVideoId(null);
           setYoutubeFieldError(null);
         }
@@ -259,7 +271,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         setPendingDeckFilterSeedIds(null);
         setYoutubeUrlOrId('');
         setYoutubeLabel('');
-        setYoutubeDurationSec(60);
+        setYoutubeClipStartSec(0);
+        setYoutubeClipEndSec(60);
         setYoutubePreviewVideoId(null);
         setYoutubeFieldError(null);
       }
@@ -435,9 +448,10 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         setError(e instanceof Error ? e.message : 'Invalid YouTube URL or video ID.');
         return;
       }
-      const dur = Number(youtubeDurationSec);
-      if (!Number.isFinite(dur) || dur < 1) {
-        setError('Stimulus duration must be at least 1 second.');
+      const clipStart = Math.max(0, Math.floor(Number(youtubeClipStartSec)));
+      const clipEnd = Math.floor(Number(youtubeClipEndSec));
+      if (!Number.isFinite(clipEnd) || clipEnd <= clipStart) {
+        setError('Clip end (seconds) must be greater than clip start by at least 1 second.');
         return;
       }
     }
@@ -489,7 +503,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
               ? {
                   urlOrId: youtubeUrlOrId.trim(),
                   label: youtubeLabel.trim() || undefined,
-                  durationSec: Math.max(1, Math.floor(Number(youtubeDurationSec) || 1)),
+                  clipStartSec: Math.max(0, Math.floor(Number(youtubeClipStartSec))),
+                  clipEndSec: Math.floor(Number(youtubeClipEndSec)),
                 }
               : undefined,
         },
@@ -715,7 +730,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setDeckPickerError(null);
     setYoutubeUrlOrId('');
     setYoutubeLabel('');
-    setYoutubeDurationSec(60);
+    setYoutubeClipStartSec(0);
+    setYoutubeClipEndSec(60);
     setYoutubePreviewVideoId(null);
     setYoutubeFieldError(null);
     if (!assignmentId) {
@@ -1029,8 +1045,22 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                     ) : (
                       <div className="prompter-settings-section">
                         <p className="prompter-hint">
-                          <strong>YouTube mode:</strong> students see your YouTube clip for the duration you set, then continue into recording (Timer flow is configured in the next implementation phase).
+                          <strong>YouTube mode:</strong> students watch the clip segment you define (start/end times), then record their response in the time you set below.
                         </p>
+                        <label className="prompter-settings-label" htmlFor="youtube-response-minutes">
+                          <strong>Recording time after clip (minutes)</strong>
+                        </label>
+                        <input
+                          id="youtube-response-minutes"
+                          type="number"
+                          min={1}
+                          max={60}
+                          step={0.5}
+                          value={minutes}
+                          onChange={(e) => setMinutes(Number(e.target.value) || 5)}
+                          className="prompter-settings-input prompter-settings-input-narrow"
+                        />
+                        <p className="prompter-hint">Timer for the student&apos;s camera recording once the YouTube segment finishes.</p>
                       </div>
                     )}
                     <div className="prompter-settings-section prompter-settings-assignment-block">
@@ -1320,22 +1350,36 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                           placeholder="https://www.youtube.com/watch?v=… or paste embed code"
                         />
                         {youtubeFieldError && <p className="prompter-error-message">{youtubeFieldError}</p>}
-                        <div className="prompter-settings-field">
-                          <label className="prompter-settings-label" htmlFor="youtube-duration">
-                            Stimulus duration (seconds)
+                        <div className="prompter-settings-field prompter-youtube-clip-fields">
+                          <label className="prompter-settings-label" htmlFor="youtube-clip-start">
+                            Clip start (seconds from video start)
                           </label>
                           <input
-                            id="youtube-duration"
+                            id="youtube-clip-start"
+                            type="number"
+                            min={0}
+                            max={86400}
+                            step={1}
+                            value={youtubeClipStartSec}
+                            onChange={(e) => setYoutubeClipStartSec(Math.max(0, Math.floor(Number(e.target.value) || 0)))}
+                            className="prompter-settings-input prompter-settings-input-narrow"
+                          />
+                          <label className="prompter-settings-label prompter-settings-label-mt" htmlFor="youtube-clip-end">
+                            Clip end (seconds; must be greater than start)
+                          </label>
+                          <input
+                            id="youtube-clip-end"
                             type="number"
                             min={1}
-                            max={7200}
+                            max={86400}
                             step={1}
-                            value={youtubeDurationSec}
-                            onChange={(e) => setYoutubeDurationSec(Math.max(1, Number(e.target.value) || 1))}
+                            value={youtubeClipEndSec}
+                            onChange={(e) => setYoutubeClipEndSec(Math.max(1, Math.floor(Number(e.target.value) || 1)))}
                             className="prompter-settings-input prompter-settings-input-narrow"
-                            required
                           />
-                          <p className="prompter-hint">How long the YouTube clip plays before recording continues (required).</p>
+                          <p className="prompter-hint">
+                            Same idea as a YouTube clip: only this segment plays for students. Preview uses your start/end on the embed.
+                          </p>
                         </div>
                         <div className="prompter-settings-field">
                           <label className="prompter-settings-label" htmlFor="youtube-label">
@@ -1356,7 +1400,10 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                             <div className="prompter-youtube-preview-frame">
                               <iframe
                                 title="YouTube preview"
-                                src={`https://www.youtube-nocookie.com/embed/${encodeURIComponent(youtubePreviewVideoId)}`}
+                                src={buildYoutubeNocookieEmbedSrc(youtubePreviewVideoId, {
+                                  startSec: youtubeClipStartSec,
+                                  endSec: youtubeClipEndSec,
+                                })}
                                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                                 allowFullScreen
                               />

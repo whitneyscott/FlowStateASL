@@ -2,7 +2,10 @@
 export interface YoutubePromptConfig {
   videoId: string;
   label?: string;
-  durationSec: number;
+  /** Inclusive start of the clip segment (seconds from video start). */
+  clipStartSec: number;
+  /** Exclusive end for YouTube embed `end` param (seconds); must be > clipStartSec. */
+  clipEndSec: number;
 }
 
 export interface VideoPromptConfig {
@@ -76,6 +79,9 @@ export class PutPromptConfigDto {
     urlOrId?: string;
     videoId?: string;
     label?: string;
+    clipStartSec?: number;
+    clipEndSec?: number;
+    /** @deprecated Use clipStartSec + clipEndSec; server migrates on read/write. */
     durationSec?: number;
   };
 }

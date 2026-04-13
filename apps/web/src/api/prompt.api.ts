@@ -85,7 +85,8 @@ export interface VideoPromptConfig {
 export interface YoutubePromptConfig {
   videoId: string;
   label?: string;
-  durationSec: number;
+  clipStartSec: number;
+  clipEndSec: number;
 }
 
 /** Client → PUT /config for youtube mode (server normalizes urlOrId/videoId to persisted YoutubePromptConfig). */
@@ -93,6 +94,9 @@ export interface YoutubePromptConfigInput {
   urlOrId?: string;
   videoId?: string;
   label?: string;
+  clipStartSec?: number;
+  clipEndSec?: number;
+  /** @deprecated Server maps to clip window from clipStartSec. */
   durationSec?: number;
 }
 

@@ -1118,6 +1118,39 @@ export class PromptService {
       staticFallbackCount: config?.videoPromptConfig?.staticFallbackPrompts?.length ?? 0,
     });
 
+    if (config?.promptMode === 'youtube' && config.youtubePromptConfig) {
+      const y = config.youtubePromptConfig as {
+        videoId?: string;
+        label?: string;
+        clipStartSec?: number;
+        clipEndSec?: number;
+        durationSec?: number;
+      };
+      let clipStartSec = Math.floor(Number(y.clipStartSec));
+      if (!Number.isFinite(clipStartSec) || clipStartSec < 0) clipStartSec = 0;
+      let clipEndSec = Math.floor(Number(y.clipEndSec));
+      if (!Number.isFinite(clipEndSec) || clipEndSec <= clipStartSec) {
+        const legacy = Math.floor(Number(y.durationSec));
+        if (Number.isFinite(legacy) && legacy >= 1) {
+          clipEndSec = clipStartSec + legacy;
+        } else {
+          clipEndSec = clipStartSec + 60;
+        }
+      }
+      const vid = String(y.videoId ?? '').trim();
+      if (vid) {
+        config = {
+          ...config,
+          youtubePromptConfig: {
+            videoId: vid,
+            clipStartSec,
+            clipEndSec,
+            ...(y.label != null && String(y.label).trim() ? { label: String(y.label).trim() } : {}),
+          },
+        };
+      }
+    }
+
     // Hydrate key assignment-backed fields directly from Canvas so UI reflects current assignment state.
     // Keep blob values as fallback when Canvas read is unavailable.
     try {
@@ -1275,17 +1308,32 @@ export class PromptService {
         throw new BadRequestException('YouTube URL or video ID is required.');
       }
       const videoId = normalizeYoutubeInputToVideoId(rawInput);
-      const dur = Number(y.durationSec);
-      if (!Number.isFinite(dur) || dur <= 0) {
-        throw new BadRequestException('YouTube stimulus duration (seconds) must be a positive number.');
+      let clipStartSec = Math.floor(Number(y.clipStartSec));
+      if (!Number.isFinite(clipStartSec) || clipStartSec < 0) {
+        clipStartSec = 0;
       }
-      const durationSec = Math.floor(dur);
-      if (durationSec < 1) {
-        throw new BadRequestException('YouTube stimulus duration (seconds) must be at least 1.');
+      let clipEndSec = Math.floor(Number(y.clipEndSec));
+      if (!Number.isFinite(clipEndSec)) {
+        const legacyDur = Math.floor(Number(y.durationSec));
+        if (Number.isFinite(legacyDur) && legacyDur >= 1) {
+          clipEndSec = clipStartSec + legacyDur;
+        } else {
+          clipEndSec = NaN;
+        }
+      }
+      if (!Number.isFinite(clipEndSec) || clipEndSec <= clipStartSec) {
+        throw new BadRequestException(
+          'YouTube clip end must be greater than clip start by at least 1 second (or send legacy durationSec).',
+        );
+      }
+      const maxSpan = 86400;
+      if (clipEndSec - clipStartSec > maxSpan) {
+        throw new BadRequestException('YouTube clip window must be at most 24 hours.');
       }
       merged.youtubePromptConfig = {
         videoId,
-        durationSec,
+        clipStartSec,
+        clipEndSec,
         ...(y.label != null && String(y.label).trim() ? { label: String(y.label).trim() } : {}),
       };
       delete (merged as { videoPromptConfig?: unknown }).videoPromptConfig;
