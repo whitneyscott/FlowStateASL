@@ -1984,6 +1984,64 @@ export class PromptService {
     }));
   }
 
+  /**
+   * Latest JSON submission comment that includes a non-empty `deckTimeline` (multi-attempt safe).
+   */
+  private parseLatestDeckStructuredComment(
+    submissionComments: Array<{ id?: number; comment?: string }> | undefined,
+  ): {
+    deckTimeline: Array<{ title: string; startSec: number; videoId?: string }>;
+    durationSeconds?: number;
+  } | null {
+    if (!submissionComments?.length) return null;
+    for (let i = submissionComments.length - 1; i >= 0; i--) {
+      const raw = (submissionComments[i].comment ?? '').trim();
+      if (!raw) continue;
+      try {
+        const parsed = JSON.parse(raw) as { deckTimeline?: unknown; durationSeconds?: unknown };
+        const deckTimeline = this.sanitizeDeckTimelineInput(
+          Array.isArray(parsed.deckTimeline)
+            ? (parsed.deckTimeline as Array<{ title?: unknown; startSec?: unknown; videoId?: unknown }>)
+            : undefined,
+        );
+        if (!deckTimeline?.length) continue;
+        const dur = Number(parsed.durationSeconds);
+        const durationSeconds =
+          Number.isFinite(dur) && dur > 0 ? Math.round(dur * 1000) / 1000 : undefined;
+        return { deckTimeline, durationSeconds };
+      } catch {
+        continue;
+      }
+    }
+    return null;
+  }
+
+  /** HTML blob for teacher list / legacy consumers: concatenated per-card titles from deck timeline. */
+  private buildPromptHtmlFromDeckTimeline(
+    deckTimeline: Array<{ title: string; startSec: number; videoId?: string }>,
+  ): string {
+    const parts: string[] = [];
+    for (const row of deckTimeline) {
+      const t = (row.title ?? '').trim();
+      if (t) parts.push(t);
+    }
+    return parts.length > 0 ? parts.join('<hr class="fsasl-deck-prompt-sep" />') : '';
+  }
+
+  private estimateDurationFromDeckTimelineEntries(
+    entries: Array<{ title: string; startSec: number; videoId?: string }>,
+  ): number | null {
+    if (!entries.length) return null;
+    let lastStartSec: number | null = null;
+    for (const row of entries) {
+      const start = row.startSec;
+      if (!Number.isFinite(start)) continue;
+      if (lastStartSec == null || start > lastStartSec) lastStartSec = start;
+    }
+    if (lastStartSec == null) return null;
+    return Math.round((lastStartSec + DECK_MIN_TOTAL_SECONDS) * 1000) / 1000;
+  }
+
   async submit(
     ctx: LtiContext,
     promptSnapshotHtml: string,
@@ -2072,15 +2130,15 @@ export class PromptService {
   }
 
   /**
-   * Parse prompt snapshot HTML from submission comments when stored as JSON
-   * ({ promptSnapshotHtml, submittedAt, deckTimeline?, durationSeconds? }) after video upload.
+   * Parse prompt snapshot HTML from submission comments when stored as JSON (text-prompt legacy).
+   * Prefers the **latest** matching comment (newest first). Deck prompts use `parseLatestDeckStructuredComment` instead.
    */
   private extractPromptSnapshotFromSubmissionComments(
     submissionComments: Array<{ id?: number; comment?: string }> | undefined,
   ): string | undefined {
     if (!submissionComments?.length) return undefined;
-    for (const c of submissionComments) {
-      const raw = (c.comment ?? '').trim();
+    for (let i = submissionComments.length - 1; i >= 0; i--) {
+      const raw = (submissionComments[i].comment ?? '').trim();
       if (!raw) continue;
       try {
         const parsed = JSON.parse(raw) as { promptSnapshotHtml?: string };
@@ -2120,28 +2178,9 @@ export class PromptService {
   private estimateDurationFromDeckTimelineMinWindow(
     submissionComments: Array<{ id?: number; comment?: string }> | undefined,
   ): number | null {
-    if (!submissionComments?.length) return null;
-    for (let i = submissionComments.length - 1; i >= 0; i--) {
-      const raw = (submissionComments[i].comment ?? '').trim();
-      if (!raw) continue;
-      try {
-        const parsed = JSON.parse(raw) as { deckTimeline?: unknown };
-        const rows = Array.isArray(parsed.deckTimeline) ? parsed.deckTimeline : [];
-        let lastStartSec: number | null = null;
-        for (const row of rows) {
-          if (!row || typeof row !== 'object') continue;
-          const start = Number((row as { startSec?: unknown }).startSec);
-          if (!Number.isFinite(start)) continue;
-          if (lastStartSec == null || start > lastStartSec) lastStartSec = start;
-        }
-        if (lastStartSec != null) {
-          return Math.round((lastStartSec + DECK_MIN_TOTAL_SECONDS) * 1000) / 1000;
-        }
-      } catch {
-        // not JSON — skip
-      }
-    }
-    return null;
+    const latest = this.parseLatestDeckStructuredComment(submissionComments);
+    if (!latest?.deckTimeline.length) return null;
+    return this.estimateDurationFromDeckTimelineEntries(latest.deckTimeline);
   }
 
   /** Sum of card `duration` across all stored prompt banks (deck timing from prompt_configs). */
@@ -2168,7 +2207,6 @@ export class PromptService {
     video: { buffer?: Buffer; filePath?: string; size: number },
     filename: string,
     options?: {
-      promptSnapshotHtml?: string;
       deckTimeline?: Array<{ title: string; startSec: number; videoId?: string }>;
       /** Client-measured recording length (seconds). */
       durationSeconds?: number;
@@ -2325,22 +2363,19 @@ export class PromptService {
       token,
     );
 
-    const promptSnapshotTrimmed = (options?.promptSnapshotHtml ?? '').trim();
     const optDur = options?.durationSeconds;
     const durationFinite =
       optDur != null && typeof optDur === 'number' && Number.isFinite(optDur) && optDur > 0;
     const durationRounded = durationFinite ? Math.round(optDur * 1000) / 1000 : null;
 
-    if (promptSnapshotTrimmed || durationRounded != null) {
+    const sanitizedCommentDeck = this.sanitizeDeckTimelineInput(
+      options?.deckTimeline as Array<{ title?: unknown; startSec?: unknown; videoId?: unknown }> | undefined,
+    );
+
+    if (sanitizedCommentDeck?.length || durationRounded != null) {
       const commentPayload: Record<string, unknown> = {
         submittedAt: new Date().toISOString(),
       };
-      if (promptSnapshotTrimmed) {
-        commentPayload.promptSnapshotHtml = promptSnapshotTrimmed;
-      }
-      const sanitizedCommentDeck = this.sanitizeDeckTimelineInput(
-        options?.deckTimeline as Array<{ title?: unknown; startSec?: unknown; videoId?: unknown }> | undefined,
-      );
       if (sanitizedCommentDeck?.length) {
         commentPayload.deckTimeline = sanitizedCommentDeck;
       }
@@ -2360,11 +2395,11 @@ export class PromptService {
           domainOverride,
           token,
         );
-        appendLtiLog('prompt-submit', 'post-upload: prompt/deck/duration stored as submission comment', {
+        appendLtiLog('prompt-submit', 'post-upload: deck/duration stored as submission comment', {
           assignmentId,
           studentUserId,
           commentJsonLength: commentText.length,
-          hasPromptSnapshot: !!promptSnapshotTrimmed,
+          hasDeckTimeline: !!sanitizedCommentDeck?.length,
           hasDuration: durationRounded != null,
         });
       } catch (commentErr) {
@@ -2375,8 +2410,7 @@ export class PromptService {
         });
       }
     } else {
-      appendLtiLog('duration', 'uploadVideo: skipped Canvas comment (no prompt snapshot and no finite duration)', {
-        hasPromptSnapshot: !!promptSnapshotTrimmed,
+      appendLtiLog('duration', 'uploadVideo: skipped Canvas comment (no deck timeline and no finite duration)', {
         durationSecondsOption: options?.durationSeconds ?? null,
       });
     }
@@ -2722,19 +2756,41 @@ export class PromptService {
     }
     const withQuizPrompts = await Promise.all(
       baseRows.map(async (row) => {
-        const fromSubmission = this.extractDurationSecondsFromSubmissionComments(row.submissionComments);
-        const fromDeckTimeline = this.estimateDurationFromDeckTimelineMinWindow(row.submissionComments);
+        const latestDeck = this.parseLatestDeckStructuredComment(row.submissionComments);
+
         let videoDurationSeconds: number | null = null;
         let durationSource: 'submission' | 'prompts' | 'unknown' = 'unknown';
-        if (fromSubmission != null) {
-          videoDurationSeconds = fromSubmission;
+        if (latestDeck?.durationSeconds != null) {
+          videoDurationSeconds = latestDeck.durationSeconds;
           durationSource = 'submission';
-        } else if (fromDeckTimeline != null) {
-          videoDurationSeconds = fromDeckTimeline;
-          durationSource = 'submission';
-        } else if (promptsFallbackDuration != null) {
-          videoDurationSeconds = promptsFallbackDuration;
-          durationSource = 'prompts';
+        } else if (latestDeck?.deckTimeline.length) {
+          const est = this.estimateDurationFromDeckTimelineEntries(latestDeck.deckTimeline);
+          if (est != null) {
+            videoDurationSeconds = est;
+            durationSource = 'submission';
+          }
+        } else {
+          const fromSubmission = this.extractDurationSecondsFromSubmissionComments(row.submissionComments);
+          if (fromSubmission != null) {
+            videoDurationSeconds = fromSubmission;
+            durationSource = 'submission';
+          } else if (promptsFallbackDuration != null) {
+            videoDurationSeconds = promptsFallbackDuration;
+            durationSource = 'prompts';
+          }
+        }
+
+        const deckPromptHtml =
+          latestDeck != null && latestDeck.deckTimeline.length > 0
+            ? this.buildPromptHtmlFromDeckTimeline(latestDeck.deckTimeline).trim()
+            : '';
+        if (deckPromptHtml.length > 0) {
+          appendLtiLog('viewer', 'getSubmissions: prompt source selected', {
+            userId: row.userId,
+            assignmentId,
+            source: 'submission_comment_deck_timeline',
+          });
+          return { ...row, promptHtml: deckPromptHtml, videoDurationSeconds, durationSource };
         }
 
         const commentPrompt = this.extractPromptSnapshotFromSubmissionComments(row.submissionComments);
@@ -2966,8 +3022,15 @@ export class PromptService {
       sub.submission_comments
         ?.filter((c) => c.id != null && c.comment != null)
         .map((c) => ({ id: c.id!, comment: c.comment! })) ?? [];
-    const fromComment = this.extractPromptSnapshotFromSubmissionComments(mappedComments);
-    let promptHtml: string | undefined = fromComment;
+    const latestDeck = this.parseLatestDeckStructuredComment(mappedComments);
+    const deckPromptHtml =
+      latestDeck != null && latestDeck.deckTimeline.length > 0
+        ? this.buildPromptHtmlFromDeckTimeline(latestDeck.deckTimeline).trim()
+        : '';
+    let promptHtml: string | undefined =
+      deckPromptHtml.length > 0
+        ? deckPromptHtml
+        : this.extractPromptSnapshotFromSubmissionComments(mappedComments);
     if (!promptHtml) {
       try {
         promptHtml = (await this.quiz.getPromptForAssignment(ctx, userId, assignmentId)) ?? undefined;
@@ -2982,19 +3045,26 @@ export class PromptService {
     } catch {
       promptsFallbackDuration = null;
     }
-    const fromSubmission = this.extractDurationSecondsFromSubmissionComments(mappedComments);
-    const fromDeckTimeline = this.estimateDurationFromDeckTimelineMinWindow(mappedComments);
     let videoDurationSeconds: number | null = null;
     let durationSource: 'submission' | 'prompts' | 'unknown' = 'unknown';
-    if (fromSubmission != null) {
-      videoDurationSeconds = fromSubmission;
+    if (latestDeck?.durationSeconds != null) {
+      videoDurationSeconds = latestDeck.durationSeconds;
       durationSource = 'submission';
-    } else if (fromDeckTimeline != null) {
-      videoDurationSeconds = fromDeckTimeline;
-      durationSource = 'submission';
-    } else if (promptsFallbackDuration != null) {
-      videoDurationSeconds = promptsFallbackDuration;
-      durationSource = 'prompts';
+    } else if (latestDeck?.deckTimeline.length) {
+      const est = this.estimateDurationFromDeckTimelineEntries(latestDeck.deckTimeline);
+      if (est != null) {
+        videoDurationSeconds = est;
+        durationSource = 'submission';
+      }
+    } else {
+      const fromSubmission = this.extractDurationSecondsFromSubmissionComments(mappedComments);
+      if (fromSubmission != null) {
+        videoDurationSeconds = fromSubmission;
+        durationSource = 'submission';
+      } else if (promptsFallbackDuration != null) {
+        videoDurationSeconds = promptsFallbackDuration;
+        durationSource = 'prompts';
+      }
     }
     return {
       userId,

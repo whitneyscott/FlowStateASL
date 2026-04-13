@@ -241,7 +241,6 @@ export async function uploadVideo(
   filename: string,
   assignmentId?: string | null,
   options?: {
-    promptSnapshotHtml?: string;
     deckTimeline?: DeckTimelineEntry[];
     idempotencyKey?: string;
     /** Client-measured recording length (seconds); omitted if unknown. */
@@ -262,10 +261,6 @@ export async function uploadVideo(
 ): Promise<PromptUploadVideoResult> {
   const form = new FormData();
   form.append('video', blob, filename);
-  const snap = options?.promptSnapshotHtml?.trim();
-  if (snap) {
-    form.append('promptSnapshotHtml', snap);
-  }
   if (options?.deckTimeline?.length) {
     form.append('deckTimeline', JSON.stringify(options.deckTimeline));
   }

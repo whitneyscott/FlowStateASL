@@ -66,15 +66,16 @@ function parseDeckTimelineFromBody(body: string | undefined): DeckTimelineEntry[
 }
 
 /**
- * Current flow: after video upload, prompt + deckTimeline are often only in a JSON submission comment
- * (same payload as promptSnapshotHtml), because Canvas replaces online_text_entry body on upload.
+ * After video upload, deckTimeline lives in JSON submission comments (Canvas replaces body).
+ * Prefer the **latest** comment with a non-empty deckTimeline so multi-attempt submissions match the
+ * current video; fall back to submission body only if no such comment exists (legacy).
  */
 function parseDeckTimelineFromSubmissionComments(
   comments: Array<{ comment?: string }> | undefined,
 ): DeckTimelineEntry[] {
   if (!comments?.length) return [];
-  for (const c of comments) {
-    const txt = (c.comment ?? '').trim();
+  for (let i = comments.length - 1; i >= 0; i--) {
+    const txt = (comments[i].comment ?? '').trim();
     if (!txt) continue;
     try {
       const parsed = JSON.parse(txt) as { deckTimeline?: unknown };
@@ -91,9 +92,9 @@ function resolveDeckTimeline(
   body: string | undefined,
   comments: Array<{ comment?: string }> | undefined,
 ): DeckTimelineEntry[] {
-  const fromBody = parseDeckTimelineFromBody(body);
-  if (fromBody.length > 0) return fromBody;
-  return parseDeckTimelineFromSubmissionComments(comments);
+  const fromComments = parseDeckTimelineFromSubmissionComments(comments);
+  if (fromComments.length > 0) return fromComments;
+  return parseDeckTimelineFromBody(body);
 }
 
 function activeDeckPromptAt(t: number, segments: DeckTimelineEntry[]): DeckTimelineEntry | null {

@@ -217,12 +217,10 @@ export class PromptController {
       throw new PayloadTooLargeException(err instanceof Error ? err.message : 'Upload too large');
     }
     const body = req.body as {
-      promptSnapshotHtml?: string;
       deckTimeline?: string;
       captureProfile?: string;
       durationSeconds?: string;
     };
-    const promptSnapshotHtml = (body?.promptSnapshotHtml ?? '').toString().trim();
     let captureProfile:
       | {
           profileId?: string;
@@ -334,7 +332,6 @@ export class PromptController {
         },
         filename,
         {
-          ...(promptSnapshotHtml ? { promptSnapshotHtml } : {}),
           ...(deckTimeline?.length ? { deckTimeline } : {}),
           ...(captureProfile ? { captureProfile } : {}),
           ...(durationSeconds != null ? { durationSeconds } : {}),

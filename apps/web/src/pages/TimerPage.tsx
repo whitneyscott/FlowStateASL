@@ -327,7 +327,6 @@ export default function TimerPage({ context }: TimerPageProps) {
               `asl_submission_${Date.now()}.webm`,
               effectiveAssignmentId,
               {
-                promptSnapshotHtml: promptSnapshot,
                 deckTimeline,
                 idempotencyKey: `upload-${submitAttemptKey}`,
                 captureProfile: captureProfile ?? undefined,
