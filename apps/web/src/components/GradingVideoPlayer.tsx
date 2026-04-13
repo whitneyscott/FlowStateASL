@@ -151,6 +151,18 @@ export function GradingVideoPlayer({
     setMuted(v.muted);
   };
 
+  const restartFromBeginning = useCallback(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    isScrubbingRef.current = false;
+    v.currentTime = 0;
+    setScrubValue(0);
+    setDisplayTime(0);
+    if (!v.paused) {
+      void v.play().catch(() => {});
+    }
+  }, [videoRef]);
+
   const onRangePointerDown = () => {
     isScrubbingRef.current = true;
   };
@@ -194,6 +206,14 @@ export function GradingVideoPlayer({
           aria-label={playing ? 'Pause' : 'Play'}
         >
           {playing ? 'Pause' : 'Play'}
+        </button>
+        <button
+          type="button"
+          className="prompter-viewer-video-bar-btn"
+          onClick={restartFromBeginning}
+          aria-label="Restart from beginning"
+        >
+          Restart
         </button>
         <div className="prompter-viewer-video-bar-scrub-wrap">
           {indeterminate ? (
