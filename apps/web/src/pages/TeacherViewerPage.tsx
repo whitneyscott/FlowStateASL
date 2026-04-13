@@ -384,6 +384,39 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   const currentAttempt = current?.attempt ?? 1;
   const rubricAssessment = (current?.rubricAssessment ?? {}) as Record<string, { rating_id?: string; points?: number; comments?: string }>;
 
+  /** Criterion ids only — avoids re-running rubric draft sync when `rubric` array is a new reference with the same rows. */
+  const rubricIdsKey = useMemo(
+    () => rubric.map((c, idx) => String(c.id ?? idx)).join('|'),
+    [rubric]
+  );
+
+  /** Re-sync local rubric draft from the server only when assessment *content* changes, not on every submission object clone. */
+  const rubricAssessmentSyncSig = useMemo(() => {
+    const ra = gradingMode ? submissions[index]?.rubricAssessment : mySubmission?.rubricAssessment;
+    if (ra == null || typeof ra !== 'object') return '';
+    try {
+      return JSON.stringify(ra);
+    } catch {
+      return '';
+    }
+  }, [gradingMode, submissions, index, mySubmission]);
+
+  const rubricDraftBootstrapKey = useMemo(() => {
+    if (gradingMode) {
+      const s = submissions[index];
+      if (!s) return '';
+      return `g:${index}:${String(s.userId ?? '')}:${String(s.attempt ?? 1)}`;
+    }
+    const s = mySubmission;
+    if (!s) return '';
+    return `s:${String(s.userId ?? '')}:${String(s.attempt ?? 1)}`;
+  }, [gradingMode, submissions, index, mySubmission]);
+
+  const currentRef = useRef(current);
+  currentRef.current = current;
+  const rubricRef = useRef(rubric);
+  rubricRef.current = rubric;
+
   const syncFeedbackFromCurrent = useCallback(() => {
     if (!current?.submissionComments) {
       setFeedbackEntries([]);
@@ -395,12 +428,15 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   useEffect(() => { syncFeedbackFromCurrent(); }, [syncFeedbackFromCurrent]);
 
   useEffect(() => {
-    if (!current) {
+    const c = currentRef.current;
+    if (!c) {
       setRubricDraft({});
       return;
     }
-    setRubricDraft(parseRubricAssessmentToDraft(current.rubricAssessment as Record<string, unknown> | undefined, rubric));
-  }, [current, rubric]);
+    setRubricDraft(
+      parseRubricAssessmentToDraft(c.rubricAssessment as Record<string, unknown> | undefined, rubricRef.current)
+    );
+  }, [rubricDraftBootstrapKey, rubricAssessmentSyncSig, rubricIdsKey]);
 
   const loadTeacher = useCallback(async () => {
     if (!teacher || !assignmentId) return;
@@ -585,18 +621,19 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   const handleRubricRatingClick = useCallback(
     (criterionId: string, ratingId: string, points: number) => {
       if (!teacher || !current || !assignmentId) return;
+      let nextDraft: Record<string, RubricCriterionDraft> | null = null;
       setRubricDraft((prev) => {
         const prior = prev[criterionId] ?? {};
         const wasSelected = prior.rating_id === ratingId;
         const nextEntry: RubricCriterionDraft = wasSelected
           ? { ...prior, rating_id: undefined, points: undefined }
           : { ...prior, rating_id: ratingId, points };
-        const nextDraft = { ...prev, [criterionId]: nextEntry };
-        if (rubricDraftHasAnyRating(rubric, nextDraft)) {
-          void persistRubricAssessment(nextDraft);
-        }
+        nextDraft = { ...prev, [criterionId]: nextEntry };
         return nextDraft;
       });
+      if (nextDraft && rubricDraftHasAnyRating(rubric, nextDraft)) {
+        void persistRubricAssessment(nextDraft);
+      }
     },
     [teacher, current, assignmentId, rubric, persistRubricAssessment]
   );
@@ -604,13 +641,14 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   const handleSaveRubricCriterionComment = useCallback(
     (criterionId: string, comments: string) => {
       if (!teacher || !current || !assignmentId) return;
+      let nextDraft: Record<string, RubricCriterionDraft> | null = null;
       setRubricDraft((prev) => {
-        const nextDraft = { ...prev, [criterionId]: { ...(prev[criterionId] ?? {}), comments } };
-        if (rubricDraftHasPayload(rubric, nextDraft)) {
-          void persistRubricAssessment(nextDraft);
-        }
+        nextDraft = { ...prev, [criterionId]: { ...(prev[criterionId] ?? {}), comments } };
         return nextDraft;
       });
+      if (nextDraft && rubricDraftHasPayload(rubric, nextDraft)) {
+        void persistRubricAssessment(nextDraft);
+      }
     },
     [teacher, current, assignmentId, rubric, persistRubricAssessment]
   );
