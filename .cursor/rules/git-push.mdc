@@ -8,7 +8,7 @@ alwaysApply: true
 When you **complete a task that the user asked for** (implementation, fixes, refactors, etc.):
 
 1. **Stage and commit** the changes with a clear message.
-2. **Push to GitHub** to the branch the user cares about (see workspace rule **flowstateasl-dev-branch** for this repo: usually `origin/fix/viewer-panel-scaling`, not `main`).
+2. **Push to GitHub** on the **branch the user is using for that work** (typically the current branch), or another branch if they name it. Do **not** assume a repo-wide default deploy branch unless they say so.
 
 Do **not** leave completed work only on the local machine unless the user explicitly opts out (e.g. "don't push", "commit only", "local only").
 
