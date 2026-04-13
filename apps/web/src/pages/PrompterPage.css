@@ -991,6 +991,30 @@
   color: #777;
 }
 
+.prompter-viewer-show-source-card-btn--inline-prompt {
+  display: inline-block;
+  vertical-align: middle;
+  margin: 0.35rem 0 0 0.6rem;
+  flex-shrink: 0;
+}
+
+.prompter-viewer-rubric-feedback-inline {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+  text-align: left;
+  max-width: 100%;
+}
+
+.prompter-viewer-rubric-feedback-inline-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  max-width: 100%;
+}
+
 .prompter-viewer-rubric-rating--active-item {
   padding: 8px 14px;
   font-size: 14px;

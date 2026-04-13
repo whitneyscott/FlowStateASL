@@ -681,7 +681,13 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   const handleAddComment = useCallback(async () => {
     const text = commentText.trim();
     if (!text || !current || !assignmentId || !videoRef.current) return;
-    const timeSec = Math.floor(videoRef.current.currentTime);
+    const v = videoRef.current;
+    const deckSegs = resolveDeckTimeline(current.body, current.submissionComments);
+    let timeSec = Math.floor(v.currentTime);
+    if (deckSegs.length > 0) {
+      const seg = activeDeckPromptAt(v.currentTime, deckSegs);
+      if (seg) timeSec = Math.floor(seg.startSec);
+    }
     setSaving(true);
     try {
       setLastFunction('POST /api/prompt/comment/add');
@@ -829,22 +835,32 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     setSourceCardPreviewVideoId(null);
   }, []);
 
-  const openSourceCardModal = useCallback(() => {
-    const vid = activeDeckPrompt?.videoId?.trim();
-    if (!vid || !sproutAccountIdForEmbed) return;
-    videoRef.current?.pause();
-    setSourceCardPreviewVideoId(vid);
-  }, [activeDeckPrompt?.videoId, sproutAccountIdForEmbed]);
-
-  const activeDeckSourceVideoId = activeDeckPrompt?.videoId?.trim() ?? '';
-  const showSourceCardButton = teacher && !!activeDeckSourceVideoId;
-
   const activeDeckIndex = useMemo(() => {
     if (!activeDeckPrompt) return -1;
     return deckTimeline.findIndex(
       (s) => s.startSec === activeDeckPrompt.startSec && s.title === activeDeckPrompt.title,
     );
   }, [activeDeckPrompt, deckTimeline]);
+
+  const activeDeckSproutVideoId = useMemo(() => {
+    if (!activeDeckPrompt) return '';
+    const fromCard = activeDeckPrompt.videoId?.trim();
+    if (fromCard) return fromCard;
+    if (activeDeckIndex >= 0 && deckTimeline[activeDeckIndex]?.videoId?.trim()) {
+      return deckTimeline[activeDeckIndex].videoId!.trim();
+    }
+    return '';
+  }, [activeDeckPrompt, activeDeckIndex, deckTimeline]);
+
+  const openSourceCardModal = useCallback(() => {
+    const vid = activeDeckSproutVideoId;
+    if (!vid || !sproutAccountIdForEmbed) return;
+    videoRef.current?.pause();
+    setSourceCardPreviewVideoId(vid);
+  }, [activeDeckSproutVideoId, sproutAccountIdForEmbed]);
+
+  /** Show control whenever teacher can preview Sprout and a deck card is active (enabled only if we have a video id). */
+  const showSourceCardControl = teacher && !!sproutAccountIdForEmbed && !!activeDeckPrompt;
 
   const rubricPromptIndexMap = useMemo(
     () =>
@@ -1198,29 +1214,44 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                                   })}
                                 </div>
                               </td>
-                              <td>{rowFeedback.length === 0 ? <span className="prompter-viewer-feedback-empty-inline">No feedback</span> : null}</td>
+                              <td onClick={(e) => e.stopPropagation()}>
+                                {rowFeedback.length === 0 ? (
+                                  <span className="prompter-viewer-feedback-empty-inline">No feedback</span>
+                                ) : (
+                                  <div className="prompter-viewer-rubric-feedback-inline">
+                                    {rowFeedback.map((f) => (
+                                      <div key={`deck-fb-${critId}-${f.id}`} className="prompter-viewer-rubric-feedback-inline-item">
+                                        <button
+                                          type="button"
+                                          className="prompter-viewer-feedback-seek-btn"
+                                          onClick={() =>
+                                            mappedDeckPrompt
+                                              ? handleDeckTimelineClick(mappedDeckPrompt.startSec)
+                                              : handleFeedbackClick(f.time)
+                                          }
+                                        >
+                                          {f.text || '—'}
+                                        </button>
+                                        {teacher && (
+                                          <div className="prompter-viewer-comment-actions">
+                                            <button type="button" className="prompter-viewer-comment-action-btn" onClick={() => handleEditComment(f)}>
+                                              Edit
+                                            </button>
+                                            <button
+                                              type="button"
+                                              className="prompter-viewer-comment-action-btn danger"
+                                              onClick={() => handleDeleteComment(f)}
+                                            >
+                                              Delete
+                                            </button>
+                                          </div>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </td>
                             </tr>
-                            {rowFeedback.map((f) => (
-                              <tr key={`deck-fb-${critId}-${f.id}`} className="prompter-viewer-rubric-feedback-row">
-                                <td colSpan={3} />
-                                <td>
-                                  <span className="prompter-viewer-feedback-time-label">{formatTime(f.time)}</span>{' '}
-                                  <button type="button" className="prompter-viewer-feedback-seek-btn" onClick={() => handleFeedbackClick(f.time)}>
-                                    {f.text || '—'}
-                                  </button>
-                                  {teacher && (
-                                    <div className="prompter-viewer-comment-actions">
-                                      <button type="button" className="prompter-viewer-comment-action-btn" onClick={() => handleEditComment(f)}>
-                                        Edit
-                                      </button>
-                                      <button type="button" className="prompter-viewer-comment-action-btn danger" onClick={() => handleDeleteComment(f)}>
-                                        Delete
-                                      </button>
-                                    </div>
-                                  )}
-                                </td>
-                              </tr>
-                            ))}
                           </Fragment>
                         );
                       })}
@@ -1519,21 +1550,6 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                           </button>
                         );
                       })}
-                      {showSourceCardButton && (
-                        <button
-                          type="button"
-                          className="prompter-viewer-show-source-card-btn"
-                          disabled={!sproutAccountIdForEmbed}
-                          title={
-                            !sproutAccountIdForEmbed
-                              ? 'Sprout embed is not configured for this environment'
-                              : 'Pause submission video and open the Sprout source for this card'
-                          }
-                          onClick={openSourceCardModal}
-                        >
-                          Show me the card
-                        </button>
-                      )}
                     </div>
                     <div className="prompter-viewer-active-item-meta">
                       {activeDeckPrompt ? (
@@ -1545,6 +1561,23 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                             className="prompter-viewer-active-item-prompt-html"
                             dangerouslySetInnerHTML={{ __html: activeDeckPrompt.title || '—' }}
                           />
+                          {showSourceCardControl && (
+                            <button
+                              type="button"
+                              className="prompter-viewer-show-source-card-btn prompter-viewer-show-source-card-btn--inline-prompt"
+                              disabled={!sproutAccountIdForEmbed || !activeDeckSproutVideoId}
+                              title={
+                                !sproutAccountIdForEmbed
+                                  ? 'Sprout embed is not configured for this environment'
+                                  : !activeDeckSproutVideoId
+                                    ? 'No Sprout source video is recorded for this card on the timeline'
+                                    : 'Pause submission video and open the Sprout source for this card'
+                              }
+                              onClick={openSourceCardModal}
+                            >
+                              Show me the card
+                            </button>
+                          )}
                         </div>
                       ) : (
                         <span className="prompter-viewer-active-item-placeholder">No card active at this time.</span>
@@ -1553,23 +1586,6 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                   </div>
                 ) : activeDeckPrompt ? (
                   <div className="prompter-viewer-active-item-panel prompter-viewer-active-item-panel--prompt-only">
-                    {showSourceCardButton && (
-                      <div className="prompter-viewer-active-item-source-row">
-                        <button
-                          type="button"
-                          className="prompter-viewer-show-source-card-btn"
-                          disabled={!sproutAccountIdForEmbed}
-                          title={
-                            !sproutAccountIdForEmbed
-                              ? 'Sprout embed is not configured for this environment'
-                              : 'Pause submission video and open the Sprout source for this card'
-                          }
-                          onClick={openSourceCardModal}
-                        >
-                          Show me the card
-                        </button>
-                      </div>
-                    )}
                     <div className="prompter-viewer-active-item-meta">
                       <div className="prompter-viewer-active-item-time-prompt-inline">
                         <span className="prompter-viewer-active-item-time">
@@ -1579,6 +1595,23 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                           className="prompter-viewer-active-item-prompt-html"
                           dangerouslySetInnerHTML={{ __html: activeDeckPrompt.title || '—' }}
                         />
+                        {showSourceCardControl && (
+                          <button
+                            type="button"
+                            className="prompter-viewer-show-source-card-btn prompter-viewer-show-source-card-btn--inline-prompt"
+                            disabled={!sproutAccountIdForEmbed || !activeDeckSproutVideoId}
+                            title={
+                              !sproutAccountIdForEmbed
+                                ? 'Sprout embed is not configured for this environment'
+                                : !activeDeckSproutVideoId
+                                  ? 'No Sprout source video is recorded for this card on the timeline'
+                                  : 'Pause submission video and open the Sprout source for this card'
+                            }
+                            onClick={openSourceCardModal}
+                          >
+                            Show me the card
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>
