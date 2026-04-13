@@ -311,9 +311,14 @@ export default function TimerPage({ context }: TimerPageProps) {
           lastEndpoint = 'POST /api/prompt/submit';
           console.log('[TimerPage:doSubmit] Step 2: submitPrompt (create submission row; submit_prompt_first.php)');
           setLastFunction('POST /api/prompt/submit');
-          await promptApi.submitPrompt(promptSnapshot, effectiveAssignmentId, deckTimeline, {
-            idempotencyKey: `submit-${submitAttemptKey}`,
-          });
+          await promptApi.submitPrompt(
+            deckTimeline?.length ? undefined : promptSnapshot,
+            effectiveAssignmentId,
+            deckTimeline,
+            {
+              idempotencyKey: `submit-${submitAttemptKey}`,
+            },
+          );
           setLastApiResult('POST /api/prompt/submit', 200, true);
           console.log('[TimerPage:doSubmit] submitPrompt OK');
           if (blob) {

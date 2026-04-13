@@ -164,10 +164,13 @@ export class PromptController {
     appendLtiLog('prompt', 'POST /submit received', {
       bodyLength: dto.promptSnapshotHtml?.length ?? 0,
       deckTimelineCount: dto.deckTimeline?.length ?? 0,
+      deckOnly: !dto.promptSnapshotHtml?.trim() && (dto.deckTimeline?.length ?? 0) > 0,
     });
     const ctx = this.getCtxWithAssignment(req);
     const idemHeader = (req.headers['x-idempotency-key'] ?? '').toString().trim();
-    const idemKey = idemHeader || `submit:${ctx.courseId}:${ctx.assignmentId ?? '(none)'}:${ctx.userId}:${dto.promptSnapshotHtml?.length ?? 0}`;
+    const idemKey =
+      idemHeader ||
+      `submit:${ctx.courseId}:${ctx.assignmentId ?? '(none)'}:${ctx.userId}:${(dto.promptSnapshotHtml?.length ?? 0) + (dto.deckTimeline?.length ?? 0)}`;
     const existing = this.uploadResilience.getIdempotentResult<{ status: 'success' }>(idemKey);
     if (existing?.state === 'completed') {
       appendLtiLog('prompt-submit', 'submit idempotency replay: completed result returned', { idemKey });

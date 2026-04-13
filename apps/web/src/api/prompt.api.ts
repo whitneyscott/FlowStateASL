@@ -197,12 +197,14 @@ export async function savePrompt(promptText: string, assignmentId?: string | nul
 }
 
 export async function submitPrompt(
-  promptSnapshotHtml: string,
+  promptSnapshotHtml: string | undefined,
   assignmentId?: string | null,
   deckTimeline?: DeckTimelineEntry[],
   options?: { idempotencyKey?: string },
 ): Promise<void> {
-  const body: Record<string, unknown> = { promptSnapshotHtml };
+  const body: Record<string, unknown> = {};
+  const snap = promptSnapshotHtml?.trim();
+  if (snap) body.promptSnapshotHtml = snap;
   if (deckTimeline?.length) {
     body.deckTimeline = deckTimeline;
   }

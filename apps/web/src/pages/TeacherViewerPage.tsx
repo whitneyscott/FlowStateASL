@@ -131,6 +131,11 @@ function rubricCriterionDeckIndex(
   return null;
 }
 
+function htmlFromDeckTimelineRows(rows: DeckTimelineEntry[]): string {
+  const parts = rows.map((r) => r.title.trim()).filter(Boolean);
+  return parts.length > 0 ? parts.join('<hr class="fsasl-deck-prompt-sep" />') : '';
+}
+
 function getPromptFromComments(
   body: string | undefined,
   comments: Array<{ comment: string }> | undefined,
@@ -139,8 +144,11 @@ function getPromptFromComments(
   if (promptHtml?.trim()) return promptHtml;
   if (body?.trim()) {
     try {
-      const parsed = JSON.parse(body) as { promptSnapshotHtml?: string };
+      const parsed = JSON.parse(body) as { promptSnapshotHtml?: string; deckTimeline?: unknown };
       if (parsed.promptSnapshotHtml) return parsed.promptSnapshotHtml;
+      const fromDeckBody = deckTimelineFromParsedJson(parsed);
+      const joinedBody = htmlFromDeckTimelineRows(fromDeckBody);
+      if (joinedBody) return joinedBody;
     } catch {
       return body;
     }
@@ -150,8 +158,11 @@ function getPromptFromComments(
     const txt = (c.comment ?? '').trim();
     if (!txt) continue;
     try {
-      const parsed = JSON.parse(txt) as { promptSnapshotHtml?: string };
+      const parsed = JSON.parse(txt) as { promptSnapshotHtml?: string; deckTimeline?: unknown };
       if (parsed.promptSnapshotHtml?.trim()) return parsed.promptSnapshotHtml.trim();
+      const fromDeck = deckTimelineFromParsedJson(parsed);
+      const joined = htmlFromDeckTimelineRows(fromDeck);
+      if (joined) return joined;
     } catch {
       // not JSON — try next comment or fall through to legacy heuristics
     }

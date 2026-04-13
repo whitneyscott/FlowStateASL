@@ -7,6 +7,7 @@ export class DeckTimelineEntryDto {
 }
 
 export class SubmitPromptDto {
-  promptSnapshotHtml: string;
+  /** Text-prompt mode only. Omit when `deckTimeline` carries the full prompt (deck mode). */
+  promptSnapshotHtml?: string;
   deckTimeline?: DeckTimelineEntryDto[];
 }

@@ -2044,12 +2044,13 @@ export class PromptService {
 
   async submit(
     ctx: LtiContext,
-    promptSnapshotHtml: string,
+    promptSnapshotHtml: string | undefined,
     deckTimeline?: Array<{ title?: unknown; startSec?: unknown; videoId?: unknown }>,
   ): Promise<void> {
+    const snap = (promptSnapshotHtml ?? '').trim();
     appendLtiLog('prompt-submit', 'submit ENTER', {
       assignmentId: ctx.assignmentId,
-      bodyLength: promptSnapshotHtml?.length ?? 0,
+      snapshotLength: snap.length,
       deckTimelineIn: Array.isArray(deckTimeline) ? deckTimeline.length : 0,
     });
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
@@ -2062,12 +2063,18 @@ export class PromptService {
     const assignmentId = await this.getPrompterAssignmentId(ctx);
     appendLtiLog('prompt-submit', 'submit: got assignmentId', { assignmentId });
     const sanitizedDeckTimeline = this.sanitizeDeckTimelineInput(deckTimeline);
+    const deckDerived =
+      sanitizedDeckTimeline?.length && sanitizedDeckTimeline.length > 0
+        ? this.buildPromptHtmlFromDeckTimeline(sanitizedDeckTimeline).trim()
+        : '';
+    const promptForLedgerQuiz = deckDerived.length > 0 ? deckDerived : snap;
     const bodyPayload: Record<string, unknown> = {
-      promptSnapshotHtml,
       submittedAt: new Date().toISOString(),
     };
     if (sanitizedDeckTimeline?.length) {
       bodyPayload.deckTimeline = sanitizedDeckTimeline;
+    } else if (snap) {
+      bodyPayload.promptSnapshotHtml = snap;
     }
     const bodyString = JSON.stringify(bodyPayload);
     const ctxWithToken: LtiContext = { ...ctx, canvasAccessToken: token };
@@ -2082,31 +2089,33 @@ export class PromptService {
     // Verify signature, TTL, and nonce uniqueness before accepting ledger write.
     // Reject invalid/expired/replayed tokens. See Assignment-Based Prompt Ledger Plan doc.
     try {
-      const ledgerAssignmentId = await this.ensureLedgerAssignment(ctx.courseId, domainOverride, token);
-      const payload: PromptLedgerPayload = {
-        eventId: randomUUID(),
-        assignmentId,
-        promptHtml: promptSnapshotHtml,
-        studentCanvasUserId: userId,
-        submittedAt: new Date().toISOString(),
-      };
-      const payloadJson = JSON.stringify(payload);
-      await this.canvas.createSubmissionWithBody(
-        ctx.courseId,
-        ledgerAssignmentId,
-        userId,
-        payloadJson,
-        domainOverride,
-        token,
-        false,
-      );
-      appendLtiLog('ledger', 'submit: ledger row written', {
-        assignmentId,
-        ledgerAssignmentId,
-        studentCanvasUserId: userId,
-        eventId: payload.eventId,
-        writeMode: 'self-submit',
-      });
+      if (promptForLedgerQuiz.length > 0) {
+        const ledgerAssignmentId = await this.ensureLedgerAssignment(ctx.courseId, domainOverride, token);
+        const payload: PromptLedgerPayload = {
+          eventId: randomUUID(),
+          assignmentId,
+          promptHtml: promptForLedgerQuiz,
+          studentCanvasUserId: userId,
+          submittedAt: new Date().toISOString(),
+        };
+        const payloadJson = JSON.stringify(payload);
+        await this.canvas.createSubmissionWithBody(
+          ctx.courseId,
+          ledgerAssignmentId,
+          userId,
+          payloadJson,
+          domainOverride,
+          token,
+          false,
+        );
+        appendLtiLog('ledger', 'submit: ledger row written', {
+          assignmentId,
+          ledgerAssignmentId,
+          studentCanvasUserId: userId,
+          eventId: payload.eventId,
+          writeMode: 'self-submit',
+        });
+      }
     } catch (ledgerErr) {
       appendLtiLog('ledger', 'submit: ledger write failed (non-fatal)', {
         assignmentId,
@@ -2116,9 +2125,11 @@ export class PromptService {
     }
 
     try {
-      const assign = await this.canvas.getAssignment(ctx.courseId, assignmentId, domainOverride, token);
-      const assignmentTitle = (assign?.name ?? '').trim() || assignmentId;
-      await this.quiz.storePrompt(ctx, assignmentId, assignmentTitle, promptSnapshotHtml, userId);
+      if (promptForLedgerQuiz.length > 0) {
+        const assign = await this.canvas.getAssignment(ctx.courseId, assignmentId, domainOverride, token);
+        const assignmentTitle = (assign?.name ?? '').trim() || assignmentId;
+        await this.quiz.storePrompt(ctx, assignmentId, assignmentTitle, promptForLedgerQuiz, userId);
+      }
     } catch (quizErr) {
       appendLtiLog('prompt-submit', 'submit: storePrompt in quiz failed (non-fatal)', { error: String(quizErr) });
     }
