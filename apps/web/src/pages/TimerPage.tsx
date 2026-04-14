@@ -4,6 +4,7 @@ import { useDebug } from '../contexts/DebugContext';
 import * as promptApi from '../api/prompt.api';
 import { ManualTokenModal } from '../components/ManualTokenModal';
 import { resolveLtiContextValue } from '../utils/lti-context';
+import { ltiTokenHeaders } from '../api/lti-token';
 import { appendBridgeLog } from '../utils/bridge-log';
 import { nextDeckIndexAfterAdvance } from '../utils/deck-advance';
 import { buildYoutubeNocookieEmbedSrc } from '../utils/youtube-embed';
@@ -94,6 +95,56 @@ function pickSupportedMimeType(): string {
 
 function toMb(sizeBytes: number): string {
   return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+type FlashcardPlaylistItem = { id?: string; title?: string };
+
+/** When live build-deck-prompts fails, fallback prompts may lack Sprout video ids. Hydrate from playlist cache (same source as Flashcards). */
+async function hydrateDeckPromptVideoIds(
+  prompts: DeckPromptItem[],
+  selectedDecks: Array<{ id: string }>,
+): Promise<DeckPromptItem[]> {
+  if (!prompts.length || !selectedDecks.length) return prompts;
+  const needsId = prompts.some((p) => !(p.videoId ?? '').trim());
+  if (!needsId) return prompts;
+
+  const titleToIds = new Map<string, string[]>();
+  const norm = (t: string) => t.toLowerCase().trim();
+
+  await Promise.all(
+    selectedDecks.map(async (d) => {
+      const id = (d.id ?? '').trim();
+      if (!id) return;
+      try {
+        const res = await fetch(`/api/flashcard/items?playlist_id=${encodeURIComponent(id)}`, {
+          credentials: 'include',
+          headers: ltiTokenHeaders(),
+        });
+        const data = (await res.json().catch(() => [])) as unknown;
+        const list = Array.isArray(data) ? (data as FlashcardPlaylistItem[]) : [];
+        for (const it of list) {
+          const vid = String(it.id ?? '').trim();
+          const title = String(it.title ?? '').trim();
+          if (!vid || !title) continue;
+          const key = norm(title);
+          const arr = titleToIds.get(key) ?? [];
+          arr.push(vid);
+          titleToIds.set(key, arr);
+        }
+      } catch {
+        // best-effort only
+      }
+    }),
+  );
+
+  return prompts.map((p) => {
+    const existing = (p.videoId ?? '').trim();
+    if (existing) return p;
+    const ids = titleToIds.get(norm(p.title));
+    const first = ids?.[0]?.trim();
+    if (!first) return p;
+    return { ...p, videoId: first };
+  });
 }
 
 /** Cap wait for metadata; fail open so submission never blocks on duration. */
@@ -270,11 +321,16 @@ export default function TimerPage({ context }: TimerPageProps) {
           : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
       let lastEndpoint = 'POST /api/prompt/save-prompt';
       try {
-        console.log('[TimerPage:doSubmit] Step 1: savePrompt');
-        setLastFunction('POST /api/prompt/save-prompt');
-        await promptApi.savePrompt(promptSnapshot, effectiveAssignmentId);
-        setLastApiResult('POST /api/prompt/save-prompt', 200, true);
-        console.log('[TimerPage:doSubmit] savePrompt OK');
+        const isDeckSubmit = (deckTimeline?.length ?? 0) > 0;
+        if (!isDeckSubmit) {
+          console.log('[TimerPage:doSubmit] Step 1: savePrompt');
+          setLastFunction('POST /api/prompt/save-prompt');
+          await promptApi.savePrompt(promptSnapshot, effectiveAssignmentId);
+          setLastApiResult('POST /api/prompt/save-prompt', 200, true);
+          console.log('[TimerPage:doSubmit] savePrompt OK');
+        } else {
+          console.log('[TimerPage:doSubmit] Step 1: skip savePrompt (deck submission; deckTimeline is authoritative)');
+        }
 
         if (isDeepLink && blob) {
           lastEndpoint = 'POST /api/prompt/submit-deep-link';
@@ -478,6 +534,7 @@ export default function TimerPage({ context }: TimerPageProps) {
       setConfig(data ?? null);
       const targetAssignmentId =
         (data?.resolvedAssignmentId?.trim() ?? '') || ltiOrUrlAssignmentId || null;
+      const selectedDecksForHydration = data?.videoPromptConfig?.selectedDecks ?? [];
 
       const isDeckAssignment =
         data?.promptMode === 'decks' &&
@@ -504,7 +561,7 @@ export default function TimerPage({ context }: TimerPageProps) {
           const livePrompts = Array.isArray(result.prompts) ? result.prompts : [];
           if (livePrompts.length > 0) {
             setLastApiResult('POST /api/prompt/build-deck-prompts', 200, true);
-            setDeckPrompts(livePrompts);
+            setDeckPrompts(await hydrateDeckPromptVideoIds(livePrompts, selectedDecksForHydration));
           } else {
             throw new Error(result.warning || 'live build returned zero prompts');
           }
@@ -515,12 +572,15 @@ export default function TimerPage({ context }: TimerPageProps) {
           if (nonEmptyBanks.length > 0) {
             const idx = Math.floor(Math.random() * nonEmptyBanks.length);
             const chosenBank = nonEmptyBanks[idx];
-            setDeckPrompts(chosenBank);
+            setDeckPrompts(await hydrateDeckPromptVideoIds(chosenBank, selectedDecksForHydration));
           } else {
             const staticTitles = (data.videoPromptConfig?.staticFallbackPrompts ?? []).filter(Boolean);
             if (staticTitles.length > 0) {
               setDeckPrompts(
-                staticTitles.map((title) => ({ title, duration: DECK_FALLBACK_TOTAL_SECONDS })),
+                await hydrateDeckPromptVideoIds(
+                  staticTitles.map((title) => ({ title, duration: DECK_FALLBACK_TOTAL_SECONDS })),
+                  selectedDecksForHydration,
+                ),
               );
             } else {
               setDeckPrompts([]);
