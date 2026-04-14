@@ -237,6 +237,8 @@ export default function TimerPage({ context }: TimerPageProps) {
   const [deckPrompts, setDeckPrompts] = useState<DeckPromptItem[]>([]);
   /** True when assignment is configured for deck prompts (used before deck list finishes loading). */
   const [studentDeckFlow, setStudentDeckFlow] = useState(false);
+  /** Set when live POST /build-deck-prompts fails; we do not fall back to banks/static (no Sprout ids). */
+  const [deckLiveBuildError, setDeckLiveBuildError] = useState<string | null>(null);
   /** YouTube clip → then camera recording (no deck cards). */
   const [studentYoutubeFlow, setStudentYoutubeFlow] = useState(false);
   /** Wall-clock countdown while the YouTube iframe segment plays (not recorded). */
@@ -536,7 +538,8 @@ export default function TimerPage({ context }: TimerPageProps) {
       setLoading(false);
       return;
     }
-    setLoading(true);
+       setLoading(true);
+    setDeckLiveBuildError(null);
     try {
       setLastFunction('GET /api/prompt/config');
       const data = await promptApi.getPromptConfig(ltiOrUrlAssignmentId);
@@ -572,31 +575,28 @@ export default function TimerPage({ context }: TimerPageProps) {
           if (livePrompts.length > 0) {
             setLastApiResult('POST /api/prompt/build-deck-prompts', 200, true);
             setDeckPrompts(await hydrateDeckPromptVideoIds(livePrompts, selectedDecksForHydration));
+            setDeckLiveBuildError(null);
           } else {
             throw new Error(result.warning || 'live build returned zero prompts');
           }
         } catch (e) {
+          const errMsg = e instanceof Error ? e.message : String(e);
           console.error('Failed to build deck prompts:', e);
-          const storedBanks = data.videoPromptConfig?.storedPromptBanks ?? [];
-          const nonEmptyBanks = storedBanks.filter((bank) => Array.isArray(bank) && bank.length > 0);
-          if (nonEmptyBanks.length > 0) {
-            const idx = Math.floor(Math.random() * nonEmptyBanks.length);
-            const chosenBank = nonEmptyBanks[idx];
-            setDeckPrompts(await hydrateDeckPromptVideoIds(chosenBank, selectedDecksForHydration));
-          } else {
-            const staticTitles = (data.videoPromptConfig?.staticFallbackPrompts ?? []).filter(Boolean);
-            if (staticTitles.length > 0) {
-              setDeckPrompts(
-                await hydrateDeckPromptVideoIds(
-                  staticTitles.map((title) => ({ title, duration: DECK_FALLBACK_TOTAL_SECONDS })),
-                  selectedDecksForHydration,
-                ),
-              );
-            } else {
-              setDeckPrompts([]);
-              setLastApiError('POST /api/prompt/build-deck-prompts', 0, String(e));
-            }
-          }
+          appendBridgeLog(
+            'deck-live-build',
+            'ALERT: Live deck build failed — prompts not loaded (no stored-bank / static fallback).',
+            {
+              error: errMsg,
+              assignmentId: targetAssignmentId ?? '(none)',
+              selectedDeckCount: data.videoPromptConfig.selectedDecks.length,
+              totalCards,
+            },
+          );
+          setDeckPrompts([]);
+          setDeckLiveBuildError(
+            'Deck prompts could not be loaded from the server. Try again, or contact your instructor if this keeps happening.',
+          );
+          setLastApiError('POST /api/prompt/build-deck-prompts', 0, errMsg);
         }
       } else {
         setDeckPrompts([]);
@@ -617,6 +617,7 @@ export default function TimerPage({ context }: TimerPageProps) {
       setConfig(null);
       setStudentDeckFlow(false);
       setStudentYoutubeFlow(false);
+      setDeckLiveBuildError(null);
     } finally {
       setLoading(false);
     }
@@ -1056,6 +1057,11 @@ export default function TimerPage({ context }: TimerPageProps) {
         <div className="prompter-card">
           <h1>Camera & Mic</h1>
           <p className="prompter-info-message prompter-info-message-spaced">Allow camera and microphone to record your signing.</p>
+          {studentDeckFlow && deckLiveBuildError && (
+            <p className="prompter-error-message prompter-info-message-spaced" role="alert">
+              {deckLiveBuildError}
+            </p>
+          )}
           <div className="prompter-video-container prompter-video-container-preflight">
             {preflightError ? (
               <p className="prompter-error-message">{preflightError}</p>
@@ -1079,6 +1085,7 @@ export default function TimerPage({ context }: TimerPageProps) {
             disabled={
               !preflightReady ||
               !!preflightError ||
+              !!deckLiveBuildError ||
               (studentDeckFlow && deckPrompts.length === 0) ||
               (studentYoutubeFlow &&
                 (!config?.youtubePromptConfig?.videoId ||
@@ -1086,7 +1093,9 @@ export default function TimerPage({ context }: TimerPageProps) {
                     Math.max(0, Math.floor(Number(config.youtubePromptConfig.clipStartSec ?? 0)))))
             }
           >
-            {studentDeckFlow && deckPrompts.length === 0
+            {studentDeckFlow && deckLiveBuildError
+              ? 'Deck prompts unavailable'
+              : studentDeckFlow && deckPrompts.length === 0
               ? 'Loading prompts…'
               : studentDeckFlow || studentYoutubeFlow
                 ? 'Continue'

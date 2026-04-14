@@ -120,9 +120,10 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
       const lc = lineLc(line);
       return (
         lc.includes('[prompt-decks]') ||
+        lc.includes('[deck-live-build]') ||
+        lc.includes('deck-live-build') ||
         lc.includes('build-deck-prompts') ||
         lc.includes('deck flow') ||
-        lc.includes('stored prompt banks') ||
         lc.includes('source selected') ||
         lc.includes('no prompts available')
       ) && !isSettingsBlobNoise(line);
@@ -168,7 +169,7 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
 
     // Deck prompt retrieval/build/fallback flow
     newLines.push('');
-    newLines.push('--- Deck Prompt Flow (load/build/fallback) ---');
+    newLines.push('--- Deck Prompt Flow (live build / alerts) ---');
     const deckFlowLines = ltiLog.filter(isDeckFlowLine);
     if (deckFlowLines.length > 0) {
       newLines.push(...deckFlowLines);

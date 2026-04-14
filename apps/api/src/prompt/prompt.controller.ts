@@ -700,9 +700,25 @@ export class PromptController {
         preview: prompts.slice(0, 3).map((p) => p.title),
         warning: result.warning ?? '(none)',
       });
+      if (prompts.length === 0) {
+        appendLtiLog(
+          'deck-live-build',
+          'ALERT: build-deck-prompts returned zero prompts (client will not use bank/static fallback)',
+          {
+            assignmentId: ctx.assignmentId ?? '(none)',
+            warning: result.warning ?? '(none)',
+            selectedDeckCount: selectedDecks.length,
+            totalCards,
+          },
+        );
+      }
       return result;
     } catch (err) {
       appendLtiLog('prompt-decks', 'buildDeckPrompts failed', { error: String(err) });
+      appendLtiLog('deck-live-build', 'ALERT: build-deck-prompts threw', {
+        assignmentId: ctx.assignmentId ?? '(none)',
+        error: String(err),
+      });
       throw err;
     }
   }
