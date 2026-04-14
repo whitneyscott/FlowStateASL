@@ -507,6 +507,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
 
   const loadTeacher = useCallback(async () => {
     if (!teacher || !assignmentId) return;
+    appendViewerBridgeLog('loadTeacher:start', { assignmentId });
     setLoading(true);
     setError(null);
     try {
@@ -527,9 +528,19 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
       }
       setAssignment(assign ?? null);
       setSubmissionCount(count ?? 0);
+      appendViewerBridgeLog('loadTeacher:success', {
+        assignmentId,
+        submissions: subsList.length,
+        hasSproutAccountId: !!(assign?.sproutAccountId?.trim() ?? ''),
+        rubricRows: Array.isArray(assign?.rubric) ? assign.rubric.length : 0,
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Load failed');
       setLastApiError('GET /api/prompt/submissions', 0, String(e));
+      appendViewerBridgeLog('loadTeacher:error', {
+        assignmentId,
+        error: e instanceof Error ? e.message : String(e),
+      });
     } finally {
       setLoading(false);
     }
@@ -537,6 +548,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
 
   const loadStudent = useCallback(async () => {
     if (!assignmentId || !context) return;
+    appendViewerBridgeLog('loadStudent:start', { assignmentId });
     setLoading(true);
     setError(null);
     try {
@@ -548,9 +560,18 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
       setLastApiResult('GET /api/prompt/my-submission', 200, true);
       setMySubmission(sub ?? null);
       setAssignment(assign ?? null);
+      appendViewerBridgeLog('loadStudent:success', {
+        assignmentId,
+        hasSubmission: !!sub,
+        hasSproutAccountId: !!(assign?.sproutAccountId?.trim() ?? ''),
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Load failed');
       setLastApiError('GET /api/prompt/my-submission', 0, String(e));
+      appendViewerBridgeLog('loadStudent:error', {
+        assignmentId,
+        error: e instanceof Error ? e.message : String(e),
+      });
     } finally {
       setLoading(false);
     }
