@@ -2497,6 +2497,13 @@ export class CanvasService {
         submission_types: types ?? [],
         note: 'Prompt text should be sent via submission comment + file via upload (PHP-style two-step).',
       });
+      // #region agent log
+      appendLtiLog('agent-debug', 'writeSubmissionBody: SKIPPED online_text_entry disallowed (Bridge)', {
+        hypothesisId: 'H5',
+        assignmentId,
+        submission_types: types ?? [],
+      });
+      // #endregion
       return;
     }
     const fromLti = resolveCanvasApiUserId(ctx)?.trim() || '';

@@ -2084,7 +2084,16 @@ export class PromptService {
       appendLtiLog('prompt', 'enrichDeckTimelineVideoIds: getConfig failed', { error: String(e) });
       return rows;
     }
-    if (!cfg?.videoPromptConfig) return rows;
+    if (!cfg?.videoPromptConfig) {
+      // #region agent log
+      appendLtiLog('agent-debug', 'enrichDeckTimelineVideoIds: no videoPromptConfig (Bridge)', {
+        hypothesisId: 'H3',
+        cfgNull: cfg == null,
+        hasCfg: !!cfg,
+      });
+      // #endregion
+      return rows;
+    }
 
     const titleToVideoId = new Map<string, string>();
     const norm = (t: string) => t.toLowerCase().trim();
@@ -2124,7 +2133,18 @@ export class PromptService {
       }
     }
 
-    if (titleToVideoId.size === 0) return rows;
+    if (titleToVideoId.size === 0) {
+      // #region agent log
+      appendLtiLog('agent-debug', 'enrichDeckTimelineVideoIds: title map empty after decks+banks (Bridge)', {
+        hypothesisId: 'H3',
+        rowCount: rows.length,
+        selectedDeckCount: decks.length,
+        bankOuterCount: banks.length,
+        sampleRowTitles: rows.slice(0, 3).map((r) => r.title?.slice(0, 40)),
+      });
+      // #endregion
+      return rows;
+    }
 
     let filled = 0;
     const out = rows.map((r) => {
@@ -2141,6 +2161,15 @@ export class PromptService {
         rowCount: rows.length,
       });
     }
+    // #region agent log
+    appendLtiLog('agent-debug', 'enrichDeckTimelineVideoIds: enrich pass complete (Bridge)', {
+      hypothesisId: 'H4',
+      titleMapSize: titleToVideoId.size,
+      filled,
+      rowCount: rows.length,
+      unmatchedAfter: out.filter((r) => !(r.videoId ?? '').trim()).length,
+    });
+    // #endregion
     return out.map((r) => ({
       title: r.title,
       startSec: Math.round(r.startSec * 1000) / 1000,
@@ -2261,6 +2290,23 @@ export class PromptService {
       bodyPayload.promptSnapshotHtml = snap;
     }
     const bodyString = JSON.stringify(bodyPayload);
+    // #region agent log
+    try {
+      const dbg = JSON.parse(bodyString) as Record<string, unknown>;
+      appendLtiLog('agent-debug', 'submit: Canvas body JSON before writeSubmissionBody (Bridge)', {
+        hypothesisId: 'H2',
+        keys: Object.keys(dbg),
+        hasBothFields: !!(dbg.promptSnapshotHtml && dbg.deckTimeline),
+        deckRowCount: Array.isArray(dbg.deckTimeline) ? dbg.deckTimeline.length : 0,
+        firstDeckRowKeys:
+          Array.isArray(dbg.deckTimeline) && dbg.deckTimeline[0]
+            ? Object.keys(dbg.deckTimeline[0] as object)
+            : [],
+      });
+    } catch {
+      /* ignore */
+    }
+    // #endregion
     const ctxWithToken: LtiContext = { ...ctx, canvasAccessToken: token };
     await this.canvas.writeSubmissionBody(ctxWithToken, assignmentId, bodyString, token);
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));

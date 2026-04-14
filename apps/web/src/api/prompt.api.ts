@@ -3,6 +3,7 @@
  * Sends Authorization Bearer from in-memory auth token.
  */
 import { ltiTokenHeaders } from './lti-token';
+import { appendBridgeLog } from '../utils/bridge-log';
 
 const base = '/api/prompt';
 export const DEFAULT_UPLOAD_MAX_BYTES = 80 * 1024 * 1024;
@@ -230,6 +231,14 @@ export async function submitPrompt(
   if (deckTimeline?.length) {
     body.deckTimeline = deckTimeline;
   }
+  // #region agent log
+  appendBridgeLog('agent-debug', 'submitPrompt: outgoing POST /submit JSON keys', {
+    hypothesisId: 'H1',
+    keys: Object.keys(body),
+    hasBoth: !!(body.promptSnapshotHtml && body.deckTimeline),
+    deckLen: Array.isArray(body.deckTimeline) ? body.deckTimeline.length : 0,
+  });
+  // #endregion
   const res = await fetch(withAssignmentId(base + '/submit', assignmentId), apiInit({
     method: 'POST',
     headers: {

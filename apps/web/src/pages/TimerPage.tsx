@@ -367,6 +367,16 @@ export default function TimerPage({ context }: TimerPageProps) {
           lastEndpoint = 'POST /api/prompt/submit';
           console.log('[TimerPage:doSubmit] Step 2: submitPrompt (create submission row; submit_prompt_first.php)');
           setLastFunction('POST /api/prompt/submit');
+          // #region agent log
+          appendBridgeLog('agent-debug', 'TimerPage doSubmit: before submitPrompt', {
+            hypothesisId: 'H1',
+            deckLen: deckTimeline?.length ?? 0,
+            omitSnapshotBecauseDeck: !!(deckTimeline?.length),
+            snapshotLenIfSent: deckTimeline?.length ? 0 : (promptSnapshot?.length ?? 0),
+            firstRowVideoIdLen:
+              (deckTimeline?.[0] as { videoId?: string } | undefined)?.videoId?.trim()?.length ?? 0,
+          });
+          // #endregion
           await promptApi.submitPrompt(
             deckTimeline?.length ? undefined : promptSnapshot,
             effectiveAssignmentId,

@@ -187,6 +187,15 @@ export class PromptController {
       deckTimelineCount: dto.deckTimeline?.length ?? 0,
       deckOnly: !dto.promptSnapshotHtml?.trim() && (dto.deckTimeline?.length ?? 0) > 0,
     });
+    // #region agent log
+    appendLtiLog('agent-debug', 'POST /submit dto after Nest parse (Bridge)', {
+      hypothesisId: 'H1',
+      hasSnapshotHtml: !!(dto.promptSnapshotHtml ?? '').trim(),
+      snapshotLen: (dto.promptSnapshotHtml ?? '').length,
+      deckLen: dto.deckTimeline?.length ?? 0,
+      firstRowHasVideoId: !!(dto.deckTimeline?.[0] as { videoId?: string } | undefined)?.videoId?.trim(),
+    });
+    // #endregion
     const ctx = this.getCtxWithAssignment(req);
     const idemHeader = (req.headers['x-idempotency-key'] ?? '').toString().trim();
     const idemKey =
