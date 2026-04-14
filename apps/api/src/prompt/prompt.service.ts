@@ -969,16 +969,51 @@ export class PromptService {
       return null;
     }
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
-    const blob = await this.readPromptManagerSettingsBlob(ctx.courseId, domainOverride, token);
-    const resolved = await this.resolveAssignmentIdForContext(ctx, token, domainOverride, blob);
-    const assignmentId = resolved.assignmentId ?? '';
+    let resolvedToken = token;
+    let blob = await this.readPromptManagerSettingsBlob(ctx.courseId, domainOverride, resolvedToken);
+    let resolved = await this.resolveAssignmentIdForContext(ctx, resolvedToken, domainOverride, blob);
+    let assignmentId = resolved.assignmentId ?? '';
+
+    if (!assignmentId) {
+      const teacherTok = await this.courseSettings.getCourseStoredCanvasToken(ctx.courseId);
+      if (teacherTok?.trim() && teacherTok !== resolvedToken) {
+        try {
+          const teacherBlob = await this.readPromptManagerSettingsBlob(
+            ctx.courseId,
+            domainOverride,
+            teacherTok,
+          );
+          const teacherResolved = await this.resolveAssignmentIdForContext(
+            ctx,
+            teacherTok,
+            domainOverride,
+            teacherBlob,
+          );
+          if (teacherResolved.assignmentId) {
+            resolvedToken = teacherTok;
+            blob = teacherBlob;
+            resolved = teacherResolved;
+            assignmentId = teacherResolved.assignmentId;
+            appendLtiLog('prompt', 'getConfig: assignment resolution via course-stored token', {
+              assignmentId,
+              source: teacherResolved.source,
+            });
+          }
+        } catch (e) {
+          appendLtiLog('prompt', 'getConfig: course-stored token assignment resolution failed (non-fatal)', {
+            error: String(e),
+          });
+        }
+      }
+    }
+
     if (assignmentId && resolved.source === 'resource_link_api') {
       await this.rememberResourceLinkAssignmentMapping(
         ctx.courseId,
         ctx.resourceLinkId,
         assignmentId,
         domainOverride,
-        token,
+        resolvedToken,
       );
     }
     appendLtiLog('prompt', 'getConfig: assignment resolution', {
