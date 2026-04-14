@@ -358,14 +358,23 @@ function buildRubricAssessmentPayload(
     const d = draft[critId];
     if (!d) return;
     const row: Record<string, unknown> = {};
-    if (d.rating_id != null && d.points != null) {
+    if (d.rating_id != null && d.points != null && Number.isFinite(Number(d.points))) {
       row.rating_id = d.rating_id;
-      row.points = d.points;
+      row.points = Number(d.points);
     }
     if ('comments' in d) {
       row.comments = typeof d.comments === 'string' ? d.comments.trim() : '';
     }
-    if (Object.keys(row).length > 0) payload[critId] = row;
+    if (Object.keys(row).length > 0) {
+      const keyVariants = new Set<string>([
+        critId,
+        ...(c.id != null ? [String(c.id), `_${String(c.id)}`] : []),
+        `_${critId}`,
+      ]);
+      keyVariants.forEach((k) => {
+        if (k) payload[k] = { ...row };
+      });
+    }
   });
   return payload;
 }
