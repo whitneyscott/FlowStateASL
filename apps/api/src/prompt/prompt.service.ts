@@ -1007,6 +1007,36 @@ export class PromptService {
     }
     let config = blob?.configs?.[assignmentId] ?? null;
 
+    /**
+     * Learners often use session Canvas OAuth. They may be unable to read the Prompt Manager Settings
+     * assignment, so the first blob read yields no per-assignment config. Without this, getConfig falls
+     * through to Canvas assignment hydration only and returns promptMode "text" with no youtube/decks data.
+     */
+    if (!config) {
+      const teacherTok = await this.courseSettings.getCourseStoredCanvasToken(ctx.courseId);
+      if (teacherTok?.trim()) {
+        try {
+          const teacherBlob = await this.readPromptManagerSettingsBlob(
+            ctx.courseId,
+            domainOverride,
+            teacherTok,
+          );
+          config = teacherBlob?.configs?.[assignmentId] ?? null;
+          if (config) {
+            appendLtiLog('prompt', 'getConfig: assignment config from Prompt Manager via course-stored token', {
+              assignmentId,
+              promptMode: config.promptMode ?? '(unset)',
+            });
+          }
+        } catch (e) {
+          appendLtiLog('prompt', 'getConfig: course-stored token Prompt Manager read failed (non-fatal)', {
+            assignmentId,
+            error: String(e),
+          });
+        }
+      }
+    }
+
     // Backward compatibility: default promptMode to 'text' if not present
     if (config && !config.promptMode) {
       config = { ...config, promptMode: 'text' };
