@@ -102,6 +102,8 @@ isProject: false
 
 **Caveat:** Canvas often shows submission **body** to the learner in native UI; if that is undesirable, surface prompts only inside the LTI tool and keep body minimal or structured for machines.
 
+**Submission body format:** The body is an HTML string containing two parts: (1) a short visible message — e.g. `"Open in HTML view to see prompt data."` — and (2) the canonical prompt JSON wrapped in a hidden element, e.g. `<span style="display:none">{"promptSnapshotHtml":...,"deckTimeline":...}</span>`. Canvas's native UI shows only the visible message; the LTI tool reads the hidden span to recover prompt data. The re-PUT after `attachFileToSubmission` writes the same HTML string.
+
 **Ties to priority 1:** Quiz and ledger removal **ships in the same slice** as verified body-first prompt recovery (see todo `remove-quiz-ledger-mandatory` + `storage-body-only`).
 
 ---
