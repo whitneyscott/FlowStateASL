@@ -705,17 +705,34 @@ export class PromptController {
           'deck-live-build',
           'ALERT: build-deck-prompts returned zero prompts (client will not use bank/static fallback)',
           {
+            outcome: 'fail',
             assignmentId: ctx.assignmentId ?? '(none)',
             warning: result.warning ?? '(none)',
             selectedDeckCount: selectedDecks.length,
             totalCards,
           },
         );
+      } else {
+        const withVideoIdCount = prompts.filter((p) => (p.videoId ?? '').trim().length > 0).length;
+        appendLtiLog('deck-live-build', 'OK: build-deck-prompts success (server response body)', {
+          outcome: 'success',
+          assignmentId: ctx.assignmentId ?? '(none)',
+          promptCount: prompts.length,
+          withVideoIdCount,
+          missingVideoIdCount: prompts.length - withVideoIdCount,
+          sample: prompts.slice(0, 8).map((p) => ({
+            title: (p.title ?? '').trim().slice(0, 56),
+            videoId: (p.videoId ?? '').trim() || null,
+            duration: p.duration,
+          })),
+          warning: result.warning ?? null,
+        });
       }
       return result;
     } catch (err) {
       appendLtiLog('prompt-decks', 'buildDeckPrompts failed', { error: String(err) });
       appendLtiLog('deck-live-build', 'ALERT: build-deck-prompts threw', {
+        outcome: 'fail',
         assignmentId: ctx.assignmentId ?? '(none)',
         error: String(err),
       });

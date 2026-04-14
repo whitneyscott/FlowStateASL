@@ -99,6 +99,32 @@ function toMb(sizeBytes: number): string {
 
 type FlashcardPlaylistItem = { id?: string; title?: string };
 
+/** Bridge / LTI log: compact summary of deck prompts for tracing videoId through the pipeline. */
+const DECK_LIVE_BUILD_BRIDGE_SAMPLE = 8;
+function summaryDeckPromptsForLiveBuildBridge(
+  stage: string,
+  prompts: DeckPromptItem[],
+): {
+  stage: string;
+  count: number;
+  withVideoIdCount: number;
+  missingVideoIdCount: number;
+  sample: Array<{ title: string; videoId: string | null; duration: number }>;
+} {
+  const withVideoIdCount = prompts.filter((p) => (p.videoId ?? '').trim().length > 0).length;
+  return {
+    stage,
+    count: prompts.length,
+    withVideoIdCount,
+    missingVideoIdCount: prompts.length - withVideoIdCount,
+    sample: prompts.slice(0, DECK_LIVE_BUILD_BRIDGE_SAMPLE).map((p) => ({
+      title: (p.title ?? '').trim().slice(0, 56),
+      videoId: (p.videoId ?? '').trim() || null,
+      duration: p.duration,
+    })),
+  };
+}
+
 /** When live build-deck-prompts fails, fallback prompts may lack Sprout video ids. Hydrate from playlist cache (same source as Flashcards). */
 async function hydrateDeckPromptVideoIds(
   prompts: DeckPromptItem[],
@@ -324,6 +350,25 @@ export default function TimerPage({ context }: TimerPageProps) {
       let lastEndpoint = 'POST /api/prompt/save-prompt';
       try {
         const isDeckSubmit = (deckTimeline?.length ?? 0) > 0;
+        if (isDeckSubmit && deckTimeline && deckTimeline.length > 0) {
+          const withVid = deckTimeline.filter((r) => (r.videoId ?? '').trim().length > 0).length;
+          appendBridgeLog(
+            'deck-live-build',
+            'OK: deckTimeline at submit (sent to /submit and upload-video form)',
+            {
+              outcome: 'success',
+              stage: 'submit-payload',
+              rowCount: deckTimeline.length,
+              withVideoIdCount: withVid,
+              missingVideoIdCount: deckTimeline.length - withVid,
+              sample: deckTimeline.slice(0, DECK_LIVE_BUILD_BRIDGE_SAMPLE).map((r) => ({
+                title: (r.title ?? '').trim().slice(0, 56),
+                videoId: (r.videoId ?? '').trim() || null,
+                startSec: r.startSec,
+              })),
+            },
+          );
+        }
         if (!isDeckSubmit) {
           console.log('[TimerPage:doSubmit] Step 1: savePrompt');
           setLastFunction('POST /api/prompt/save-prompt');
@@ -574,7 +619,33 @@ export default function TimerPage({ context }: TimerPageProps) {
           const livePrompts = Array.isArray(result.prompts) ? result.prompts : [];
           if (livePrompts.length > 0) {
             setLastApiResult('POST /api/prompt/build-deck-prompts', 200, true);
-            setDeckPrompts(await hydrateDeckPromptVideoIds(livePrompts, selectedDecksForHydration));
+            const preSummary = summaryDeckPromptsForLiveBuildBridge('pre-hydrate', livePrompts);
+            appendBridgeLog(
+              'deck-live-build',
+              'OK: live build — prompts from API before hydrateDeckPromptVideoIds',
+              {
+                outcome: 'success',
+                assignmentId: targetAssignmentId ?? '(none)',
+                warning: result.warning ?? null,
+                ...preSummary,
+              },
+            );
+            const hydrated = await hydrateDeckPromptVideoIds(livePrompts, selectedDecksForHydration);
+            const postSummary = summaryDeckPromptsForLiveBuildBridge('post-hydrate', hydrated);
+            appendBridgeLog(
+              'deck-live-build',
+              'OK: live build — prompts after hydrateDeckPromptVideoIds (used for recording + submit)',
+              {
+                outcome: 'success',
+                assignmentId: targetAssignmentId ?? '(none)',
+                videoIdsAddedByHydrate:
+                  postSummary.withVideoIdCount - preSummary.withVideoIdCount,
+                preHydrate: { withVideoIdCount: preSummary.withVideoIdCount, count: preSummary.count },
+                postHydrate: { withVideoIdCount: postSummary.withVideoIdCount, count: postSummary.count },
+                sampleAfterHydrate: postSummary.sample,
+              },
+            );
+            setDeckPrompts(hydrated);
             setDeckLiveBuildError(null);
           } else {
             throw new Error(result.warning || 'live build returned zero prompts');
@@ -586,6 +657,7 @@ export default function TimerPage({ context }: TimerPageProps) {
             'deck-live-build',
             'ALERT: Live deck build failed — prompts not loaded (no stored-bank / static fallback).',
             {
+              outcome: 'fail',
               error: errMsg,
               assignmentId: targetAssignmentId ?? '(none)',
               selectedDeckCount: data.videoPromptConfig.selectedDecks.length,
