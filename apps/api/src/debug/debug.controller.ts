@@ -95,6 +95,27 @@ export class DebugController {
     return { ok: true, ts: new Date().toISOString() };
   }
 
+  /** Build fingerprint for fast web/api deployment mismatch diagnosis. */
+  @Get('version')
+  getVersion() {
+    const apiSha = (
+      this.config.get<string>('RENDER_GIT_COMMIT') ??
+      this.config.get<string>('SOURCE_VERSION') ??
+      this.config.get<string>('GIT_COMMIT') ??
+      ''
+    ).trim();
+    const apiBranch = (
+      this.config.get<string>('RENDER_GIT_BRANCH') ??
+      this.config.get<string>('GIT_BRANCH') ??
+      ''
+    ).trim();
+    return {
+      apiSha: apiSha || 'unknown',
+      apiBranch: apiBranch || 'unknown',
+      nodeEnv: process.env.NODE_ENV ?? 'unknown',
+    };
+  }
+
   @Get('last-error')
   getLastError() {
     try {

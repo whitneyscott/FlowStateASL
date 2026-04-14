@@ -12,6 +12,12 @@ interface BridgeLogProps {
   error: string | null;
 }
 
+type DebugVersion = {
+  apiSha?: string;
+  apiBranch?: string;
+  nodeEnv?: string;
+};
+
 export function BridgeLog({ context, loading, error }: BridgeLogProps) {
   const { lastFunctionCalled, lastApiResult } = useDebug();
   const { isDeveloperMode } = useAppMode();
@@ -32,6 +38,7 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
   const canClearLog = isDeveloperMode || debugParamEnabled;
   const [lastServerError, setLastServerError] = useState<{ endpoint: string; message: string } | null>(null);
   const [ltiLog, setLtiLog] = useState<string[]>([]);
+  const [debugVersion, setDebugVersion] = useState<DebugVersion | null>(null);
   const [lines, setLines] = useState<string[]>(['Initializing...']);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -49,20 +56,26 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
     let cancelled = false;
     const poll = async () => {
       try {
-        const [errRes, ltiRes] = await Promise.all([
+        const [errRes, ltiRes, versionRes] = await Promise.all([
           fetch('/api/debug/last-error', { credentials: 'include', headers: ltiTokenHeaders() }),
           fetch('/api/debug/lti-log', { credentials: 'include', headers: ltiTokenHeaders() }),
+          fetch('/api/debug/version', { credentials: 'include', headers: ltiTokenHeaders() }),
         ]);
         if (cancelled) return;
-        const errData = await errRes.json();
-        const ltiData = await ltiRes.json();
+        const [errData, ltiData, versionData] = await Promise.all([
+          errRes.json().catch(() => null),
+          ltiRes.json().catch(() => null),
+          versionRes.json().catch(() => null),
+        ]);
         const serverLines = Array.isArray(ltiData?.lines) ? ltiData.lines : [];
         const fallbackLines = readBridgeClientFallbackLines();
         setLastServerError(errData ?? null);
+        setDebugVersion(versionData ?? null);
         setLtiLog([...serverLines, ...fallbackLines]);
       } catch {
         if (!cancelled) {
           setLastServerError(null);
+          setDebugVersion(null);
           setLtiLog(readBridgeClientFallbackLines());
         }
       }
@@ -89,6 +102,19 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
 
   useEffect(() => {
     const newLines: string[] = [];
+    const shortSha = (v: string | undefined): string => {
+      const s = String(v ?? '').trim();
+      if (!s || s.toLowerCase() === 'unknown') return 'unknown';
+      return s.slice(0, 7);
+    };
+    const webSha = shortSha(typeof __WEB_BUILD_SHA__ === 'string' ? __WEB_BUILD_SHA__ : undefined);
+    const apiSha = shortSha(debugVersion?.apiSha);
+    const apiBranch = String(debugVersion?.apiBranch ?? 'unknown').trim() || 'unknown';
+    const nodeEnv = String(debugVersion?.nodeEnv ?? 'unknown').trim() || 'unknown';
+    newLines.push('--- Build Fingerprint ---');
+    newLines.push(`web=${webSha} api=${apiSha} branch=${apiBranch} env=${nodeEnv}`);
+    newLines.push('');
+
     const lineLc = (line: string) => line.toLowerCase();
     const isSettingsBlobNoise = (line: string): boolean => {
       const lc = lineLc(line);
@@ -282,7 +308,7 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
       newLines.push(`  → ${lastServerError.message}`);
     }
     setLines(newLines);
-  }, [lastFunctionCalled, lastApiResult, lastServerError, ltiLog]);
+  }, [lastFunctionCalled, lastApiResult, lastServerError, ltiLog, debugVersion]);
 
   const text = ['BRIDGE DEBUG LOG:', ...lines].join('\n');
 

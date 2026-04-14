@@ -10,3 +10,4 @@ interface ImportMeta {
 }
 
 declare const __MODE_PASSWORD__: string;
+declare const __WEB_BUILD_SHA__: string;
