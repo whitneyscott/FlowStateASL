@@ -4,7 +4,7 @@ import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
 import { resolveLtiContextValue } from '../utils/lti-context';
 import * as promptApi from '../api/prompt.api';
-import { ltiTokenHeaders } from '../api/lti-token';
+import { appendBridgeLog } from '../utils/bridge-log';
 import { GradingVideoPlayer } from '../components/GradingVideoPlayer';
 import { SproutSourceCardModal } from '../components/SproutSourceCardModal';
 import { buildYoutubeNocookieEmbedSrc } from '../utils/youtube-embed';
@@ -33,15 +33,7 @@ function parseTimestampedFeedback(comments: Array<{ id: number; comment: string 
 }
 
 function appendViewerBridgeLog(message: string, extra?: Record<string, unknown>): void {
-  void fetch('/api/debug/lti-log', {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json', ...ltiTokenHeaders() },
-    body: JSON.stringify({
-      tag: 'viewer',
-      message: `${message}${extra ? ' ' + JSON.stringify(extra) : ''}`,
-    }),
-  }).catch(() => {});
+  appendBridgeLog('viewer', message, extra);
 }
 
 /** Deck submissions: real boundaries from the student recorder (seconds from recording start). */
@@ -946,11 +938,11 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   const showMeCardDiagSigRef = useRef('');
   useEffect(() => {
     if (!teacher || !gradingMode || !assignmentId) return;
-    if (!isDeckPromptMode) return;
     const sig = [
       String(assignmentId),
       String(current?.userId ?? ''),
       String(currentAttempt),
+      String(isDeckPromptMode),
       String(activeDeckPrompt?.startSec ?? ''),
       String(activeDeckPrompt?.title ?? ''),
       String(!!sproutAccountIdForEmbed),
@@ -1140,18 +1132,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
         computedMax: Number(getMaxLeft().toFixed(2)),
         minCenterW,
       };
-      const message = `resize-drag ${JSON.stringify(payload)}`;
-      void fetch('/api/debug/lti-log', {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-          ...ltiTokenHeaders(),
-        },
-        body: JSON.stringify({ tag: 'resize', message }),
-      }).catch(() => {
-        // Non-blocking diagnostic only.
-      });
+      appendBridgeLog('resize', 'resize-drag', payload);
     };
     try {
       const sl = localStorage.getItem(keyL);
@@ -1187,7 +1168,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
         const onMove = (ev: MouseEvent) => {
           const dx = invert ? startX - ev.clientX : ev.clientX - startX;
           setW(startW + dx);
-          if (!invert) logResizeDebug();
+          logResizeDebug();
         };
         const onUp = () => {
           document.removeEventListener('mousemove', onMove);

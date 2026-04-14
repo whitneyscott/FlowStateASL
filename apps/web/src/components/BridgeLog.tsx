@@ -4,6 +4,7 @@ import { useDebug } from '../contexts/DebugContext';
 import { useAppMode } from '../contexts/AppModeContext';
 import { useSearchParams } from 'react-router-dom';
 import { ltiTokenHeaders } from '../api/lti-token';
+import { clearBridgeClientFallbackLines, readBridgeClientFallbackLines } from '../utils/bridge-log';
 
 interface BridgeLogProps {
   context: LtiContext | null;
@@ -55,10 +56,15 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
         if (cancelled) return;
         const errData = await errRes.json();
         const ltiData = await ltiRes.json();
+        const serverLines = Array.isArray(ltiData?.lines) ? ltiData.lines : [];
+        const fallbackLines = readBridgeClientFallbackLines();
         setLastServerError(errData ?? null);
-        setLtiLog(Array.isArray(ltiData?.lines) ? ltiData.lines : []);
+        setLtiLog([...serverLines, ...fallbackLines]);
       } catch {
-        if (!cancelled) setLastServerError(null);
+        if (!cancelled) {
+          setLastServerError(null);
+          setLtiLog(readBridgeClientFallbackLines());
+        }
       }
     };
     poll();
@@ -333,6 +339,7 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
           onClick={async () => {
             if (!canClearLog) return;
             await fetch('/api/debug/lti-log?clear=1', { credentials: 'include', headers: ltiTokenHeaders() });
+            clearBridgeClientFallbackLines();
             setLtiLog([]);
           }}
           title={canClearLog ? 'Clear LTI log' : 'Clear disabled outside developer/debug mode'}

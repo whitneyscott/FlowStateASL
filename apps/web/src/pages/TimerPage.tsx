@@ -4,7 +4,7 @@ import { useDebug } from '../contexts/DebugContext';
 import * as promptApi from '../api/prompt.api';
 import { ManualTokenModal } from '../components/ManualTokenModal';
 import { resolveLtiContextValue } from '../utils/lti-context';
-import { ltiTokenHeaders } from '../api/lti-token';
+import { appendBridgeLog } from '../utils/bridge-log';
 import { nextDeckIndexAfterAdvance } from '../utils/deck-advance';
 import { buildYoutubeNocookieEmbedSrc } from '../utils/youtube-embed';
 import './PrompterPage.css';
@@ -138,12 +138,7 @@ function probeBlobVideoDurationSeconds(
 }
 
 function appendDurationBridgeLog(message: string): void {
-  void fetch('/api/debug/lti-log', {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json', ...ltiTokenHeaders() },
-    body: JSON.stringify({ tag: 'duration', message }),
-  }).catch(() => {});
+  appendBridgeLog('duration', message);
 }
 
 function mapSubmitErrorForStudent(message: string): string {
