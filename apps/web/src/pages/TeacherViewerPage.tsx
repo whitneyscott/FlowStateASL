@@ -671,8 +671,10 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
             };
           })
         );
-      } catch {
-        setRubricSaveStatus('Failed');
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setRubricSaveStatus(`Failed: ${msg}`);
+        setError(msg);
       } finally {
         setSaving(false);
       }
@@ -718,36 +720,36 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   const handleRubricRatingClick = useCallback(
     (criterionId: string, ratingId: string, points: number) => {
       if (!teacher || !current || !assignmentId) return;
-      let nextDraft: Record<string, RubricCriterionDraft> | null = null;
-      setRubricDraft((prev) => {
-        const prior = prev[criterionId] ?? {};
-        const wasSelected = prior.rating_id === ratingId;
-        const nextEntry: RubricCriterionDraft = wasSelected
-          ? { ...prior, rating_id: undefined, points: undefined }
-          : { ...prior, rating_id: ratingId, points };
-        nextDraft = { ...prev, [criterionId]: nextEntry };
-        return nextDraft;
-      });
-      if (nextDraft && rubricDraftHasAnyRating(rubric, nextDraft)) {
+      const prior = rubricDraft[criterionId] ?? {};
+      const wasSelected = prior.rating_id === ratingId;
+      const nextEntry: RubricCriterionDraft = wasSelected
+        ? { ...prior, rating_id: undefined, points: undefined }
+        : { ...prior, rating_id: ratingId, points };
+      const nextDraft: Record<string, RubricCriterionDraft> = {
+        ...rubricDraft,
+        [criterionId]: nextEntry,
+      };
+      setRubricDraft(nextDraft);
+      if (rubricDraftHasAnyRating(rubric, nextDraft)) {
         void persistRubricAssessment(nextDraft);
       }
     },
-    [teacher, current, assignmentId, rubric, persistRubricAssessment]
+    [teacher, current, assignmentId, rubric, rubricDraft, persistRubricAssessment]
   );
 
   const handleSaveRubricCriterionComment = useCallback(
     (criterionId: string, comments: string) => {
       if (!teacher || !current || !assignmentId) return;
-      let nextDraft: Record<string, RubricCriterionDraft> | null = null;
-      setRubricDraft((prev) => {
-        nextDraft = { ...prev, [criterionId]: { ...(prev[criterionId] ?? {}), comments } };
-        return nextDraft;
-      });
-      if (nextDraft && rubricDraftHasPayload(rubric, nextDraft)) {
+      const nextDraft: Record<string, RubricCriterionDraft> = {
+        ...rubricDraft,
+        [criterionId]: { ...(rubricDraft[criterionId] ?? {}), comments },
+      };
+      setRubricDraft(nextDraft);
+      if (rubricDraftHasPayload(rubric, nextDraft)) {
         void persistRubricAssessment(nextDraft);
       }
     },
-    [teacher, current, assignmentId, rubric, persistRubricAssessment]
+    [teacher, current, assignmentId, rubric, rubricDraft, persistRubricAssessment]
   );
 
   const handleReset = async () => {
