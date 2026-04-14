@@ -2084,23 +2084,61 @@ export class PromptService {
       appendLtiLog('prompt', 'enrichDeckTimelineVideoIds: getConfig failed', { error: String(e) });
       return rows;
     }
-    if (!cfg?.videoPromptConfig) {
+
+    /**
+     * Learners often use Canvas OAuth (`ctx.canvasAccessToken`). `getConfig` then reads the Prompt Manager
+     * blob with that token and may get no blob + assignment hydration only → missing `videoPromptConfig`.
+     * Deck enrichment must still see teacher `selectedDecks` / banks; use per-course stored teacher token.
+     */
+    let vpc = cfg?.videoPromptConfig;
+    const vpcHasDecksOrBanks = (v: typeof vpc): boolean =>
+      !!v &&
+      ((Array.isArray(v.selectedDecks) && v.selectedDecks.length > 0) ||
+        (Array.isArray(v.storedPromptBanks) && v.storedPromptBanks.length > 0));
+
+    if (!vpcHasDecksOrBanks(vpc)) {
+      const teacherTok = await this.courseSettings.getCourseStoredCanvasToken(ctx.courseId);
+      if (teacherTok?.trim()) {
+        const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
+        try {
+          const aid = await this.getPrompterAssignmentId(ctx);
+          const blob = await this.readPromptManagerSettingsBlob(ctx.courseId, domainOverride, teacherTok);
+          const sub = blob?.configs?.[aid];
+          if (sub?.videoPromptConfig && vpcHasDecksOrBanks(sub.videoPromptConfig)) {
+            vpc = sub.videoPromptConfig;
+            // #region agent log
+            appendLtiLog('agent-debug', 'enrichDeckTimelineVideoIds: videoPromptConfig from teacher blob (Bridge)', {
+              hypothesisId: 'H3-fallback',
+              assignmentId: aid,
+            });
+            // #endregion
+          }
+        } catch (e) {
+          appendLtiLog('prompt', 'enrichDeckTimelineVideoIds: teacher-token settings read failed', {
+            error: String(e),
+          });
+        }
+      }
+    }
+
+    if (!vpcHasDecksOrBanks(vpc)) {
       // #region agent log
-      appendLtiLog('agent-debug', 'enrichDeckTimelineVideoIds: no videoPromptConfig (Bridge)', {
+      appendLtiLog('agent-debug', 'enrichDeckTimelineVideoIds: no videoPromptConfig after getConfig+fallback (Bridge)', {
         hypothesisId: 'H3',
         cfgNull: cfg == null,
         hasCfg: !!cfg,
+        hadVpcFromGetConfig: !!cfg?.videoPromptConfig,
       });
       // #endregion
       return rows;
     }
 
+    const deckCfg = vpc!;
+
     const titleToVideoId = new Map<string, string>();
     const norm = (t: string) => t.toLowerCase().trim();
 
-    const decks = Array.isArray(cfg.videoPromptConfig.selectedDecks)
-      ? cfg.videoPromptConfig.selectedDecks
-      : [];
+    const decks = Array.isArray(deckCfg.selectedDecks) ? deckCfg.selectedDecks : [];
     for (const d of decks) {
       const deckId = String(d?.id ?? '').trim();
       if (!deckId) continue;
@@ -2121,7 +2159,7 @@ export class PromptService {
       }
     }
 
-    const banks = cfg.videoPromptConfig.storedPromptBanks ?? [];
+    const banks = deckCfg.storedPromptBanks ?? [];
     for (const bank of banks) {
       if (!Array.isArray(bank)) continue;
       for (const card of bank) {
