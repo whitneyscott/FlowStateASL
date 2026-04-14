@@ -2066,6 +2066,88 @@ export class PromptService {
     }));
   }
 
+  /**
+   * Fill missing Sprout `videoId` on deck timeline rows using teacher config + Sprout playlist data.
+   * Server-side so grading/viewer does not depend on the student client calling flashcard APIs.
+   */
+  private async enrichDeckTimelineVideoIds(
+    ctx: LtiContext,
+    rows: Array<{ title: string; startSec: number; videoId?: string }> | undefined,
+  ): Promise<Array<{ title: string; startSec: number; videoId?: string }> | undefined> {
+    if (!rows?.length) return rows;
+    if (rows.every((r) => (r.videoId ?? '').trim().length > 0)) return rows;
+
+    let cfg: PromptConfigJson | null;
+    try {
+      cfg = await this.getConfig(ctx);
+    } catch (e) {
+      appendLtiLog('prompt', 'enrichDeckTimelineVideoIds: getConfig failed', { error: String(e) });
+      return rows;
+    }
+    if (!cfg?.videoPromptConfig) return rows;
+
+    const titleToVideoId = new Map<string, string>();
+    const norm = (t: string) => t.toLowerCase().trim();
+
+    const decks = Array.isArray(cfg.videoPromptConfig.selectedDecks)
+      ? cfg.videoPromptConfig.selectedDecks
+      : [];
+    for (const d of decks) {
+      const deckId = String(d?.id ?? '').trim();
+      if (!deckId) continue;
+      try {
+        const cards = await this.getDeckCardsWithCache(deckId);
+        for (const c of cards) {
+          const title = (c.title ?? '').trim();
+          const vid = String(c.id ?? '').trim();
+          const key = norm(title);
+          if (!key || !vid) continue;
+          if (!titleToVideoId.has(key)) titleToVideoId.set(key, vid);
+        }
+      } catch (e) {
+        appendLtiLog('prompt', 'enrichDeckTimelineVideoIds: getDeckCardsWithCache failed', {
+          deckId,
+          error: String(e),
+        });
+      }
+    }
+
+    const banks = cfg.videoPromptConfig.storedPromptBanks ?? [];
+    for (const bank of banks) {
+      if (!Array.isArray(bank)) continue;
+      for (const card of bank) {
+        const title = String((card as { title?: unknown }).title ?? '').trim();
+        const vid = String((card as { videoId?: unknown }).videoId ?? '').trim();
+        const key = norm(title);
+        if (!key || !vid) continue;
+        if (!titleToVideoId.has(key)) titleToVideoId.set(key, vid);
+      }
+    }
+
+    if (titleToVideoId.size === 0) return rows;
+
+    let filled = 0;
+    const out = rows.map((r) => {
+      const existing = (r.videoId ?? '').trim();
+      if (existing) return r;
+      const vid = titleToVideoId.get(norm(r.title));
+      if (!vid) return r;
+      filled++;
+      return { ...r, videoId: vid };
+    });
+    if (filled > 0) {
+      appendLtiLog('prompt', 'enrichDeckTimelineVideoIds: filled missing videoIds', {
+        filled,
+        rowCount: rows.length,
+      });
+    }
+    return out.map((r) => ({
+      title: r.title,
+      startSec: Math.round(r.startSec * 1000) / 1000,
+      ...(r.videoId ? { videoId: r.videoId } : {}),
+    }));
+  }
+
   /** v1: YouTube-only; extend with pdf|audio|video refs when media sequence ships. */
   private sanitizeMediaStimulusInput(
     raw: unknown,
@@ -2163,7 +2245,8 @@ export class PromptService {
     }
     const assignmentId = await this.getPrompterAssignmentId(ctx);
     appendLtiLog('prompt-submit', 'submit: got assignmentId', { assignmentId });
-    const sanitizedDeckTimeline = this.sanitizeDeckTimelineInput(deckTimeline);
+    let sanitizedDeckTimeline = this.sanitizeDeckTimelineInput(deckTimeline);
+    sanitizedDeckTimeline = await this.enrichDeckTimelineVideoIds(ctx, sanitizedDeckTimeline);
     const deckDerived =
       sanitizedDeckTimeline?.length && sanitizedDeckTimeline.length > 0
         ? this.buildPromptHtmlFromDeckTimeline(sanitizedDeckTimeline).trim()
@@ -2482,9 +2565,10 @@ export class PromptService {
       optDur != null && typeof optDur === 'number' && Number.isFinite(optDur) && optDur > 0;
     const durationRounded = durationFinite ? Math.round(optDur * 1000) / 1000 : null;
 
-    const sanitizedCommentDeck = this.sanitizeDeckTimelineInput(
+    let sanitizedCommentDeck = this.sanitizeDeckTimelineInput(
       options?.deckTimeline as Array<{ title?: unknown; startSec?: unknown; videoId?: unknown }> | undefined,
     );
+    sanitizedCommentDeck = await this.enrichDeckTimelineVideoIds(ctx, sanitizedCommentDeck);
     const sanitizedMediaStimulus = this.sanitizeMediaStimulusInput(options?.mediaStimulus);
 
     if (sanitizedCommentDeck?.length || durationRounded != null || sanitizedMediaStimulus) {
