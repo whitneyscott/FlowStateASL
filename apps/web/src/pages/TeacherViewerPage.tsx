@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
@@ -414,6 +414,15 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   const [configuredAssignments, setConfiguredAssignments] = useState<promptApi.ConfiguredAssignment[]>([]);
   const [loadingAssignments, setLoadingAssignments] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+  /** Snap free-form feedback to the same deck row as the center panel (activeDeckRubricRowIndex), not raw video.currentTime. */
+  const deckFeedbackAnchorRef = useRef({
+    isDeckPromptMode: false,
+    deckTimeline: [] as DeckTimelineEntry[],
+    activeDeckRubricRowIndex: -1,
+    resolvedRubricDeckIndexMap: [] as Array<number | null>,
+    activeDeckPrompt: null as DeckTimelineEntry | null,
+    currentTime: 0,
+  });
   const leftSidebarRef = useRef<HTMLDivElement>(null);
   const rightSidebarRef = useRef<HTMLDivElement>(null);
   const resizeDebugLastSentAtRef = useRef(0);
@@ -729,11 +738,22 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     const text = commentText.trim();
     if (!text || !current || !assignmentId || !videoRef.current) return;
     const v = videoRef.current;
-    const deckSegs = resolveDeckTimeline(current.body, current.submissionComments);
+    const anchor = deckFeedbackAnchorRef.current;
     let timeSec = Math.floor(v.currentTime);
-    if (deckSegs.length > 0) {
-      const seg = activeDeckPromptAt(v.currentTime, deckSegs);
-      if (seg) timeSec = Math.floor(seg.startSec);
+    if (anchor.isDeckPromptMode && anchor.deckTimeline.length > 0) {
+      if (anchor.activeDeckRubricRowIndex >= 0) {
+        const deckIdx = anchor.resolvedRubricDeckIndexMap[anchor.activeDeckRubricRowIndex];
+        if (deckIdx != null && deckIdx >= 0 && deckIdx < anchor.deckTimeline.length) {
+          timeSec = Math.floor(anchor.deckTimeline[deckIdx].startSec);
+        } else if (anchor.activeDeckPrompt) {
+          timeSec = Math.floor(anchor.activeDeckPrompt.startSec);
+        }
+      } else if (anchor.activeDeckPrompt) {
+        timeSec = Math.floor(anchor.activeDeckPrompt.startSec);
+      } else {
+        const seg = activeDeckPromptAt(anchor.currentTime, anchor.deckTimeline);
+        if (seg) timeSec = Math.floor(seg.startSec);
+      }
     }
     setSaving(true);
     try {
@@ -979,6 +999,24 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     if (aligned != null) return aligned;
     return matches.sort((a, b) => a - b)[0];
   }, [activeDeckIndex, resolvedRubricDeckIndexMap, rubricPromptIndexMap]);
+
+  useLayoutEffect(() => {
+    deckFeedbackAnchorRef.current = {
+      isDeckPromptMode,
+      deckTimeline,
+      activeDeckRubricRowIndex,
+      resolvedRubricDeckIndexMap,
+      activeDeckPrompt,
+      currentTime,
+    };
+  }, [
+    isDeckPromptMode,
+    deckTimeline,
+    activeDeckRubricRowIndex,
+    resolvedRubricDeckIndexMap,
+    activeDeckPrompt,
+    currentTime,
+  ]);
 
   useEffect(() => {
     if (isDeckPromptMode) setTextPromptVisible(false);
