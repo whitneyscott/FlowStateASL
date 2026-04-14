@@ -3227,6 +3227,13 @@ export class PromptService {
     }
     const name = typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : undefined;
     const sproutAccountId = this.config.get<string>('SPROUT_ACCOUNT_ID')?.trim() || undefined;
+    appendLtiLog('viewer', 'getAssignmentForGrading: sprout embed config snapshot', {
+      assignmentId,
+      hasSproutAccountId: !!sproutAccountId,
+      sproutAccountIdLen: sproutAccountId ? sproutAccountId.length : 0,
+      sproutAccountIdSuffix: sproutAccountId ? sproutAccountId.slice(-4) : '(none)',
+      hasRubric: !!(rubric && Array.isArray(rubric) && rubric.length > 0),
+    });
     return { name, pointsPossible: raw.points_possible, rubric: rubric ?? undefined, sproutAccountId };
   }
 

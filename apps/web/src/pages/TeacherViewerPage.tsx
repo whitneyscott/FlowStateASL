@@ -32,6 +32,18 @@ function parseTimestampedFeedback(comments: Array<{ id: number; comment: string 
   return out;
 }
 
+function appendViewerBridgeLog(message: string, extra?: Record<string, unknown>): void {
+  void fetch('/api/debug/lti-log', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json', ...ltiTokenHeaders() },
+    body: JSON.stringify({
+      tag: 'viewer',
+      message: `${message}${extra ? ' ' + JSON.stringify(extra) : ''}`,
+    }),
+  }).catch(() => {});
+}
+
 /** Deck submissions: real boundaries from the student recorder (seconds from recording start). */
 interface DeckTimelineEntry {
   title: string;
@@ -928,6 +940,54 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
 
   /** Show control whenever teacher can preview Sprout and a deck card is active (enabled only if we have a video id). */
   const showSourceCardControl = teacher && !!sproutAccountIdForEmbed && !!activeDeckPrompt;
+
+  // Bridge diagnostics: emit one line per active card / gating change so we can debug "Show me the card"
+  // without guessing (Sprout account id, teacher role, active segment, and whether the button should render).
+  const showMeCardDiagSigRef = useRef('');
+  useEffect(() => {
+    if (!teacher || !gradingMode || !assignmentId) return;
+    if (!isDeckPromptMode) return;
+    const sig = [
+      String(assignmentId),
+      String(current?.userId ?? ''),
+      String(currentAttempt),
+      String(activeDeckPrompt?.startSec ?? ''),
+      String(activeDeckPrompt?.title ?? ''),
+      String(!!sproutAccountIdForEmbed),
+      String(!!activeDeckSproutVideoId),
+      String(!!showSourceCardControl),
+    ].join('|');
+    if (sig === showMeCardDiagSigRef.current) return;
+    showMeCardDiagSigRef.current = sig;
+    appendViewerBridgeLog('ShowMeCard gate snapshot', {
+      teacher: !!teacher,
+      gradingMode,
+      assignmentId,
+      userId: current?.userId ?? '(none)',
+      attempt: currentAttempt,
+      isDeckPromptMode,
+      deckTimelineLen: deckTimeline.length,
+      activeDeckPromptPresent: !!activeDeckPrompt,
+      activeDeckPromptStartSec: activeDeckPrompt ? Math.floor(activeDeckPrompt.startSec) : null,
+      hasSproutAccountIdForEmbed: !!sproutAccountIdForEmbed,
+      sproutAccountIdForEmbedLen: sproutAccountIdForEmbed.length,
+      hasActiveDeckSproutVideoId: !!activeDeckSproutVideoId,
+      showSourceCardControl,
+    });
+  }, [
+    teacher,
+    gradingMode,
+    assignmentId,
+    isDeckPromptMode,
+    deckTimeline.length,
+    current?.userId,
+    currentAttempt,
+    activeDeckPrompt?.startSec,
+    activeDeckPrompt?.title,
+    sproutAccountIdForEmbed,
+    activeDeckSproutVideoId,
+    showSourceCardControl,
+  ]);
 
   const rubricPromptIndexMap = useMemo(
     () =>
