@@ -85,6 +85,7 @@ const RECORDER_MIME_CANDIDATES = [
 
 const RECORDER_TIMESLICE_MS = 1000;
 const CLIENT_UPLOAD_SOFT_WARN_BYTES = 65 * 1024 * 1024;
+const YOUTUBE_EMBED_READY_TIMEOUT_MS = 10_000;
 
 function pickSupportedMimeType(): string {
   for (const mime of RECORDER_MIME_CANDIDATES) {
@@ -269,6 +270,10 @@ export default function TimerPage({ context }: TimerPageProps) {
   const [studentYoutubeFlow, setStudentYoutubeFlow] = useState(false);
   /** Wall-clock countdown while the YouTube iframe segment plays (not recorded). */
   const [youtubeStimulusSecondsLeft, setYoutubeStimulusSecondsLeft] = useState(0);
+  /** True once the student-side YouTube iframe has loaded its embed page. */
+  const [youtubeEmbedReady, setYoutubeEmbedReady] = useState(false);
+  /** Surface a clear message when embed load takes too long. */
+  const [youtubeEmbedLoadSlow, setYoutubeEmbedLoadSlow] = useState(false);
   /** 3 → 2 → 1 → record (deck flow only). */
   const [getReadyTick, setGetReadyTick] = useState(3);
   
@@ -742,6 +747,8 @@ export default function TimerPage({ context }: TimerPageProps) {
     if (phase !== 'youtubeStimulus') return;
     const yc = config?.youtubePromptConfig;
     if (!yc?.videoId) return;
+    setYoutubeEmbedReady(false);
+    setYoutubeEmbedLoadSlow(false);
     const wall = Math.max(
       1,
       Math.floor(Number(yc.clipEndSec)) - Math.max(0, Math.floor(Number(yc.clipStartSec ?? 0))),
@@ -750,15 +757,26 @@ export default function TimerPage({ context }: TimerPageProps) {
   }, [phase, config]);
 
   useEffect(() => {
-    if (phase !== 'youtubeStimulus' || youtubeStimulusSecondsLeft <= 0) return;
+    if (phase !== 'youtubeStimulus' || !youtubeEmbedReady || youtubeStimulusSecondsLeft <= 0) return;
     const id = window.setInterval(() => setYoutubeStimulusSecondsLeft((s) => s - 1), 1000);
     return () => window.clearInterval(id);
-  }, [phase, youtubeStimulusSecondsLeft]);
+  }, [phase, youtubeEmbedReady, youtubeStimulusSecondsLeft]);
 
   useEffect(() => {
-    if (phase !== 'youtubeStimulus' || youtubeStimulusSecondsLeft > 0) return;
+    if (phase !== 'youtubeStimulus' || !youtubeEmbedReady || youtubeStimulusSecondsLeft > 0) return;
     setPhase('record');
-  }, [phase, youtubeStimulusSecondsLeft]);
+  }, [phase, youtubeEmbedReady, youtubeStimulusSecondsLeft]);
+
+  useEffect(() => {
+    if (phase !== 'youtubeStimulus' || youtubeEmbedReady) return;
+    const id = window.setTimeout(() => {
+      setYoutubeEmbedLoadSlow(true);
+      appendBridgeLog('youtube-stimulus', 'ALERT: iframe load is slow', {
+        timeoutMs: YOUTUBE_EMBED_READY_TIMEOUT_MS,
+      });
+    }, YOUTUBE_EMBED_READY_TIMEOUT_MS);
+    return () => window.clearTimeout(id);
+  }, [phase, youtubeEmbedReady]);
 
   const handleVerifyAccess = async () => {
     setAccessError(null);
@@ -1104,8 +1122,18 @@ export default function TimerPage({ context }: TimerPageProps) {
         <div className="prompter-card prompter-youtube-stimulus-card">
           <h1 className="prompter-youtube-stimulus-heading">Watch the clip</h1>
           <p className="prompter-info-message prompter-info-message-spaced">
-            Your camera is not recording yet. Keep this tab open until the timer reaches zero.
+            Your camera is not recording yet. Recording starts only after the video player is ready.
           </p>
+          {!youtubeEmbedReady && (
+            <p className="prompter-info-message prompter-info-message-spaced">
+              <span className="prompter-inline-spinner" /> Loading YouTube player...
+            </p>
+          )}
+          {youtubeEmbedLoadSlow && !youtubeEmbedReady && (
+            <p className="prompter-error-message prompter-info-message-spaced" role="alert">
+              YouTube is taking longer than expected to load. Please keep this tab open.
+            </p>
+          )}
           <div className="prompter-timer-display-sm" aria-live="polite">
             {m}:{s < 10 ? '0' : ''}
             {s}
@@ -1114,6 +1142,16 @@ export default function TimerPage({ context }: TimerPageProps) {
             <iframe
               title="Assignment stimulus video"
               src={src}
+              onLoad={() => {
+                if (!youtubeEmbedReady) {
+                  setYoutubeEmbedReady(true);
+                  appendBridgeLog('youtube-stimulus', 'OK: iframe loaded', {
+                    videoId: vid,
+                    clipStartSec: startSec,
+                    clipEndSec: endSec,
+                  });
+                }
+              }}
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
               allowFullScreen
             />
