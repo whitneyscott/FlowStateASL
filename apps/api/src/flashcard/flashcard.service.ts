@@ -8,6 +8,7 @@ import { SproutVideoService } from '../sproutvideo/sproutvideo.service';
 import { PlaylistCacheService } from '../sproutvideo/playlist-cache.service';
 import { FlashcardConfigEntity } from './entities/flashcard-config.entity';
 import { resolveCanvasApiBaseUrl } from '../common/utils/canvas-base-url.util';
+import { getSproutAccountId } from '../common/utils/sprout-account-id.util';
 
 @Injectable()
 export class FlashcardService {
@@ -187,7 +188,7 @@ export class FlashcardService {
       playlists,
       selectedCurriculums,
       selectedUnits,
-      sproutAccountId: this.config.get<string>('SPROUT_ACCOUNT_ID') ?? undefined,
+      sproutAccountId: getSproutAccountId(this.config),
       ...(error && { error }),
     };
   }
@@ -232,7 +233,7 @@ export class FlashcardService {
     } = {
       selectedCurriculums,
       selectedUnits,
-      sproutAccountId: this.config.get<string>('SPROUT_ACCOUNT_ID') ?? undefined,
+      sproutAccountId: getSproutAccountId(this.config),
       ...(error && { error }),
     };
 

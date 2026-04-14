@@ -16,6 +16,7 @@ import {
 } from '../common/utils/canvas-token-crypto.util';
 import { LtiService } from '../lti/lti.service';
 import { CourseSettingsEntity } from './entities/course-settings.entity';
+import { getSproutAccountId } from '../common/utils/sprout-account-id.util';
 
 const FLASHCARD_SETTINGS_ASSIGNMENT_TITLE = 'Flashcard Settings';
 const FLASHCARD_PROGRESS_TITLE = 'Flashcard Progress';
@@ -225,7 +226,7 @@ export class CourseSettingsService {
       appendLtiLog('course-settings', 'Returning from cache', cached.data);
       return {
         ...cached.data,
-        sproutAccountId: this.config.get<string>('SPROUT_ACCOUNT_ID') ?? undefined,
+        sproutAccountId: getSproutAccountId(this.config),
         progressAssignmentId: null,
         hasCanvasToken: !!options?.canvasAccessToken,
       };
@@ -257,7 +258,7 @@ export class CourseSettingsService {
     const emptyResult = {
       selectedCurriculums: [] as string[],
       selectedUnits: [] as string[],
-      sproutAccountId: this.config.get<string>('SPROUT_ACCOUNT_ID') ?? undefined,
+      sproutAccountId: getSproutAccountId(this.config),
       progressAssignmentId: null as string | null,
       hasCanvasToken: !!tokenOverride,
     };
@@ -357,7 +358,7 @@ export class CourseSettingsService {
       return {
         selectedCurriculums,
         selectedUnits,
-        sproutAccountId: this.config.get<string>('SPROUT_ACCOUNT_ID') ?? undefined,
+        sproutAccountId: getSproutAccountId(this.config),
         progressAssignmentId: null,
         hasCanvasToken: !!tokenOverride,
         _debug: {

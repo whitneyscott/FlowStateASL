@@ -25,6 +25,7 @@ import {
   normalizeToCanvasRestBase,
 } from '../common/utils/canvas-base-url.util';
 import { resolveCanvasApiUserId } from '../common/utils/canvas-api-user.util';
+import { getSproutAccountId } from '../common/utils/sprout-account-id.util';
 import type { PromptConfigJson, PutPromptConfigDto } from './dto/prompt-config.dto';
 import { normalizeYoutubeInputToVideoId } from './youtube-video-id.util';
 import { normalizeCanvasRubricAssessment } from './canvas-rubric-assessment.util';
@@ -3226,7 +3227,7 @@ export class PromptService {
       }
     }
     const name = typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : undefined;
-    const sproutAccountId = this.config.get<string>('SPROUT_ACCOUNT_ID')?.trim() || undefined;
+    const sproutAccountId = getSproutAccountId(this.config);
     appendLtiLog('viewer', 'getAssignmentForGrading: sprout embed config snapshot', {
       assignmentId,
       hasSproutAccountId: !!sproutAccountId,
