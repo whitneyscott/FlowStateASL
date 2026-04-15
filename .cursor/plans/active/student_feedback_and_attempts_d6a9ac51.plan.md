@@ -1,6 +1,6 @@
 ---
 name: Student feedback and attempts
-overview: "Ledger and prompt-storage quiz are removed entirely (not optional). Prompt data for grading and student viewers must be recoverable from submission comments (structured JSON) and existing Canvas submission fields—without quiz or ledger. Then: student feedback + multi-attempt gate, rubric auto-comments, unlimited attempts, Sprout reference (rubric prompt as blue link → modal during playback). Flashcard/Prompt Manager backup announcements: delayed_post_at +10y on create."
+overview: "Ledger and prompt-storage quiz are removed entirely (not optional). Prompt data for grading and student viewers must be recoverable from submission comments (structured JSON) and existing Canvas submission fields—without quiz or ledger. Then: student feedback + multi-attempt gate, rubric criterion feedback prefixed with Prompt: (value) while preserving existing teacher grading viewer + rubric UX, unlimited attempts, Sprout reference (rubric prompt as blue link → modal during playback). Flashcard/Prompt Manager backup announcements: delayed_post_at +10y on create."
 todos:
   - id: remove-quiz-ledger-mandatory
     content: "Mandatory removal: quiz paths + ledger + promptLedgerAssignmentId (only in prompt.service.ts blob type ~60, ensureLedger read/write ~517/~554—remove entirely, no conditional reads). Remove /api/quiz, QuizModule, ensureLedgerAssignment, ledger submit/getSubmissions blocks. Ship only after verified submit/upload + comment-backed prompt reads (Section 3)."
@@ -15,7 +15,7 @@ todos:
     content: "Implement StudentFeedbackPhase/viewer: deck timeline + submission video + rubric rows + timestamped comments; extract shared deck/rubric parsing from TeacherViewerPage where practical."
     status: pending
   - id: rubric-prompt-comments
-    content: "Rubric comments: ALLCAPS + optional \": \" + teacher text; clamp with CANVAS_RUBRIC_CRITERION_COMMENT_MAX_CHARS (8192). buildRubricAssessmentPayload + save path."
+    content: "Teacher grading viewer: keep existing rubric + center-panel behavior. Criterion feedback string = leading `Prompt: <promptValue>` + teacher text from center panel APPENDED (never replace prompt). On clear, restore at least `Prompt: <promptValue>`. Persist via buildRubricAssessmentPayload + putSubmissionGrade; clamp total length (8192)."
     status: pending
   - id: storage-prompt-comments-pipeline
     content: "Canonical deckTimeline / promptSnapshotHtml in structured submission comments (JSON); keep upload metadata comments slim (durationSeconds, mediaStimulus, fsaslKind); resolveDeckTimeline + getSubmissions + getMySubmission prefer latest matching JSON comment then older legacy sources—never quiz/ledger. Verify submit + uploadVideo pipeline end-to-end."
@@ -38,7 +38,7 @@ isProject: false
 
 1. **Remove quiz/ledger + verify prompt recovery from submission comments** — one shippable slice: verify/fix submit + upload so prompts remain recoverable from **comments (and standard submission fields)**, **then** remove every quiz/ledger code path (no feature flag, no runtime fallback).
 2. **Student access to feedback** when multiple submissions are allowed (chooser + single-attempt auto-viewer).
-3. **Rubric criterion comments** auto-filled with the prompt text for each row (alongside free-form feedback text).
+3. **Rubric criterion feedback** — keep full existing teacher grading viewer (especially rubric); only change is **Prompt:** prefix + append teacher notes; restore prefix when feedback is cleared.
 4. **Unlimited attempts** (`-1`) **+ Sprout reference** (link-styled rubric prompt → modal during playback) in teacher and student feedback UIs.
 
 ---
@@ -106,25 +106,29 @@ isProject: false
 
 ---
 
-## 4) Rubric criterion comments — auto-inject prompt per item
+## 4) Rubric criterion feedback — `Prompt:` prefix + append teacher text (grading viewer unchanged)
 
-**Goal:** For each rubric row tied to a deck/text prompt, set Canvas `rubric_assessment[<criterion>].comments` so students see the item and any teacher note in one string.
+**Constraint:** **Do not** remove or regress existing **teacher grading viewer** behavior—rubric display, ratings, center-panel editing, save flows, SpeedGrader parity, and any current UX outside this narrow rule **stay as they are**. The only intentional product change is how the **per-criterion feedback** string sent to Canvas is composed.
 
-**Format (required):**
+**Goal:** For each rubric row that has an associated prompt (deck / YouTube label / text mode), the value stored in Canvas `rubric_assessment[<criterion>].comments` must **begin** with the prompt in a fixed, human-readable form, and any teacher-authored feedback from the **center panel** must be **appended** after that prefix—not replace it.
 
-1. Take the prompt line for that criterion (deck title, YouTube label clip text, or text-mode prompt string).
-2. Normalize to **ALL CAPS** (Unicode `toUpperCase` / locale-aware if you standardize on `en-US` for ASL gloss consistency).
-3. If the teacher entered **freeform comments** for that criterion (non-empty after trim): set `comments` = **`PROMPT_ALL_CAPS + ": " + teacherText`** (single Canvas `comments` string).
-4. If there is **no** teacher freeform: set `comments` = **`PROMPT_ALL_CAPS` only** (no trailing `": "`).
+**Canonical string shape (single `comments` field per criterion):**
 
-**Hook points:** [`buildRubricAssessmentPayload`](apps/web/src/pages/TeacherViewerPage.tsx) ~351–379 and the rubric save path that calls [`putSubmissionGrade`](apps/api/src/canvas/canvas.service.ts): when assembling `comments` per criterion, apply the format above so the payload Canvas receives matches this spec.
+1. **Prefix (always present for rows with a mapped prompt):** `Prompt: ` immediately followed by the prompt’s display value for that criterion (same source strings as today for the row: deck timeline title, agreed YouTube label text, or `prompts[idx]` in text mode—**no** required ALL CAPS transform unless the product already uses it elsewhere; this plan only requires the literal prefix `Prompt: `).
+2. **Teacher suffix (optional):** If the teacher types feedback in the center panel for that criterion, append it **after** the prefix. Use a clear separator so SpeedGrader and students read naturally, e.g. **two newlines** after the prompt line, then the teacher text:  
+   `Prompt: <value>\n\n<teacherText>`  
+   If there is no teacher text (empty after trim), the stored string is **`Prompt: <value>`** only—no trailing blank lines unless the UI already adds them consistently.
+3. **Never replace the prompt with teacher text:** Saving, autosave, or merging draft state must **not** drop the `Prompt: …` lead when teacher text exists. Merging logic that today overwrites `comments` must be updated to **preserve or recompute** the prefix and only treat the editable region as the suffix.
+4. **Clear / reset behavior:** Whenever the teacher **clears** criterion feedback in the center panel (empty string), the model and the value sent to Canvas should **restore** the criterion to at least **`Prompt: <value>`** (same `<value>` as for that row). Empty feedback must not leave Canvas with a blank comment for a row that still has a defined prompt.
 
-- **Deck mode:** map criterion → deck index via `rubricCriterionDeckIndex`; source string = timeline row `title` (or agreed YouTube label).
+**Parsing / state (implementation sketch):** On load from Canvas or from `rubricDraft`, detect leading `Prompt: ` for the row’s expected prompt value (or strip a known prefix length after verifying the prompt substring) so the **center panel shows only the teacher suffix** while the **composed** string for `putSubmissionGrade` always re-applies the prefix. If teachers manually delete the prefix in raw Canvas, reconcile on next save or viewer load: **re-inject** `Prompt: <value>` and treat remainder as teacher suffix (document edge case in code comments if needed).
+
+**Hook points:** [`buildRubricAssessmentPayload`](apps/web/src/pages/TeacherViewerPage.tsx) and the rubric save path that calls [`putSubmissionGrade`](apps/api/src/canvas/canvas.service.ts): assemble `comments` per the rules above.
+
+- **Deck mode:** map criterion → deck index via `rubricCriterionDeckIndex`; `<value>` = timeline row title (or agreed YouTube label).
 - **Text mode:** map criterion index to `prompts[idx]` when dimensions align.
 
-**Canvas rubric comment length (implementation constant):** Define and use a single shared constant, e.g. **`CANVAS_RUBRIC_CRITERION_COMMENT_MAX_CHARS = 8192`**, in the web (and API if server assembles strings) layer. **Clamp** the final assembled `comments` string to this length **before** `putSubmissionGrade`. *Rationale:* Canvas long-text fields commonly align with multi-KB limits; public Submission APIs often cite 8192 for related free-text. **If** a test `PUT` returns 4xx on an 8192-byte boundary on your host, lower once to the next verified safe value and update the constant.
-
-Truncate safely: prefer dropping from the **ALL CAPS prompt portion** while preserving **teacher suffix** after `": "` when both are present.
+**Canvas rubric comment length:** Keep a single constant (e.g. **`CANVAS_RUBRIC_CRITERION_COMMENT_MAX_CHARS = 8192`**) and **clamp** the **full** composed string before `putSubmissionGrade`. If clamping is required, **preserve the `Prompt: ` line first**, then truncate preferentially from the **teacher suffix**; if still too long, truncate the prompt value portion last and document behavior.
 
 ---
 
@@ -156,7 +160,7 @@ Truncate safely: prefer dropping from the **ALL CAPS prompt portion** while pres
 - Confirm **no** Canvas API calls create quizzes, ledger assignments, or quiz questions; assignment list / module UI loads without loops.
 - Student OAuth vs teacher-token-only messaging.
 - Single / multi / unlimited attempts; deck + text + YouTube stimulus; **-1** shows “Unlimited attempts” and never blocks “Start another attempt” on count alone.
-- Rubric save: student sees criterion comments + SpeedGrader parity; verify `ALLCAPS` / `ALLCAPS: teacher` formats.
+- Rubric save: student + SpeedGrader see `Prompt: <value>` first; teacher additions are appended; clearing center panel restores `Prompt: <value>` only.
 - Regression: teacher viewer prompt source after quiz/ledger removal (comments / legacy paths only).
 - After `uploadVideo`: confirm structured prompt JSON appears in submission comments (or agreed channel) and grading list still resolves deck/text prompts.
 - Sprout: rubric prompt link looks like a real link (blue); modal opens from click during playback contexts; link only on **incorrect + videoId** rows.
