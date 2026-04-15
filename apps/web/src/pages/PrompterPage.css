@@ -2082,6 +2082,19 @@
   margin-top: 14px;
 }
 
+.prompter-youtube-preview-fallback {
+  max-width: 560px;
+  margin-top: 6px;
+  padding: 12px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.04);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.prompter-youtube-preview-fallback .prompter-youtube-clip-range-warning {
+  margin-bottom: 10px;
+}
+
 .prompter-youtube-preview-frame {
   position: relative;
   width: 100%;

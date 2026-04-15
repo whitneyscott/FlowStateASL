@@ -112,10 +112,12 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const [youtubeSubtitleMaskEnabled, setYoutubeSubtitleMaskEnabled] = useState(false);
   const [youtubeSubtitleMaskHeight, setYoutubeSubtitleMaskHeight] = useState(15);
 
+  const [youtubePreviewRetryNonce, setYoutubePreviewRetryNonce] = useState(0);
+
   const youtubePreviewKey = useMemo(() => {
     if (!youtubePreviewVideoId) return '';
-    return `${youtubePreviewVideoId}-${youtubeClipStartSec}-${youtubeClipEndSec}`;
-  }, [youtubePreviewVideoId, youtubeClipStartSec, youtubeClipEndSec]);
+    return `${youtubePreviewVideoId}-${youtubeClipStartSec}-${youtubeClipEndSec}-r${youtubePreviewRetryNonce}`;
+  }, [youtubePreviewVideoId, youtubeClipStartSec, youtubeClipEndSec, youtubePreviewRetryNonce]);
 
   const teacher = context && isTeacher(context.roles);
   const hasLti = context?.courseId && context.userId !== 'standalone';
@@ -231,6 +233,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
           setYoutubeFieldError(null);
           setYoutubePreviewDuration(0);
           setYoutubeApiFailed(false);
+          setYoutubePreviewRetryNonce(0);
           setYoutubeAllowStudentCaptions(yc.allowStudentCaptions === true);
           const sm = yc.subtitleMask;
           setYoutubeSubtitleMaskEnabled(sm?.enabled === true);
@@ -258,6 +261,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
           setYoutubeFieldError(null);
           setYoutubePreviewDuration(0);
           setYoutubeApiFailed(false);
+          setYoutubePreviewRetryNonce(0);
           setYoutubeAllowStudentCaptions(false);
           setYoutubeSubtitleMaskEnabled(false);
           setYoutubeSubtitleMaskHeight(15);
@@ -276,6 +280,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
           setYoutubeFieldError(null);
           setYoutubePreviewDuration(0);
           setYoutubeApiFailed(false);
+          setYoutubePreviewRetryNonce(0);
           setYoutubeAllowStudentCaptions(false);
           setYoutubeSubtitleMaskEnabled(false);
           setYoutubeSubtitleMaskHeight(15);
@@ -309,6 +314,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         setYoutubeFieldError(null);
         setYoutubePreviewDuration(0);
         setYoutubeApiFailed(false);
+        setYoutubePreviewRetryNonce(0);
         setYoutubeAllowStudentCaptions(false);
         setYoutubeSubtitleMaskEnabled(false);
         setYoutubeSubtitleMaskHeight(15);
@@ -459,16 +465,19 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       setYoutubePreviewVideoId(null);
       setYoutubePreviewDuration(0);
       setYoutubeApiFailed(false);
+      setYoutubePreviewRetryNonce(0);
       return;
     }
     try {
       setYoutubePreviewVideoId(normalizeYoutubeInputToVideoIdClient(t));
       setYoutubePreviewDuration(0);
       setYoutubeApiFailed(false);
+      setYoutubePreviewRetryNonce(0);
     } catch (e) {
       setYoutubePreviewVideoId(null);
       setYoutubePreviewDuration(0);
       setYoutubeApiFailed(false);
+      setYoutubePreviewRetryNonce(0);
       setYoutubeFieldError(e instanceof Error ? e.message : 'Invalid YouTube URL or video ID.');
     }
   };
@@ -655,6 +664,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setYoutubeFieldError(null);
     setYoutubePreviewDuration(0);
     setYoutubeApiFailed(false);
+    setYoutubePreviewRetryNonce(0);
     setYoutubeAllowStudentCaptions(false);
     setYoutubeSubtitleMaskEnabled(false);
     setYoutubeSubtitleMaskHeight(15);
@@ -802,6 +812,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setYoutubeFieldError(null);
     setYoutubePreviewDuration(0);
     setYoutubeApiFailed(false);
+    setYoutubePreviewRetryNonce(0);
     setYoutubeAllowStudentCaptions(false);
     setYoutubeSubtitleMaskEnabled(false);
     setYoutubeSubtitleMaskHeight(15);
@@ -1538,34 +1549,53 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                         {youtubePreviewVideoId && (
                           <div className="prompter-youtube-preview-wrap">
                             <p className="prompter-hint">Preview (YouTube IFrame API, nocookie host)</p>
-                            <div className="prompter-youtube-preview-frame">
-                              <YoutubeStimulusShell
-                                subtitleMask={{
-                                  enabled: youtubeSubtitleMaskEnabled,
-                                  heightPercent: youtubeSubtitleMaskHeight,
-                                }}
-                              >
-                                <YoutubeIframePlayer
-                                  key={youtubePreviewKey}
-                                  videoId={youtubePreviewVideoId}
-                                  clipStartSec={youtubeClipStartSec}
-                                  clipEndSec={youtubeClipEndSec}
-                                  isStudent={false}
-                                  teacherCaptionsEnabled={false}
-                                  onReady={({ duration }) => {
-                                    setYoutubePreviewDuration(
-                                      Number.isFinite(duration) && duration > 0 ? Math.floor(duration) : 0,
-                                    );
+                            {youtubeApiFailed ? (
+                              <div className="prompter-youtube-preview-fallback">
+                                <p className="prompter-youtube-clip-range-warning" role="status">
+                                  YouTube preview did not load. Use the clip start/end fields above to configure the
+                                  assignment — saving still works.
+                                </p>
+                                <button
+                                  type="button"
+                                  className="prompter-btn-secondary"
+                                  onClick={() => {
                                     setYoutubeApiFailed(false);
+                                    setYoutubePreviewRetryNonce((n) => n + 1);
                                   }}
-                                  onApiError={(msg) => {
-                                    setYoutubeApiFailed(true);
-                                    setYoutubePreviewDuration(0);
-                                    console.warn('[TeacherConfig] YouTube preview:', msg);
+                                >
+                                  Retry preview
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="prompter-youtube-preview-frame">
+                                <YoutubeStimulusShell
+                                  subtitleMask={{
+                                    enabled: youtubeSubtitleMaskEnabled,
+                                    heightPercent: youtubeSubtitleMaskHeight,
                                   }}
-                                />
-                              </YoutubeStimulusShell>
-                            </div>
+                                >
+                                  <YoutubeIframePlayer
+                                    key={youtubePreviewKey}
+                                    videoId={youtubePreviewVideoId}
+                                    clipStartSec={youtubeClipStartSec}
+                                    clipEndSec={youtubeClipEndSec}
+                                    isStudent={false}
+                                    teacherCaptionsEnabled={false}
+                                    onReady={({ duration }) => {
+                                      setYoutubePreviewDuration(
+                                        Number.isFinite(duration) && duration > 0 ? Math.floor(duration) : 0,
+                                      );
+                                      setYoutubeApiFailed(false);
+                                    }}
+                                    onApiError={(msg) => {
+                                      setYoutubeApiFailed(true);
+                                      setYoutubePreviewDuration(0);
+                                      console.warn('[TeacherConfig] YouTube preview:', msg);
+                                    }}
+                                  />
+                                </YoutubeStimulusShell>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
