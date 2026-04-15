@@ -10,6 +10,7 @@ import { GradingPlaybackBar } from '../components/GradingPlaybackBar';
 import { SproutSourceCardModal } from '../components/SproutSourceCardModal';
 import { YoutubeStimulusShell } from '../components/YoutubeStimulusShell';
 import { YoutubeIframePlayer, type YoutubeIframePlayerHandle } from '../components/YoutubeIframePlayer';
+import { CaptionsAccessibilityPanel } from '../components/CaptionsAccessibilityPanel';
 import './PrompterPage.css';
 
 interface FeedbackEntry {
@@ -1932,13 +1933,6 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                       videoDurationSeconds={current.videoDurationSeconds}
                       durationSource={current.durationSource}
                     />
-                    {gradingMode ? (
-                      <p className="prompter-viewer-youtube-dual-hint">
-                        To transcribe the student&apos;s voicing on this recording, use your operating system or browser
-                        Live Caption feature (for example Chrome Live Caption or Windows Live Captions) while the
-                        submission plays.
-                      </p>
-                    ) : null}
                   </div>
                 </div>
                 <div className="prompter-viewer-youtube-dual-toolbar prompter-viewer-youtube-dual-toolbar--transport">
@@ -2030,6 +2024,12 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
               </div>
             </>
           )}
+
+          {gradingMode && current && !noSubmissionsInGradingMode ? (
+            <div className="prompter-viewer-center-row prompter-viewer-captions-access-wrap">
+              <CaptionsAccessibilityPanel />
+            </div>
+          ) : null}
 
           {isDeckPromptMode && (
             <>
