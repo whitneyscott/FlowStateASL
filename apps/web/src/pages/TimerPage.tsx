@@ -86,8 +86,6 @@ const RECORDER_MIME_CANDIDATES = [
 
 const RECORDER_TIMESLICE_MS = 1000;
 const CLIENT_UPLOAD_SOFT_WARN_BYTES = 65 * 1024 * 1024;
-const YOUTUBE_EMBED_READY_TIMEOUT_MS = 10_000;
-
 function pickSupportedMimeType(): string {
   for (const mime of RECORDER_MIME_CANDIDATES) {
     if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(mime)) return mime;
@@ -249,7 +247,6 @@ export default function TimerPage({ context }: TimerPageProps) {
     | 'access'
     | 'warmup'
     | 'getReady'
-    | 'youtubeStimulus'
     | 'preflight'
     | 'record'
     | 'upload'
@@ -278,15 +275,9 @@ export default function TimerPage({ context }: TimerPageProps) {
   const [studentDeckFlow, setStudentDeckFlow] = useState(false);
   /** Set when live POST /build-deck-prompts fails; we do not fall back to banks/static (no Sprout ids). */
   const [deckLiveBuildError, setDeckLiveBuildError] = useState<string | null>(null);
-  /** YouTube clip → then camera recording (no deck cards). */
+  /** YouTube stimulus clip plays alongside camera recording (interpret / voice concurrent task). */
   const [studentYoutubeFlow, setStudentYoutubeFlow] = useState(false);
-  /** Wall-clock countdown while the YouTube iframe segment plays (not recorded). */
-  const [youtubeStimulusSecondsLeft, setYoutubeStimulusSecondsLeft] = useState(0);
-  /** True once the student-side YouTube iframe has loaded its embed page. */
-  const [youtubeEmbedReady, setYoutubeEmbedReady] = useState(false);
-  /** Surface a clear message when embed load takes too long. */
-  const [youtubeEmbedLoadSlow, setYoutubeEmbedLoadSlow] = useState(false);
-  /** 3 → 2 → 1 → record (deck flow only). */
+  /** 3 → 2 → 1 → record (deck or YouTube flow). */
   const [getReadyTick, setGetReadyTick] = useState(3);
   
   const streamRef = useRef<MediaStream | null>(null);
@@ -794,47 +785,12 @@ export default function TimerPage({ context }: TimerPageProps) {
   useEffect(() => {
     if (phase !== 'getReady') return;
     if (getReadyTick <= 0) {
-      setPhase(studentYoutubeFlow ? 'youtubeStimulus' : 'record');
+      setPhase('record');
       return;
     }
     const id = window.setTimeout(() => setGetReadyTick((t) => t - 1), 1000);
     return () => window.clearTimeout(id);
-  }, [phase, getReadyTick, studentYoutubeFlow]);
-
-  useEffect(() => {
-    if (phase !== 'youtubeStimulus') return;
-    const yc = config?.youtubePromptConfig;
-    if (!yc?.videoId) return;
-    setYoutubeEmbedReady(false);
-    setYoutubeEmbedLoadSlow(false);
-    const wall = Math.max(
-      1,
-      Math.floor(Number(yc.clipEndSec)) - Math.max(0, Math.floor(Number(yc.clipStartSec ?? 0))),
-    );
-    setYoutubeStimulusSecondsLeft(wall);
-  }, [phase, config]);
-
-  useEffect(() => {
-    if (phase !== 'youtubeStimulus' || !youtubeEmbedReady || youtubeStimulusSecondsLeft <= 0) return;
-    const id = window.setInterval(() => setYoutubeStimulusSecondsLeft((s) => s - 1), 1000);
-    return () => window.clearInterval(id);
-  }, [phase, youtubeEmbedReady, youtubeStimulusSecondsLeft]);
-
-  useEffect(() => {
-    if (phase !== 'youtubeStimulus' || !youtubeEmbedReady || youtubeStimulusSecondsLeft > 0) return;
-    setPhase('record');
-  }, [phase, youtubeEmbedReady, youtubeStimulusSecondsLeft]);
-
-  useEffect(() => {
-    if (phase !== 'youtubeStimulus' || youtubeEmbedReady) return;
-    const id = window.setTimeout(() => {
-      setYoutubeEmbedLoadSlow(true);
-      appendBridgeLog('youtube-stimulus', 'ALERT: iframe load is slow', {
-        timeoutMs: YOUTUBE_EMBED_READY_TIMEOUT_MS,
-      });
-    }, YOUTUBE_EMBED_READY_TIMEOUT_MS);
-    return () => window.clearTimeout(id);
-  }, [phase, youtubeEmbedReady]);
+  }, [phase, getReadyTick]);
 
   const handleVerifyAccess = async () => {
     setAccessError(null);
@@ -958,9 +914,24 @@ export default function TimerPage({ context }: TimerPageProps) {
 
   useEffect(() => {
     if (phase !== 'record') return;
-    const sec = deckMode ? recordSecondsForDeckCard(deckPrompts[promptIndex]) : minutes * 60;
+    const yc = config?.youtubePromptConfig;
+    const clipWall =
+      studentYoutubeFlow &&
+      yc?.videoId?.trim() &&
+      Math.floor(Number(yc.clipEndSec)) > Math.max(0, Math.floor(Number(yc.clipStartSec ?? 0)))
+        ? Math.max(
+            1,
+            Math.floor(Number(yc.clipEndSec)) - Math.max(0, Math.floor(Number(yc.clipStartSec ?? 0))),
+          )
+        : 0;
+    const base = minutes * 60;
+    const sec = deckMode
+      ? recordSecondsForDeckCard(deckPrompts[promptIndex])
+      : studentYoutubeFlow && clipWall > 0
+        ? Math.max(base, clipWall)
+        : base;
     setRecordSecondsLeft(sec);
-  }, [phase, minutes, deckMode, deckPrompts, promptIndex]);
+  }, [phase, minutes, deckMode, deckPrompts, promptIndex, studentYoutubeFlow, config?.youtubePromptConfig]);
 
   useEffect(() => {
     if (phase !== 'record' || recordSecondsLeft !== 0 || !recording) return;
@@ -1221,75 +1192,18 @@ export default function TimerPage({ context }: TimerPageProps) {
     );
   }
 
-  if (phase === 'youtubeStimulus') {
-    const yc = config?.youtubePromptConfig;
-    const vid = yc?.videoId?.trim();
-    if (!vid || !yc) {
-      return (
-        <div className="prompter-page">
-          <div className="prompter-card">
-            <p className="prompter-error-message">
-              This assignment is missing valid YouTube settings. Please contact your instructor.
-            </p>
-          </div>
-        </div>
-      );
-    }
-    const startSec = Math.max(0, Math.floor(Number(yc.clipStartSec ?? 0)));
-    const endSec = Math.floor(Number(yc.clipEndSec));
-    const src = buildYoutubeNocookieEmbedSrc(vid, { startSec, endSec: endSec > startSec ? endSec : startSec + 1 });
-    const m = Math.floor(youtubeStimulusSecondsLeft / 60);
-    const s = youtubeStimulusSecondsLeft % 60;
-    return (
-      <div className="prompter-page">
-        <div className="prompter-card prompter-youtube-stimulus-card">
-          <h1 className="prompter-youtube-stimulus-heading">Watch the clip</h1>
-          <p className="prompter-info-message prompter-info-message-spaced">
-            Your camera is not recording yet. Recording starts only after the video player is ready.
-          </p>
-          {!youtubeEmbedReady && (
-            <p className="prompter-info-message prompter-info-message-spaced">
-              <span className="prompter-inline-spinner" /> Loading YouTube player...
-            </p>
-          )}
-          {youtubeEmbedLoadSlow && !youtubeEmbedReady && (
-            <p className="prompter-error-message prompter-info-message-spaced" role="alert">
-              YouTube is taking longer than expected to load. Please keep this tab open.
-            </p>
-          )}
-          <div className="prompter-timer-display-sm" aria-live="polite">
-            {m}:{s < 10 ? '0' : ''}
-            {s}
-          </div>
-          <div className="prompter-youtube-stimulus-frame">
-            <iframe
-              title="Assignment stimulus video"
-              src={src}
-              onLoad={() => {
-                if (!youtubeEmbedReady) {
-                  setYoutubeEmbedReady(true);
-                  appendBridgeLog('youtube-stimulus', 'OK: iframe loaded', {
-                    videoId: vid,
-                    clipStartSec: startSec,
-                    clipEndSec: endSec,
-                  });
-                }
-              }}
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-              allowFullScreen
-            />
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   if (phase === 'preflight') {
     return (
       <div className="prompter-page">
         <div className="prompter-card">
           <h1>Camera & Mic</h1>
           <p className="prompter-info-message prompter-info-message-spaced">Allow camera and microphone to record your signing.</p>
+          {studentYoutubeFlow && (
+            <p className="prompter-info-message prompter-info-message-spaced">
+              Next, the assignment clip will <strong>play while your camera records</strong> so you can interpret signed
+              language or voice spoken language in real time.
+            </p>
+          )}
           {studentDeckFlow && deckLiveBuildError && (
             <p className="prompter-error-message prompter-info-message-spaced" role="alert">
               {deckLiveBuildError}
@@ -1342,6 +1256,20 @@ export default function TimerPage({ context }: TimerPageProps) {
   if (phase === 'record') {
     const rm = Math.floor(recordSecondsLeft / 60);
     const rs = recordSecondsLeft % 60;
+    const ycRec = config?.youtubePromptConfig;
+    const youtubeVidForConcurrent =
+      studentYoutubeFlow && !deckMode && ycRec?.videoId?.trim() ? ycRec.videoId.trim() : '';
+    let youtubeConcurrentEmbedSrc: string | null = null;
+    if (youtubeVidForConcurrent && ycRec) {
+      const startSec = Math.max(0, Math.floor(Number(ycRec.clipStartSec ?? 0)));
+      const endSec = Math.floor(Number(ycRec.clipEndSec));
+      youtubeConcurrentEmbedSrc = buildYoutubeNocookieEmbedSrc(youtubeVidForConcurrent, {
+        startSec,
+        endSec: endSec > startSec ? endSec : startSec + 1,
+        autoplay: true,
+        playsinline: true,
+      });
+    }
     const recordPromptText =
       deckMode
         ? currentPromptText
@@ -1350,7 +1278,7 @@ export default function TimerPage({ context }: TimerPageProps) {
             (config?.instructions?.trim()
               ? `${config.instructions.trim().slice(0, 500)}${config.instructions.trim().length > 500 ? '…' : ''}`
               : '') ||
-            'Record your response to the clip you just watched.'
+            'Respond while the clip plays (interpret or voice along). If the video stays paused, press play — your camera is already recording.'
           : currentPromptText;
     return (
       <div className="prompter-page">
@@ -1365,8 +1293,30 @@ export default function TimerPage({ context }: TimerPageProps) {
           )}
           {studentYoutubeFlow && !deckMode && (
             <p className="prompter-info-message prompter-deck-progress-hint">
-              Recording your response — the YouTube clip is finished
+              Recording — camera and mic are on while the assignment clip plays below
             </p>
+          )}
+          {youtubeConcurrentEmbedSrc && youtubeVidForConcurrent && (
+            <>
+              <h2 className="prompter-youtube-stimulus-heading">Assignment clip</h2>
+              <div className="prompter-youtube-stimulus-frame prompter-youtube-stimulus-frame--record-concurrent">
+                <iframe
+                  title="Assignment stimulus — plays while your camera records"
+                  src={youtubeConcurrentEmbedSrc}
+                  onLoad={() => {
+                    appendBridgeLog('youtube-concurrent', 'OK: stimulus iframe loaded in record phase', {
+                      videoId: youtubeVidForConcurrent,
+                    });
+                  }}
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                  allowFullScreen
+                />
+              </div>
+              <p className="prompter-info-message prompter-info-message-spaced">
+                The clip should autoplay; if your browser blocks it, press play on the video. Your response is being
+                recorded the whole time.
+              </p>
+            </>
           )}
           <div className="prompter-record-layout">
             {deckMode ? (

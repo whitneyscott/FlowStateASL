@@ -1,7 +1,14 @@
 /** Canonical student/teacher preview embed (matches CSP expectations for nocookie). */
 export function buildYoutubeNocookieEmbedSrc(
   videoId: string,
-  opts?: { startSec?: number; endSec?: number },
+  opts?: {
+    startSec?: number;
+    endSec?: number;
+    /** Best-effort; many browsers require a recent user gesture for audible autoplay. */
+    autoplay?: boolean;
+    mute?: boolean;
+    playsinline?: boolean;
+  },
 ): string {
   const id = videoId.trim();
   const start = Math.max(0, Math.floor(opts?.startSec ?? 0));
@@ -11,5 +18,8 @@ export function buildYoutubeNocookieEmbedSrc(
   if (endRaw != null && Number.isFinite(endRaw) && endRaw > start) {
     params.set('end', String(endRaw));
   }
+  if (opts?.autoplay) params.set('autoplay', '1');
+  if (opts?.mute) params.set('mute', '1');
+  if (opts?.playsinline !== false) params.set('playsinline', '1');
   return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(id)}?${params.toString()}`;
 }

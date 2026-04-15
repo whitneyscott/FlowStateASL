@@ -2120,6 +2120,12 @@
   border: 0;
 }
 
+/* YouTube stimulus embedded on TimerPage record phase (concurrent with camera). */
+.prompter-youtube-stimulus-frame--record-concurrent {
+  max-width: 720px;
+  margin: 0.5rem auto 0.75rem;
+}
+
 .prompter-youtube-preview-frame iframe {
   position: absolute;
   inset: 0;
