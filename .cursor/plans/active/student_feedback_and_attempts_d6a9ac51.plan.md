@@ -1,12 +1,12 @@
 ---
 name: Student feedback and attempts
-overview: "Ledger and prompt-storage quiz are removed entirely (not optional). Submission body (+ minimal upload metadata in comments if Canvas requires) must reliably supply prompts for teacher and student viewers. Then: student feedback + multi-attempt gate, rubric auto-comments, unlimited attempts, Sprout reference (rubric prompt as blue link → modal during playback). Flashcard/Prompt Manager backup announcements: delayed_post_at +10y on create."
+overview: "Ledger and prompt-storage quiz are removed entirely (not optional). Prompt data for grading and student viewers must be recoverable from submission comments (structured JSON) and existing Canvas submission fields—without quiz or ledger. Then: student feedback + multi-attempt gate, rubric auto-comments, unlimited attempts, Sprout reference (rubric prompt as blue link → modal during playback). Flashcard/Prompt Manager backup announcements: delayed_post_at +10y on create."
 todos:
   - id: remove-quiz-ledger-mandatory
-    content: "Mandatory removal: quiz paths + ledger + promptLedgerAssignmentId (only in prompt.service.ts blob type ~60, ensureLedger read/write ~517/~554—remove entirely, no conditional reads). Same slice as body-first prompts. Remove /api/quiz, QuizModule, ensureLedgerAssignment, ledger submit/getSubmissions blocks."
+    content: "Mandatory removal: quiz paths + ledger + promptLedgerAssignmentId (only in prompt.service.ts blob type ~60, ensureLedger read/write ~517/~554—remove entirely, no conditional reads). Remove /api/quiz, QuizModule, ensureLedgerAssignment, ledger submit/getSubmissions blocks. Ship only after verified submit/upload + comment-backed prompt reads (Section 3)."
     status: pending
   - id: api-my-submission
-    content: Add GET /api/prompt/my-submission (or merge into config) that returns assignment allowed_attempts + self submission snapshot (body, comments, rubric_assessment, video URL) using student-capable Canvas token; define failure modes when only teacher token exists.
+    content: Add GET /api/prompt/my-submission (or merge into config) that returns assignment allowed_attempts + self submission snapshot (Canvas submission fields as returned by API, submission comments, rubric_assessment, video URL) using student-capable Canvas token; define failure modes when only teacher token exists.
     status: pending
   - id: timer-gate-ui
     content: "TimerPage: my-submission gate; chooser vs auto-feedback; Section 2 -1 unlimited UX (copy, never block new attempt on count, no finite meter)."
@@ -17,8 +17,8 @@ todos:
   - id: rubric-prompt-comments
     content: "Rubric comments: ALLCAPS + optional \": \" + teacher text; clamp with CANVAS_RUBRIC_CRITERION_COMMENT_MAX_CHARS (8192). buildRubricAssessmentPayload + save path."
     status: pending
-  - id: storage-body-only
-    content: "Body canonical + mandatory re-PUT same JSON via writeSubmissionBody after every successful uploadVideo attach; slim upload comment to metadata only; resolveDeckTimeline + getSubmissions + getMySubmission prefer body then legacy comments—never quiz/ledger."
+  - id: storage-prompt-comments-pipeline
+    content: "Canonical deckTimeline / promptSnapshotHtml in structured submission comments (JSON); keep upload metadata comments slim (durationSeconds, mediaStimulus, fsaslKind); resolveDeckTimeline + getSubmissions + getMySubmission prefer latest matching JSON comment then older legacy sources—never quiz/ledger. Verify submit + uploadVideo pipeline end-to-end."
     status: pending
   - id: unlimited-attempts
     content: TeacherConfigPage checkbox + API validation + putConfig/canvas update path for allowed_attempts=-1; adjust any retry logic that assumes finite attempts.
@@ -32,11 +32,11 @@ todos:
 isProject: false
 ---
 
-# Prompter fixes: deprecated Canvas objects, student feedback, body-only prompts, rubric comments
+# Prompter fixes: deprecated Canvas objects, student feedback, prompt comments, rubric comments
 
 ## Priority order (your stack rank)
 
-1. **Submission body–canonical prompts + delete quiz/ledger entirely** — one shippable slice: verify/fix submit + upload so the prompt always lives on the submission, **then** remove every quiz/ledger code path (no feature flag, no runtime fallback).
+1. **Remove quiz/ledger + verify prompt recovery from submission comments** — one shippable slice: verify/fix submit + upload so prompts remain recoverable from **comments (and standard submission fields)**, **then** remove every quiz/ledger code path (no feature flag, no runtime fallback).
 2. **Student access to feedback** when multiple submissions are allowed (chooser + single-attempt auto-viewer).
 3. **Rubric criterion comments** auto-filled with the prompt text for each row (alongside free-form feedback text).
 4. **Unlimited attempts** (`-1`) **+ Sprout reference** (link-styled rubric prompt → modal during playback) in teacher and student feedback UIs.
@@ -57,7 +57,7 @@ isProject: false
 
 ### Decision: ledger and quiz are **deprecated and removed** (mandatory)
 
-**Policy:** There is **no** production fallback to quiz or ledger after this work. Prompts for grading and student feedback come **only** from the **student’s Canvas submission** (body as canonical, plus parsing of older submission comments for backwards compatibility until data ages out). Prompt Manager **settings** remain for **teacher config**, not per-attempt prompt history.
+**Policy:** There is **no** production fallback to quiz or ledger after this work. Prompts for grading and student feedback come from **structured submission comments** (and related submission data Canvas already returns—attachments, rubric, etc.), with parsing of older shapes for backwards compatibility until data ages out. Prompt Manager **settings** remain for **teacher config**, not per-attempt prompt history.
 
 **Code to delete (not disable):**
 
@@ -70,7 +70,7 @@ isProject: false
 
 **Required action:** Delete the property from the TypeScript blob interface and from every object built for `updateAssignmentDescription`. **Do not** gate on “if present then use”—remove the field and all `ensureLedgerAssignment` logic together. When teachers next save Prompt Manager config, the serialized blob simply **drops** the key (no special migration branch).
 
-**Hard dependency (must pass before ship):** Section **3** — body-first resolution and a verified submit/upload pipeline (including **re-PUT submission body after upload** if Canvas clears it) so `promptHtml` is **always** recoverable from the submission with **zero** quiz/ledger calls.
+**Hard dependency (must pass before ship):** Section **3** — verified submit + upload pipeline and **comment-backed** prompt resolution so `promptHtml` / deck timelines are **always** recoverable without quiz or ledger.
 
 **Existing Canvas junk:** Release notes: instructors may manually delete old “ASL Express Prompt Storage” quizzes and the hidden ledger assignment; optional cleanup script later — not a substitute for deleting code paths.
 
@@ -89,22 +89,20 @@ isProject: false
 
 ---
 
-## 3) Submission body–only prompt storage (careful)
+## 3) Prompt storage via submission comments (no quiz/ledger)
 
-**Note:** You did not ask for two intentional copies of the prompt. Today the **body** is written in `submit` and **post-upload JSON comments** may still carry `deckTimeline` because the teacher UI documents Canvas sometimes clearing body after file upload ([`TeacherViewerPage` `resolveDeckTimeline`](apps/web/src/pages/TeacherViewerPage.tsx) ~64–104)).
+**Note:** Avoid duplicating large prompt payloads in multiple channels unless product requires it. Prefer **one canonical structured JSON** line per relevant action (e.g. post-submit / post-upload), with a clear discriminator (`fsaslKind` or equivalent) where helpful for parsers.
 
-**Sequence:**
+**Intended shape:**
 
-1. **Primary:** Keep canonical `deckTimeline` / `promptSnapshotHtml` in the submission **body** JSON (as today on `submit` via [`writeSubmissionBody`](apps/api/src/canvas/canvas.service.ts)).
-2. **Post-upload:** After `attachFileToSubmission` completes successfully in [`uploadVideo`](apps/api/src/prompt/prompt.service.ts), **always** call **`writeSubmissionBody` again** with the **same** canonical JSON string (re-PUT) so the body is repopulated if Canvas cleared or replaced it when the file attached. This is the **mandatory** fallback—**not** optional and not “only if body empty” in code; always re-PUT, then optimize later if profiling shows redundancy on instances that preserve body.
-3. **Upload JSON comment:** Slim to **non-prompt** metadata only (`durationSeconds`, `mediaStimulus`, typed `fsaslKind` if needed)—**no** `deckTimeline` in comments once body + re-PUT are verified stable.
-4. **Readers:** [`resolveDeckTimeline`](apps/web/src/pages/TeacherViewerPage.tsx) / server aggregators **prefer submission `body`**, then legacy comments for old rows.
+1. **Primary:** After submit and after upload (as appropriate today), persist canonical `deckTimeline` / `promptSnapshotHtml` in **submission comments** as JSON text Canvas already returns on submission GETs (see [`TeacherViewerPage` `resolveDeckTimeline`](apps/web/src/pages/TeacherViewerPage.tsx) and server aggregators for precedence rules).
+2. **Post-upload:** Ensure `uploadVideo` (and any attach step) leaves the student row in a state where **grading APIs** still return the latest structured comment (retry or ordering rules if Canvas returns comments in an unexpected order).
+3. **Upload metadata comment:** Keep **non-prompt** fields here (`durationSeconds`, `mediaStimulus`, typed `fsaslKind`)—do not overload this channel with full deck duplication unless a hard Canvas limitation requires it.
+4. **Readers:** [`resolveDeckTimeline`](apps/web/src/pages/TeacherViewerPage.tsx) / server code **prefer latest structured JSON comment** matching the deck / text prompt contract, then older legacy sources (never quiz/ledger).
 
-**Caveat:** Canvas often shows submission **body** to the learner in native UI; if that is undesirable, surface prompts only inside the LTI tool and keep body minimal or structured for machines.
+**Caveat:** Submission comments are visible in SpeedGrader; size and formatting should stay within what teachers tolerate (truncate or summarize in UI if needed).
 
-**Submission body format:** The body is an HTML string containing two parts: (1) a short visible message — e.g. `"Open in HTML view to see prompt data."` — and (2) the canonical prompt JSON wrapped in a hidden element, e.g. `<span style="display:none">{"promptSnapshotHtml":...,"deckTimeline":...}</span>`. Canvas's native UI shows only the visible message; the LTI tool reads the hidden span to recover prompt data. The re-PUT after `attachFileToSubmission` writes the same HTML string.
-
-**Ties to priority 1:** Quiz and ledger removal **ships in the same slice** as verified body-first prompt recovery (see todo `remove-quiz-ledger-mandatory` + `storage-body-only`).
+**Ties to priority 1:** Quiz and ledger removal **ships in the same slice** as verified comment-backed prompt recovery (see todo `remove-quiz-ledger-mandatory` + `storage-prompt-comments-pipeline`).
 
 ---
 
@@ -159,14 +157,14 @@ Truncate safely: prefer dropping from the **ALL CAPS prompt portion** while pres
 - Student OAuth vs teacher-token-only messaging.
 - Single / multi / unlimited attempts; deck + text + YouTube stimulus; **-1** shows “Unlimited attempts” and never blocks “Start another attempt” on count alone.
 - Rubric save: student sees criterion comments + SpeedGrader parity; verify `ALLCAPS` / `ALLCAPS: teacher` formats.
-- Regression: teacher viewer prompt source after quiz/ledger removal.
-- After `uploadVideo`: confirm **second** `writeSubmissionBody` ran and GET submission shows canonical JSON in `body` (or document Canvas anomaly).
+- Regression: teacher viewer prompt source after quiz/ledger removal (comments / legacy paths only).
+- After `uploadVideo`: confirm structured prompt JSON appears in submission comments (or agreed channel) and grading list still resolves deck/text prompts.
 - Sprout: rubric prompt link looks like a real link (blue); modal opens from click during playback contexts; link only on **incorrect + videoId** rows.
 - Settings announcements: delayed_post_at **pre-check** (Section 7) passes on target Canvas before enable.
 
 ```mermaid
 flowchart TD
-  p3[Body_first_prompt_verify]
+  p3[Prompt_comment_pipeline_verify]
   p1[Delete_quiz_ledger_code]
   p2[Student_feedback_gate]
   p4[Rubric_auto_comments]
