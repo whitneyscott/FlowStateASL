@@ -432,22 +432,24 @@ function buildRubricAssessmentPayload(
     const critId = String(c.id ?? idx);
     const d = draft[critId];
     if (!d) return;
+    const hasRating = d.rating_id != null && d.points != null && Number.isFinite(Number(d.points));
     const row: Record<string, unknown> = {};
-    if (d.rating_id != null && d.points != null && Number.isFinite(Number(d.points))) {
+    if (hasRating) {
       row.rating_id = d.rating_id;
       row.points = Number(d.points);
     }
-    if ('comments' in d) {
-      const raw = typeof d.comments === 'string' ? d.comments : '';
-      if (promptCtx) {
-        const expected = getCriterionExpectedPromptPlain(idx, c, rubricList, promptCtx);
-        row.comments =
-          expected.trim().length > 0
-            ? composeCanvasCriterionComment(expected, raw)
-            : raw.trim();
-      } else {
-        row.comments = raw.trim();
+    const teacherSuffix = 'comments' in d && typeof d.comments === 'string' ? d.comments : '';
+    const expected =
+      promptCtx != null ? getCriterionExpectedPromptPlain(idx, c, rubricList, promptCtx) : '';
+
+    // Canvas only persists criterion comments when we send `comments` on the PUT. A rating click alone
+    // must still ship `Prompt: <value>` (plus optional teacher suffix) so SpeedGrader / students see it.
+    if (promptCtx != null && expected.trim().length > 0) {
+      if (hasRating || 'comments' in d) {
+        row.comments = composeCanvasCriterionComment(expected, teacherSuffix);
       }
+    } else if ('comments' in d) {
+      row.comments = teacherSuffix.trim();
     }
     if (Object.keys(row).length > 0) {
       const keyVariants = new Set<string>([
@@ -835,7 +837,13 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
       const wasSelected = prior.rating_id === ratingId;
       const nextEntry: RubricCriterionDraft = wasSelected
         ? { ...prior, rating_id: undefined, points: undefined }
-        : { ...prior, rating_id: ratingId, points };
+        : {
+            ...prior,
+            rating_id: ratingId,
+            points,
+            // Ensure `comments` exists in draft so payload includes composed `Prompt:` + rating on save.
+            comments: typeof prior.comments === 'string' ? prior.comments : '',
+          };
       const nextDraft: Record<string, RubricCriterionDraft> = {
         ...rubricDraft,
         [criterionId]: nextEntry,
