@@ -2078,6 +2078,26 @@
   text-align: left;
 }
 
+.prompter-youtube-length-callout {
+  display: block;
+  margin: 0 0 1rem;
+  padding: 0.85rem 1rem;
+  font-size: 0.95rem;
+  line-height: 1.45;
+  color: #0f172a;
+  background: linear-gradient(135deg, rgba(0, 142, 226, 0.12) 0%, rgba(0, 142, 226, 0.06) 100%);
+  border: 1px solid rgba(0, 142, 226, 0.35);
+  border-left-width: 4px;
+  border-left-color: var(--prompter-canvas-blue);
+  border-radius: 8px;
+  box-sizing: border-box;
+  max-width: 560px;
+}
+
+.prompter-youtube-length-callout strong {
+  color: #0c4a6e;
+}
+
 .prompter-youtube-preview-wrap {
   margin-top: 14px;
 }

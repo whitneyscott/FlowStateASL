@@ -1443,6 +1443,11 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                       </div>
                     ) : (
                       <div className="prompter-settings-section prompter-youtube-config-section">
+                        <aside className="prompter-youtube-length-callout" role="note">
+                          <strong>Maximum video length: 35 minutes.</strong> Shorter, quick targeted assessments are
+                          highly recommended. 2 to 3 minutes or even shorter can provide an excellent measure without
+                          overwhelming the teacher.
+                        </aside>
                         <label className="prompter-settings-label" htmlFor="youtube-url-or-id">
                           YouTube URL or Video ID
                         </label>
