@@ -9,7 +9,9 @@ import type { PlaylistHierarchyRow } from '../api/flashcard-teacher.api';
 import { ManualTokenModal } from '../components/ManualTokenModal';
 import { computeDeckHubFilters } from '../utils/deckHierarchyFilters';
 import { normalizeYoutubeInputToVideoIdClient } from '../utils/youtube-video-id';
-import { buildYoutubeNocookieEmbedSrc } from '../utils/youtube-embed';
+import { YoutubeStimulusShell } from '../components/YoutubeStimulusShell';
+import { YoutubeIframePlayer } from '../components/YoutubeIframePlayer';
+import { YoutubeClipRangeEditor } from '../components/YoutubeClipRangeEditor';
 import '../components/TeacherSettings.css';
 import './PrompterPage.css';
 
@@ -104,6 +106,16 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const [youtubeClipEndSec, setYoutubeClipEndSec] = useState(60);
   const [youtubePreviewVideoId, setYoutubePreviewVideoId] = useState<string | null>(null);
   const [youtubeFieldError, setYoutubeFieldError] = useState<string | null>(null);
+  const [youtubePreviewDuration, setYoutubePreviewDuration] = useState(0);
+  const [youtubeApiFailed, setYoutubeApiFailed] = useState(false);
+  const [youtubeAllowStudentCaptions, setYoutubeAllowStudentCaptions] = useState(false);
+  const [youtubeSubtitleMaskEnabled, setYoutubeSubtitleMaskEnabled] = useState(false);
+  const [youtubeSubtitleMaskHeight, setYoutubeSubtitleMaskHeight] = useState(15);
+
+  const youtubePreviewKey = useMemo(() => {
+    if (!youtubePreviewVideoId) return '';
+    return `${youtubePreviewVideoId}-${youtubeClipStartSec}-${youtubeClipEndSec}`;
+  }, [youtubePreviewVideoId, youtubeClipStartSec, youtubeClipEndSec]);
 
   const teacher = context && isTeacher(context.roles);
   const hasLti = context?.courseId && context.userId !== 'standalone';
@@ -217,6 +229,15 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
           }
           setYoutubePreviewVideoId(vid);
           setYoutubeFieldError(null);
+          setYoutubePreviewDuration(0);
+          setYoutubeApiFailed(false);
+          setYoutubeAllowStudentCaptions(yc.allowStudentCaptions === true);
+          const sm = yc.subtitleMask;
+          setYoutubeSubtitleMaskEnabled(sm?.enabled === true);
+          const hp = Number(sm?.heightPercent);
+          setYoutubeSubtitleMaskHeight(
+            Number.isFinite(hp) ? Math.min(30, Math.max(5, Math.round(hp))) : 15,
+          );
           setSelectedDecks([]);
           setTotalCards(10);
           setDeckFilterCurricula([]);
@@ -235,6 +256,11 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
           setYoutubeClipEndSec(60);
           setYoutubePreviewVideoId(null);
           setYoutubeFieldError(null);
+          setYoutubePreviewDuration(0);
+          setYoutubeApiFailed(false);
+          setYoutubeAllowStudentCaptions(false);
+          setYoutubeSubtitleMaskEnabled(false);
+          setYoutubeSubtitleMaskHeight(15);
         } else {
           setSelectedDecks([]);
           setTotalCards(10);
@@ -248,6 +274,11 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
           setYoutubeClipEndSec(60);
           setYoutubePreviewVideoId(null);
           setYoutubeFieldError(null);
+          setYoutubePreviewDuration(0);
+          setYoutubeApiFailed(false);
+          setYoutubeAllowStudentCaptions(false);
+          setYoutubeSubtitleMaskEnabled(false);
+          setYoutubeSubtitleMaskHeight(15);
         }
       } else {
         setMinutes(5);
@@ -276,6 +307,11 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         setYoutubeClipEndSec(60);
         setYoutubePreviewVideoId(null);
         setYoutubeFieldError(null);
+        setYoutubePreviewDuration(0);
+        setYoutubeApiFailed(false);
+        setYoutubeAllowStudentCaptions(false);
+        setYoutubeSubtitleMaskEnabled(false);
+        setYoutubeSubtitleMaskHeight(15);
       }
     } catch (e: unknown) {
       if (e instanceof promptApi.NeedsManualTokenError) {
@@ -421,12 +457,18 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     const t = youtubeUrlOrId.trim();
     if (!t) {
       setYoutubePreviewVideoId(null);
+      setYoutubePreviewDuration(0);
+      setYoutubeApiFailed(false);
       return;
     }
     try {
       setYoutubePreviewVideoId(normalizeYoutubeInputToVideoIdClient(t));
+      setYoutubePreviewDuration(0);
+      setYoutubeApiFailed(false);
     } catch (e) {
       setYoutubePreviewVideoId(null);
+      setYoutubePreviewDuration(0);
+      setYoutubeApiFailed(false);
       setYoutubeFieldError(e instanceof Error ? e.message : 'Invalid YouTube URL or video ID.');
     }
   };
@@ -453,6 +495,10 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       const clipEnd = Math.floor(Number(youtubeClipEndSec));
       if (!Number.isFinite(clipEnd) || clipEnd <= clipStart) {
         setError('Clip end (seconds) must be greater than clip start by at least 1 second.');
+        return;
+      }
+      if (clipEnd - clipStart > 86400) {
+        setError('YouTube clip cannot span more than 24 hours.');
         return;
       }
     }
@@ -506,6 +552,14 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                   label: youtubeLabel.trim() || undefined,
                   clipStartSec: Math.max(0, Math.floor(Number(youtubeClipStartSec))),
                   clipEndSec: Math.floor(Number(youtubeClipEndSec)),
+                  allowStudentCaptions: youtubeAllowStudentCaptions,
+                  subtitleMask: {
+                    enabled: youtubeSubtitleMaskEnabled,
+                    heightPercent: Math.min(
+                      30,
+                      Math.max(5, Math.round(Number(youtubeSubtitleMaskHeight) || 15)),
+                    ),
+                  },
                 }
               : undefined,
         },
@@ -593,6 +647,17 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setAllowedAttempts(1);
     setInstructions('');
     setPromptMode('text');
+    setYoutubeUrlOrId('');
+    setYoutubeLabel('');
+    setYoutubeClipStartSec(0);
+    setYoutubeClipEndSec(60);
+    setYoutubePreviewVideoId(null);
+    setYoutubeFieldError(null);
+    setYoutubePreviewDuration(0);
+    setYoutubeApiFailed(false);
+    setYoutubeAllowStudentCaptions(false);
+    setYoutubeSubtitleMaskEnabled(false);
+    setYoutubeSubtitleMaskHeight(15);
   };
 
   const handleConfigAssignSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -735,6 +800,11 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setYoutubeClipEndSec(60);
     setYoutubePreviewVideoId(null);
     setYoutubeFieldError(null);
+    setYoutubePreviewDuration(0);
+    setYoutubeApiFailed(false);
+    setYoutubeAllowStudentCaptions(false);
+    setYoutubeSubtitleMaskEnabled(false);
+    setYoutubeSubtitleMaskHeight(15);
     if (!assignmentId) {
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
@@ -1367,7 +1437,17 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                             max={86400}
                             step={1}
                             value={youtubeClipStartSec}
-                            onChange={(e) => setYoutubeClipStartSec(Math.max(0, Math.floor(Number(e.target.value) || 0)))}
+                            onChange={(e) => {
+                              const raw = Math.floor(Number(e.target.value) || 0);
+                              const d = youtubePreviewDuration;
+                              let v = Math.max(0, raw);
+                              if (d > 0) v = Math.min(v, d);
+                              setYoutubeClipStartSec(v);
+                              if (v >= youtubeClipEndSec) {
+                                const nextEnd = Math.min(d > 0 ? d : v + 86400, v + 1);
+                                setYoutubeClipEndSec(nextEnd);
+                              }
+                            }}
                             className="prompter-settings-input prompter-settings-input-narrow"
                           />
                           <label className="prompter-settings-label prompter-settings-label-mt" htmlFor="youtube-clip-end">
@@ -1380,12 +1460,67 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                             max={86400}
                             step={1}
                             value={youtubeClipEndSec}
-                            onChange={(e) => setYoutubeClipEndSec(Math.max(1, Math.floor(Number(e.target.value) || 1)))}
+                            onChange={(e) => {
+                              const raw = Math.floor(Number(e.target.value) || 1);
+                              const d = youtubePreviewDuration;
+                              let v = Math.max(youtubeClipStartSec + 1, raw);
+                              if (d > 0) v = Math.min(v, d);
+                              setYoutubeClipEndSec(v);
+                            }}
                             className="prompter-settings-input prompter-settings-input-narrow"
                           />
                           <p className="prompter-hint">
-                            Same idea as a YouTube clip: only this segment plays for students. Preview uses your start/end on the embed.
+                            Same idea as a YouTube clip: only this segment plays for students. Handles and numbers stay in sync; values
+                            clamp to the video length when the preview loads.
                           </p>
+                          <YoutubeClipRangeEditor
+                            durationSec={youtubePreviewDuration}
+                            startSec={youtubeClipStartSec}
+                            endSec={youtubeClipEndSec}
+                            onStartSecChange={setYoutubeClipStartSec}
+                            onEndSecChange={setYoutubeClipEndSec}
+                            apiFailed={youtubeApiFailed}
+                          />
+                        </div>
+                        <div className="prompter-settings-field">
+                          <label className="prompter-settings-label" htmlFor="youtube-allow-student-cc">
+                            <input
+                              id="youtube-allow-student-cc"
+                              type="checkbox"
+                              checked={youtubeAllowStudentCaptions}
+                              onChange={(e) => setYoutubeAllowStudentCaptions(e.target.checked)}
+                            />{' '}
+                            Allow students to turn captions on (single in-app control; off by default)
+                          </label>
+                        </div>
+                        <div className="prompter-settings-field">
+                          <label className="prompter-settings-label" htmlFor="youtube-mask-enable">
+                            <input
+                              id="youtube-mask-enable"
+                              type="checkbox"
+                              checked={youtubeSubtitleMaskEnabled}
+                              onChange={(e) => setYoutubeSubtitleMaskEnabled(e.target.checked)}
+                            />{' '}
+                            Cover bottom of stimulus with an opaque bar (hide burned-in subtitles)
+                          </label>
+                          <label className="prompter-settings-label prompter-settings-label-mt" htmlFor="youtube-mask-height">
+                            Bar height (% of player height, 5–30)
+                          </label>
+                          <input
+                            id="youtube-mask-height"
+                            type="number"
+                            min={5}
+                            max={30}
+                            step={1}
+                            value={youtubeSubtitleMaskHeight}
+                            onChange={(e) =>
+                              setYoutubeSubtitleMaskHeight(
+                                Math.min(30, Math.max(5, Math.round(Number(e.target.value) || 15))),
+                              )
+                            }
+                            className="prompter-settings-input prompter-settings-input-narrow"
+                            disabled={!youtubeSubtitleMaskEnabled}
+                          />
                         </div>
                         <div className="prompter-settings-field">
                           <label className="prompter-settings-label" htmlFor="youtube-label">
@@ -1402,17 +1537,34 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                         </div>
                         {youtubePreviewVideoId && (
                           <div className="prompter-youtube-preview-wrap">
-                            <p className="prompter-hint">Preview (nocookie embed)</p>
+                            <p className="prompter-hint">Preview (YouTube IFrame API, nocookie host)</p>
                             <div className="prompter-youtube-preview-frame">
-                              <iframe
-                                title="YouTube preview"
-                                src={buildYoutubeNocookieEmbedSrc(youtubePreviewVideoId, {
-                                  startSec: youtubeClipStartSec,
-                                  endSec: youtubeClipEndSec,
-                                })}
-                                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                                allowFullScreen
-                              />
+                              <YoutubeStimulusShell
+                                subtitleMask={{
+                                  enabled: youtubeSubtitleMaskEnabled,
+                                  heightPercent: youtubeSubtitleMaskHeight,
+                                }}
+                              >
+                                <YoutubeIframePlayer
+                                  key={youtubePreviewKey}
+                                  videoId={youtubePreviewVideoId}
+                                  clipStartSec={youtubeClipStartSec}
+                                  clipEndSec={youtubeClipEndSec}
+                                  isStudent={false}
+                                  teacherCaptionsEnabled={false}
+                                  onReady={({ duration }) => {
+                                    setYoutubePreviewDuration(
+                                      Number.isFinite(duration) && duration > 0 ? Math.floor(duration) : 0,
+                                    );
+                                    setYoutubeApiFailed(false);
+                                  }}
+                                  onApiError={(msg) => {
+                                    setYoutubeApiFailed(true);
+                                    setYoutubePreviewDuration(0);
+                                    console.warn('[TeacherConfig] YouTube preview:', msg);
+                                  }}
+                                />
+                              </YoutubeStimulusShell>
                             </div>
                           </div>
                         )}

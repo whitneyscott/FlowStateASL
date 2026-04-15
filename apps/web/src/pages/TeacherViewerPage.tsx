@@ -6,8 +6,10 @@ import { resolveLtiContextValue } from '../utils/lti-context';
 import * as promptApi from '../api/prompt.api';
 import { appendBridgeLog } from '../utils/bridge-log';
 import { GradingVideoPlayer } from '../components/GradingVideoPlayer';
+import { GradingPlaybackBar } from '../components/GradingPlaybackBar';
 import { SproutSourceCardModal } from '../components/SproutSourceCardModal';
-import { buildYoutubeNocookieEmbedSrc } from '../utils/youtube-embed';
+import { YoutubeStimulusShell } from '../components/YoutubeStimulusShell';
+import { YoutubeIframePlayer, type YoutubeIframePlayerHandle } from '../components/YoutubeIframePlayer';
 import './PrompterPage.css';
 
 interface FeedbackEntry {
@@ -525,6 +527,10 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     promptMode?: 'text' | 'decks' | 'youtube';
     textPrompts?: string[];
     youtubeLabel?: string;
+    youtubePromptConfig?: {
+      allowStudentCaptions: boolean;
+      subtitleMask: { enabled: boolean; heightPercent: number };
+    };
   } | null>(null);
   const [mySubmission, setMySubmission] = useState<promptApi.PromptSubmission | null>(null);
   const [loading, setLoading] = useState(true);
@@ -556,6 +562,10 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   const resizeDebugLastSentAtRef = useRef(0);
   const [textPromptVisible, setTextPromptVisible] = useState(false);
   const [sourceCardPreviewVideoId, setSourceCardPreviewVideoId] = useState<string | null>(null);
+  const ytStimulusRef = useRef<YoutubeIframePlayerHandle>(null);
+  const [teacherStimulusCaptions, setTeacherStimulusCaptions] = useState(false);
+  const [studentStimulusCaptions, setStudentStimulusCaptions] = useState(false);
+  const [youtubeStimulusRuntimeError, setYoutubeStimulusRuntimeError] = useState<string | null>(null);
 
   const isDev = typeof window !== 'undefined' && /^(localhost|127\.0\.0\.1)$/.test(window.location.hostname);
   const teacher = context && isTeacher(context.roles);
@@ -566,6 +576,29 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     () => parseYoutubeMediaStimulusFromComments(current?.submissionComments),
     [current?.submissionComments],
   );
+
+  const youtubeDualLayout =
+    !!youtubeStimulusForGrading && !!current?.videoUrl;
+
+  const playbackYoutubeSync = useMemo(() => {
+    if (!youtubeDualLayout || !youtubeStimulusForGrading) return undefined;
+    return {
+      youtubeRef: ytStimulusRef,
+      clipStartSec: youtubeStimulusForGrading.clipStartSec,
+      clipEndSec: youtubeStimulusForGrading.clipEndSec,
+    };
+  }, [
+    youtubeDualLayout,
+    youtubeStimulusForGrading?.clipEndSec,
+    youtubeStimulusForGrading?.clipStartSec,
+    youtubeStimulusForGrading?.videoId,
+  ]);
+
+  useEffect(() => {
+    setTeacherStimulusCaptions(false);
+    setStudentStimulusCaptions(false);
+    setYoutubeStimulusRuntimeError(null);
+  }, [index, current?.userId, youtubeStimulusForGrading?.videoId, gradingMode]);
   const pointsPossible = assignment?.pointsPossible ?? 100;
   const rubric = useMemo(() => (assignment?.rubric ?? []) as RubricCriterion[], [assignment?.rubric]);
   const currentAttempt = current?.attempt ?? 1;
@@ -1833,48 +1866,170 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
             </div>
           )}
 
-          {youtubeStimulusForGrading && (
-            <div className="prompter-viewer-center-row prompter-viewer-center-row--media-stimulus">
-              <h2 className="prompter-viewer-section-heading">Assigned stimulus (YouTube)</h2>
-              {youtubeStimulusForGrading.label && (
-                <p className="prompter-viewer-media-stimulus-label">{youtubeStimulusForGrading.label}</p>
-              )}
-              <div className="prompter-viewer-media-stimulus-frame">
-                <iframe
-                  title="YouTube stimulus for this submission"
-                  src={buildYoutubeNocookieEmbedSrc(youtubeStimulusForGrading.videoId, {
-                    startSec: youtubeStimulusForGrading.clipStartSec,
-                    endSec: youtubeStimulusForGrading.clipEndSec,
-                  })}
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                  allowFullScreen
-                />
+          {youtubeDualLayout && youtubeStimulusForGrading && current?.videoUrl ? (
+            <div className="prompter-viewer-center-row">
+              <div className="prompter-viewer-youtube-dual">
+                <div className="prompter-viewer-youtube-dual-cols">
+                  <div className="prompter-viewer-youtube-dual-col">
+                    <h2 className="prompter-viewer-section-heading">Assigned stimulus (YouTube)</h2>
+                    {youtubeStimulusForGrading.label && (
+                      <p className="prompter-viewer-media-stimulus-label">{youtubeStimulusForGrading.label}</p>
+                    )}
+                    {youtubeStimulusRuntimeError ? (
+                      <p className="prompter-error-message">
+                        Stimulus playback unavailable (YouTube API required): {youtubeStimulusRuntimeError}
+                      </p>
+                    ) : (
+                      <div className="prompter-viewer-youtube-dual-frame">
+                        <YoutubeStimulusShell subtitleMask={assignment?.youtubePromptConfig?.subtitleMask}>
+                          <YoutubeIframePlayer
+                            ref={ytStimulusRef}
+                            videoId={youtubeStimulusForGrading.videoId}
+                            clipStartSec={youtubeStimulusForGrading.clipStartSec}
+                            clipEndSec={youtubeStimulusForGrading.clipEndSec}
+                            isStudent={!gradingMode}
+                            allowStudentCaptions={assignment?.youtubePromptConfig?.allowStudentCaptions === true}
+                            studentCaptionsVisible={studentStimulusCaptions}
+                            teacherCaptionsEnabled={Boolean(gradingMode && teacherStimulusCaptions)}
+                            onApiError={(m) => setYoutubeStimulusRuntimeError(m)}
+                          />
+                        </YoutubeStimulusShell>
+                      </div>
+                    )}
+                    <p className="prompter-viewer-hint-muted">
+                      Shown to the student during recording; segment matches the teacher&apos;s clip start and end.
+                    </p>
+                    {gradingMode ? (
+                      <div className="prompter-viewer-youtube-dual-toolbar">
+                        <label className="prompter-viewer-cc-toggle">
+                          <input
+                            type="checkbox"
+                            checked={teacherStimulusCaptions}
+                            onChange={(e) => setTeacherStimulusCaptions(e.target.checked)}
+                          />{' '}
+                          Show captions on stimulus
+                        </label>
+                      </div>
+                    ) : assignment?.youtubePromptConfig?.allowStudentCaptions === true ? (
+                      <div className="prompter-viewer-youtube-dual-toolbar">
+                        <button
+                          type="button"
+                          className="prompter-viewer-video-bar-btn"
+                          onClick={() => setStudentStimulusCaptions((c) => !c)}
+                        >
+                          {studentStimulusCaptions ? 'Turn off captions' : 'Turn on captions'}
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="prompter-viewer-youtube-dual-col">
+                    <h2 className="prompter-viewer-section-heading">Submission</h2>
+                    <GradingVideoPlayer
+                      hideControls
+                      src={current.videoUrl}
+                      videoKey={current.userId ?? ''}
+                      videoRef={videoRef}
+                      videoDurationSeconds={current.videoDurationSeconds}
+                      durationSource={current.durationSource}
+                    />
+                    {gradingMode ? (
+                      <p className="prompter-viewer-youtube-dual-hint">
+                        To transcribe the student&apos;s voicing on this recording, use your operating system or browser
+                        Live Caption feature (for example Chrome Live Caption or Windows Live Captions) while the
+                        submission plays.
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="prompter-viewer-youtube-dual-toolbar prompter-viewer-youtube-dual-toolbar--transport">
+                  <GradingPlaybackBar
+                    videoRef={videoRef}
+                    videoKey={current.userId ?? ''}
+                    videoDurationSeconds={current.videoDurationSeconds}
+                    durationSource={current.durationSource}
+                    youtubeSync={playbackYoutubeSync}
+                  />
+                </div>
               </div>
-              <p className="prompter-viewer-hint-muted">
-                Shown to the student before they recorded; segment matches the teacher&apos;s clip start and end.
-              </p>
             </div>
-          )}
+          ) : (
+            <>
+              {youtubeStimulusForGrading && (
+                <div className="prompter-viewer-center-row prompter-viewer-center-row--media-stimulus">
+                  <h2 className="prompter-viewer-section-heading">Assigned stimulus (YouTube)</h2>
+                  {youtubeStimulusForGrading.label && (
+                    <p className="prompter-viewer-media-stimulus-label">{youtubeStimulusForGrading.label}</p>
+                  )}
+                  {youtubeStimulusRuntimeError ? (
+                    <p className="prompter-error-message">
+                      Stimulus playback unavailable (YouTube API required): {youtubeStimulusRuntimeError}
+                    </p>
+                  ) : (
+                    <div className="prompter-viewer-media-stimulus-frame">
+                      <YoutubeStimulusShell subtitleMask={assignment?.youtubePromptConfig?.subtitleMask}>
+                        <YoutubeIframePlayer
+                          ref={ytStimulusRef}
+                          videoId={youtubeStimulusForGrading.videoId}
+                          clipStartSec={youtubeStimulusForGrading.clipStartSec}
+                          clipEndSec={youtubeStimulusForGrading.clipEndSec}
+                          isStudent={!gradingMode}
+                          allowStudentCaptions={assignment?.youtubePromptConfig?.allowStudentCaptions === true}
+                          studentCaptionsVisible={studentStimulusCaptions}
+                          teacherCaptionsEnabled={Boolean(gradingMode && teacherStimulusCaptions)}
+                          onApiError={(m) => setYoutubeStimulusRuntimeError(m)}
+                        />
+                      </YoutubeStimulusShell>
+                    </div>
+                  )}
+                  <p className="prompter-viewer-hint-muted">
+                    Shown to the student during recording; segment matches the teacher&apos;s clip start and end.
+                  </p>
+                  {gradingMode ? (
+                    <div className="prompter-viewer-youtube-dual-toolbar">
+                      <label className="prompter-viewer-cc-toggle">
+                        <input
+                          type="checkbox"
+                          checked={teacherStimulusCaptions}
+                          onChange={(e) => setTeacherStimulusCaptions(e.target.checked)}
+                        />{' '}
+                        Show captions on stimulus
+                      </label>
+                    </div>
+                  ) : assignment?.youtubePromptConfig?.allowStudentCaptions === true ? (
+                    <div className="prompter-viewer-youtube-dual-toolbar">
+                      <button
+                        type="button"
+                        className="prompter-viewer-video-bar-btn"
+                        onClick={() => setStudentStimulusCaptions((c) => !c)}
+                      >
+                        {studentStimulusCaptions ? 'Turn off captions' : 'Turn on captions'}
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              )}
 
-          <div className="prompter-viewer-video-wrap">
-            {noSubmissionsInGradingMode ? (
-              <p className="prompter-viewer-no-video">No submissions for this assignment.</p>
-            ) : current?.videoUrl ? (
-              <GradingVideoPlayer
-                src={current.videoUrl}
-                videoKey={current.userId ?? ''}
-                videoRef={videoRef}
-                videoDurationSeconds={current.videoDurationSeconds}
-                durationSource={current.durationSource}
-              />
-            ) : hasSubmissionNoVideo ? (
-              <div className="prompter-viewer-processing">
-                <p>Your submission is being processed. Video will appear shortly. Refresh the page to check.</p>
+              <div className="prompter-viewer-video-wrap">
+                {noSubmissionsInGradingMode ? (
+                  <p className="prompter-viewer-no-video">No submissions for this assignment.</p>
+                ) : current?.videoUrl ? (
+                  <GradingVideoPlayer
+                    src={current.videoUrl}
+                    videoKey={current.userId ?? ''}
+                    videoRef={videoRef}
+                    videoDurationSeconds={current.videoDurationSeconds}
+                    durationSource={current.durationSource}
+                  />
+                ) : hasSubmissionNoVideo ? (
+                  <div className="prompter-viewer-processing">
+                    <p>Your submission is being processed. Video will appear shortly. Refresh the page to check.</p>
+                  </div>
+                ) : (
+                  <p className="prompter-viewer-no-video">No video</p>
+                )}
               </div>
-            ) : (
-              <p className="prompter-viewer-no-video">No video</p>
-            )}
-          </div>
+            </>
+          )}
 
           {isDeckPromptMode && (
             <>

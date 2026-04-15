@@ -1,3 +1,10 @@
+/** Bottom-anchored opaque mask over the stimulus frame (teacher-configured only). */
+export interface YoutubeSubtitleMask {
+  enabled: boolean;
+  /** Percent of frame height [5, 30], default 15. */
+  heightPercent: number;
+}
+
 /** Persisted YouTube stimulus (normalized id only — never a raw URL). */
 export interface YoutubePromptConfig {
   videoId: string;
@@ -6,6 +13,9 @@ export interface YoutubePromptConfig {
   clipStartSec: number;
   /** Exclusive end for YouTube embed `end` param (seconds); must be > clipStartSec. */
   clipEndSec: number;
+  /** When true, students get an app control to turn captions on (IFrame API). Default false. */
+  allowStudentCaptions?: boolean;
+  subtitleMask?: YoutubeSubtitleMask;
 }
 
 export interface VideoPromptConfig {
@@ -83,5 +93,7 @@ export class PutPromptConfigDto {
     clipEndSec?: number;
     /** @deprecated Use clipStartSec + clipEndSec; server migrates on read/write. */
     durationSec?: number;
+    allowStudentCaptions?: boolean;
+    subtitleMask?: { enabled?: boolean; heightPercent?: number };
   };
 }

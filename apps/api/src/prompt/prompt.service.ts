@@ -1101,12 +1101,26 @@ export class PromptService {
       }
       const vid = String(y.videoId ?? '').trim();
       if (vid) {
+        const yExt = y as {
+          label?: string;
+          allowStudentCaptions?: boolean;
+          subtitleMask?: { enabled?: boolean; heightPercent?: number };
+        };
+        let heightPercent = Math.floor(Number(yExt.subtitleMask?.heightPercent));
+        if (!Number.isFinite(heightPercent)) heightPercent = 15;
+        heightPercent = Math.min(30, Math.max(5, heightPercent));
+        const subtitleMask = {
+          enabled: !!yExt.subtitleMask?.enabled,
+          heightPercent,
+        };
         config = {
           ...config,
           youtubePromptConfig: {
             videoId: vid,
             clipStartSec,
             clipEndSec,
+            allowStudentCaptions: yExt.allowStudentCaptions === true,
+            subtitleMask,
             ...(y.label != null && String(y.label).trim() ? { label: String(y.label).trim() } : {}),
           },
         };
@@ -1286,10 +1300,19 @@ export class PromptService {
       if (clipEndSec - clipStartSec > maxSpan) {
         throw new BadRequestException('YouTube clip window must be at most 24 hours.');
       }
+      let maskHp = Math.floor(Number(y.subtitleMask?.heightPercent));
+      if (!Number.isFinite(maskHp)) maskHp = 15;
+      maskHp = Math.min(30, Math.max(5, maskHp));
+      const subtitleMask = {
+        enabled: !!y.subtitleMask?.enabled,
+        heightPercent: maskHp,
+      };
       merged.youtubePromptConfig = {
         videoId,
         clipStartSec,
         clipEndSec,
+        allowStudentCaptions: y.allowStudentCaptions === true,
+        subtitleMask,
         ...(y.label != null && String(y.label).trim() ? { label: String(y.label).trim() } : {}),
       };
       delete (merged as { videoPromptConfig?: unknown }).videoPromptConfig;
@@ -3250,6 +3273,11 @@ export class PromptService {
     promptMode?: 'text' | 'decks' | 'youtube';
     textPrompts?: string[];
     youtubeLabel?: string;
+    /** Subset of youtube prompt config for stimulus UI (mask + student caption policy). */
+    youtubePromptConfig?: {
+      allowStudentCaptions: boolean;
+      subtitleMask: { enabled: boolean; heightPercent: number };
+    };
   } | null> {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
     if (!token) return null;
@@ -3279,6 +3307,28 @@ export class PromptService {
       cfg?.youtubePromptConfig?.label != null && String(cfg.youtubePromptConfig.label).trim()
         ? String(cfg.youtubePromptConfig.label).trim()
         : undefined;
+    let youtubePromptConfigViewer:
+      | {
+          allowStudentCaptions: boolean;
+          subtitleMask: { enabled: boolean; heightPercent: number };
+        }
+      | undefined;
+    if (cfg?.promptMode === 'youtube' && cfg.youtubePromptConfig) {
+      const y = cfg.youtubePromptConfig as {
+        allowStudentCaptions?: boolean;
+        subtitleMask?: { enabled?: boolean; heightPercent?: number };
+      };
+      let maskHp = Math.floor(Number(y.subtitleMask?.heightPercent));
+      if (!Number.isFinite(maskHp)) maskHp = 15;
+      maskHp = Math.min(30, Math.max(5, maskHp));
+      youtubePromptConfigViewer = {
+        allowStudentCaptions: y.allowStudentCaptions === true,
+        subtitleMask: {
+          enabled: !!y.subtitleMask?.enabled,
+          heightPercent: maskHp,
+        },
+      };
+    }
     appendLtiLog('viewer', 'getAssignmentForGrading: sprout embed config snapshot', {
       assignmentId,
       hasSproutAccountId: !!sproutAccountId,
@@ -3295,6 +3345,7 @@ export class PromptService {
       ...(promptMode ? { promptMode } : {}),
       ...(textPrompts?.length ? { textPrompts } : {}),
       ...(youtubeLabel ? { youtubeLabel } : {}),
+      ...(youtubePromptConfigViewer ? { youtubePromptConfig: youtubePromptConfigViewer } : {}),
     };
   }
 

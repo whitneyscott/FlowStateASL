@@ -8,7 +8,8 @@ import { resolveLtiContextValue } from '../utils/lti-context';
 import { ltiTokenHeaders } from '../api/lti-token';
 import { appendBridgeLog } from '../utils/bridge-log';
 import { nextDeckIndexAfterAdvance } from '../utils/deck-advance';
-import { buildYoutubeNocookieEmbedSrc } from '../utils/youtube-embed';
+import { YoutubeStimulusShell } from '../components/YoutubeStimulusShell';
+import { YoutubeIframePlayer } from '../components/YoutubeIframePlayer';
 import './PrompterPage.css';
 
 const TEACHER_ROLE_PATTERNS = [
@@ -277,6 +278,8 @@ export default function TimerPage({ context }: TimerPageProps) {
   const [deckLiveBuildError, setDeckLiveBuildError] = useState<string | null>(null);
   /** YouTube stimulus clip plays alongside camera recording (interpret / voice concurrent task). */
   const [studentYoutubeFlow, setStudentYoutubeFlow] = useState(false);
+  const [youtubeStimulusError, setYoutubeStimulusError] = useState<string | null>(null);
+  const [studentYoutubeCaptionsOn, setStudentYoutubeCaptionsOn] = useState(false);
   /** 3 → 2 → 1 → record (deck or YouTube flow). */
   const [getReadyTick, setGetReadyTick] = useState(3);
   
@@ -645,6 +648,8 @@ export default function TimerPage({ context }: TimerPageProps) {
           Math.max(0, Math.floor(Number(data.youtubePromptConfig.clipStartSec ?? 0)));
       setStudentDeckFlow(!!isDeckAssignment);
       setStudentYoutubeFlow(!!isYoutubeAssignment);
+      setYoutubeStimulusError(null);
+      setStudentYoutubeCaptionsOn(false);
 
       // If deck mode, fetch the prompt list
       if (data?.promptMode === 'decks' && data?.videoPromptConfig?.selectedDecks && data.videoPromptConfig.selectedDecks.length > 0) {
@@ -742,6 +747,8 @@ export default function TimerPage({ context }: TimerPageProps) {
       setStudentDeckFlow(false);
       setStudentYoutubeFlow(false);
       setDeckLiveBuildError(null);
+      setYoutubeStimulusError(null);
+      setStudentYoutubeCaptionsOn(false);
     } finally {
       setLoading(false);
     }
@@ -1259,17 +1266,14 @@ export default function TimerPage({ context }: TimerPageProps) {
     const ycRec = config?.youtubePromptConfig;
     const youtubeVidForConcurrent =
       studentYoutubeFlow && !deckMode && ycRec?.videoId?.trim() ? ycRec.videoId.trim() : '';
-    let youtubeConcurrentEmbedSrc: string | null = null;
-    if (youtubeVidForConcurrent && ycRec) {
-      const startSec = Math.max(0, Math.floor(Number(ycRec.clipStartSec ?? 0)));
-      const endSec = Math.floor(Number(ycRec.clipEndSec));
-      youtubeConcurrentEmbedSrc = buildYoutubeNocookieEmbedSrc(youtubeVidForConcurrent, {
-        startSec,
-        endSec: endSec > startSec ? endSec : startSec + 1,
-        autoplay: true,
-        playsinline: true,
-      });
-    }
+    const youtubeClipStart =
+      youtubeVidForConcurrent && ycRec ? Math.max(0, Math.floor(Number(ycRec.clipStartSec ?? 0))) : 0;
+    const youtubeClipEnd =
+      youtubeVidForConcurrent && ycRec
+        ? Math.floor(Number(ycRec.clipEndSec))
+        : 0;
+    const youtubeClipEndSafe =
+      youtubeVidForConcurrent && ycRec && youtubeClipEnd > youtubeClipStart ? youtubeClipEnd : youtubeClipStart + 1;
     const recordPromptText =
       deckMode
         ? currentPromptText
@@ -1296,26 +1300,59 @@ export default function TimerPage({ context }: TimerPageProps) {
               Recording — camera and mic are on while the assignment clip plays below
             </p>
           )}
-          {youtubeConcurrentEmbedSrc && youtubeVidForConcurrent && (
+          {youtubeVidForConcurrent && ycRec && (
             <>
               <h2 className="prompter-youtube-stimulus-heading">Assignment clip</h2>
-              <div className="prompter-youtube-stimulus-frame prompter-youtube-stimulus-frame--record-concurrent">
-                <iframe
-                  title="Assignment stimulus — plays while your camera records"
-                  src={youtubeConcurrentEmbedSrc}
-                  onLoad={() => {
-                    appendBridgeLog('youtube-concurrent', 'OK: stimulus iframe loaded in record phase', {
-                      videoId: youtubeVidForConcurrent,
-                    });
-                  }}
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                  allowFullScreen
-                />
-              </div>
-              <p className="prompter-info-message prompter-info-message-spaced">
-                The clip should autoplay; if your browser blocks it, press play on the video. Your response is being
-                recorded the whole time.
-              </p>
+              {youtubeStimulusError ? (
+                <p className="prompter-error-message prompter-error-message-mt">
+                  Stimulus playback cannot load (YouTube API required): {youtubeStimulusError}
+                </p>
+              ) : (
+                <>
+                  <div className="prompter-youtube-stimulus-frame prompter-youtube-stimulus-frame--record-concurrent">
+                    <YoutubeStimulusShell subtitleMask={ycRec.subtitleMask}>
+                      <YoutubeIframePlayer
+                        key={`${youtubeVidForConcurrent}-${youtubeClipStart}-${youtubeClipEndSafe}`}
+                        videoId={youtubeVidForConcurrent}
+                        clipStartSec={youtubeClipStart}
+                        clipEndSec={youtubeClipEndSafe}
+                        isStudent
+                        allowStudentCaptions={ycRec.allowStudentCaptions === true}
+                        studentCaptionsVisible={studentYoutubeCaptionsOn}
+                        autoplay
+                        onReady={() => {
+                          appendBridgeLog('youtube-concurrent', 'OK: stimulus YT.Player ready in record phase', {
+                            videoId: youtubeVidForConcurrent,
+                          });
+                          setYoutubeStimulusError(null);
+                        }}
+                        onApiError={(msg) => {
+                          setYoutubeStimulusError(msg);
+                          appendBridgeLog('youtube-concurrent', 'ERR: stimulus YT.Player failed', {
+                            videoId: youtubeVidForConcurrent,
+                            message: msg,
+                          });
+                        }}
+                      />
+                    </YoutubeStimulusShell>
+                  </div>
+                  {ycRec.allowStudentCaptions === true ? (
+                    <div className="prompter-youtube-student-cc-toggle">
+                      <button
+                        type="button"
+                        className="prompter-btn-secondary"
+                        onClick={() => setStudentYoutubeCaptionsOn((c) => !c)}
+                      >
+                        {studentYoutubeCaptionsOn ? 'Turn off captions' : 'Turn on captions'}
+                      </button>
+                    </div>
+                  ) : null}
+                  <p className="prompter-info-message prompter-info-message-spaced">
+                    The clip should autoplay; if your browser blocks it, use the video surface to start playback. Your
+                    response is being recorded the whole time.
+                  </p>
+                </>
+              )}
             </>
           )}
           <div className="prompter-record-layout">

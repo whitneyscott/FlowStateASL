@@ -8,12 +8,15 @@ export function buildYoutubeNocookieEmbedSrc(
     autoplay?: boolean;
     mute?: boolean;
     playsinline?: boolean;
+    /** Non-interactive embeds only; interactive flows use YT.Player. */
+    ccLoadPolicy?: 0 | 1;
   },
 ): string {
   const id = videoId.trim();
   const start = Math.max(0, Math.floor(opts?.startSec ?? 0));
   const endRaw = opts?.endSec !== undefined ? Math.floor(opts.endSec) : undefined;
   const params = new URLSearchParams({ rel: '0' });
+  if (opts?.ccLoadPolicy === 1) params.set('cc_load_policy', '1');
   if (start > 0) params.set('start', String(start));
   if (endRaw != null && Number.isFinite(endRaw) && endRaw > start) {
     params.set('end', String(endRaw));

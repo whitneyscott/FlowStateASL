@@ -2134,3 +2134,165 @@
   border: 0;
   border-radius: 6px;
 }
+
+.prompter-youtube-stimulus-shell {
+  position: absolute;
+  inset: 0;
+}
+
+.prompter-youtube-stimulus-mask {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  pointer-events: none;
+  background: #000;
+  z-index: 2;
+  border-radius: 0 0 6px 6px;
+}
+
+.prompter-youtube-clip-range {
+  margin-top: 10px;
+  max-width: 560px;
+}
+
+.prompter-youtube-clip-range-warning {
+  color: #b45309;
+  font-size: 0.9rem;
+  margin: 0 0 8px;
+}
+
+.prompter-youtube-clip-range-track {
+  position: relative;
+  height: 28px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.12);
+  cursor: pointer;
+  touch-action: none;
+}
+
+.prompter-youtube-clip-range-track--disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.prompter-youtube-clip-range-fill {
+  position: absolute;
+  top: 4px;
+  height: 20px;
+  border-radius: 4px;
+  background: rgba(37, 99, 235, 0.35);
+  pointer-events: none;
+}
+
+.prompter-youtube-clip-range-thumb {
+  position: absolute;
+  top: 50%;
+  width: 18px;
+  height: 18px;
+  margin-left: -9px;
+  margin-top: -9px;
+  border: 2px solid #1d4ed8;
+  border-radius: 50%;
+  background: #fff;
+  padding: 0;
+  cursor: grab;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  z-index: 1;
+}
+
+.prompter-youtube-clip-range-thumb:active {
+  cursor: grabbing;
+}
+
+.prompter-youtube-clip-range-thumb:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.prompter-viewer-youtube-dual {
+  margin: 1rem 0;
+}
+
+.prompter-viewer-youtube-dual-cols {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.prompter-viewer-youtube-dual-col {
+  flex: 1 1 320px;
+  max-width: 560px;
+  min-width: 260px;
+}
+
+.prompter-viewer-youtube-dual-frame {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.prompter-viewer-youtube-dual-hint {
+  font-size: 0.88rem;
+  color: rgba(0, 0, 0, 0.65);
+  margin: 0.35rem 0 0;
+}
+
+.prompter-viewer-youtube-dual-toolbar {
+  margin-top: 0.75rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+}
+
+.prompter-viewer-youtube-dual-toolbar .prompter-viewer-video-bar {
+  flex: 1 1 100%;
+}
+
+.prompter-viewer-youtube-dual-toolbar--transport {
+  width: 100%;
+}
+
+.prompter-viewer-cc-toggle {
+  font-size: 0.9rem;
+  color: #223;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.prompter-youtube-student-cc-toggle {
+  margin: 0.5rem auto 0;
+  text-align: center;
+}
+
+.prompter-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.prompter-viewer-video-rate-label {
+  flex: 0 0 auto;
+}
+
+.prompter-viewer-video-rate-select {
+  padding: 6px 8px;
+  font-size: 13px;
+  border-radius: 6px;
+  border: 1px solid #444;
+  background: #2d2d2d;
+  color: #e8e8e8;
+}

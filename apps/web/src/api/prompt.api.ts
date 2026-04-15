@@ -83,11 +83,19 @@ export interface VideoPromptConfig {
   staticFallbackPrompts?: string[];
 }
 
+export interface YoutubeSubtitleMask {
+  enabled: boolean;
+  heightPercent: number;
+}
+
 export interface YoutubePromptConfig {
   videoId: string;
   label?: string;
   clipStartSec: number;
   clipEndSec: number;
+  /** Default false — students only get caption control when true (IFrame API). */
+  allowStudentCaptions?: boolean;
+  subtitleMask?: YoutubeSubtitleMask;
 }
 
 /** Client → PUT /config for youtube mode (server normalizes urlOrId/videoId to persisted YoutubePromptConfig). */
@@ -99,6 +107,8 @@ export interface YoutubePromptConfigInput {
   clipEndSec?: number;
   /** @deprecated Server maps to clip window from clipStartSec. */
   durationSec?: number;
+  allowStudentCaptions?: boolean;
+  subtitleMask?: { enabled?: boolean; heightPercent?: number };
 }
 
 export interface PromptConfig {
@@ -473,6 +483,10 @@ export async function getAssignment(assignmentId?: string | null): Promise<{
   promptMode?: 'text' | 'decks' | 'youtube';
   textPrompts?: string[];
   youtubeLabel?: string;
+  youtubePromptConfig?: {
+    allowStudentCaptions: boolean;
+    subtitleMask: YoutubeSubtitleMask;
+  };
 } | null> {
   return fetchJson(withAssignmentId(base + '/assignment', assignmentId));
 }
@@ -486,6 +500,10 @@ export async function getAssignmentForViewer(assignmentId?: string | null): Prom
   promptMode?: 'text' | 'decks' | 'youtube';
   textPrompts?: string[];
   youtubeLabel?: string;
+  youtubePromptConfig?: {
+    allowStudentCaptions: boolean;
+    subtitleMask: YoutubeSubtitleMask;
+  };
 } | null> {
   return fetchJson(withAssignmentId(base + '/assignment-for-viewer', assignmentId));
 }
