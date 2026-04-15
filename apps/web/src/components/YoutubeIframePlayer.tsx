@@ -30,6 +30,10 @@ export type YoutubeIframePlayerProps = {
   teacherCaptionsEnabled?: boolean;
   isStudent?: boolean;
   autoplay?: boolean;
+  /** YouTube chrome (teacher preview / config only). Runtime student surfaces stay controls: 0. */
+  showControls?: boolean;
+  /** Load the full video (no start/end in playerVars) so teachers can scrub to any frame for clip editing. */
+  fullTimelinePreview?: boolean;
   className?: string;
   onReady?: (info: { duration: number }) => void;
   onApiError?: (message: string) => void;
@@ -56,6 +60,8 @@ export const YoutubeIframePlayer = forwardRef<YoutubeIframePlayerHandle, Youtube
       teacherCaptionsEnabled = false,
       isStudent = false,
       autoplay = false,
+      showControls = false,
+      fullTimelinePreview = false,
       className = '',
       onReady,
       onApiError,
@@ -125,6 +131,7 @@ export const YoutubeIframePlayer = forwardRef<YoutubeIframePlayerHandle, Youtube
     const end = Math.floor(clipEndSec);
     const endClamped = end > start ? end : start + 1;
     const vid = videoId.trim();
+    const clipBoundSig = fullTimelinePreview ? 'full' : `${start}-${endClamped}`;
 
     useEffect(() => {
       const host = hostRef.current;
@@ -162,12 +169,16 @@ export const YoutubeIframePlayer = forwardRef<YoutubeIframePlayerHandle, Youtube
             width: '100%',
             height: '100%',
             playerVars: {
-              controls: 0,
+              controls: showControls ? 1 : 0,
               modestbranding: 1,
               rel: 0,
               playsinline: 1,
-              start,
-              end: endClamped,
+              ...(fullTimelinePreview
+                ? {}
+                : {
+                    start,
+                    end: endClamped,
+                  }),
               cc_load_policy: 0,
               enablejsapi: 1,
               origin: typeof window !== 'undefined' ? window.location.origin : undefined,
@@ -213,7 +224,7 @@ export const YoutubeIframePlayer = forwardRef<YoutubeIframePlayerHandle, Youtube
         }
         if (hostRef.current) hostRef.current.innerHTML = '';
       };
-    }, [vid, start, endClamped, playerId, autoplay]);
+    }, [vid, playerId, autoplay, showControls, fullTimelinePreview, clipBoundSig]);
 
     useEffect(() => {
       const p = playerRef.current;

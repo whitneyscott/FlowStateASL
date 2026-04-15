@@ -2103,6 +2103,14 @@
   margin-top: 6px;
 }
 
+/* Range timeline matches preview width (teacher YouTube config). */
+.prompter-youtube-config-range-wrap {
+  width: 100%;
+  max-width: 560px;
+  margin-top: 10px;
+  box-sizing: border-box;
+}
+
 .prompter-youtube-stimulus-card {
   max-width: 920px;
   margin: 0 auto;
@@ -2167,6 +2175,11 @@
 .prompter-youtube-clip-range {
   margin-top: 10px;
   max-width: 560px;
+}
+
+.prompter-youtube-config-range-wrap .prompter-youtube-clip-range {
+  margin-top: 0;
+  max-width: 100%;
 }
 
 .prompter-youtube-clip-range-warning {

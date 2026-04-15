@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams, useNavigate, Link } from 'react-router-dom';
 import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
@@ -10,7 +10,7 @@ import { ManualTokenModal } from '../components/ManualTokenModal';
 import { computeDeckHubFilters } from '../utils/deckHierarchyFilters';
 import { normalizeYoutubeInputToVideoIdClient } from '../utils/youtube-video-id';
 import { YoutubeStimulusShell } from '../components/YoutubeStimulusShell';
-import { YoutubeIframePlayer } from '../components/YoutubeIframePlayer';
+import { YoutubeIframePlayer, type YoutubeIframePlayerHandle } from '../components/YoutubeIframePlayer';
 import { YoutubeClipRangeEditor } from '../components/YoutubeClipRangeEditor';
 import '../components/TeacherSettings.css';
 import './PrompterPage.css';
@@ -113,11 +113,30 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const [youtubeSubtitleMaskHeight, setYoutubeSubtitleMaskHeight] = useState(15);
 
   const [youtubePreviewRetryNonce, setYoutubePreviewRetryNonce] = useState(0);
+  const youtubePreviewPlayerRef = useRef<YoutubeIframePlayerHandle>(null);
 
-  const youtubePreviewKey = useMemo(() => {
+  /** Preview player remounts only when video id or retry changes — clip edits use seek, not remount. */
+  const youtubePreviewPlayerKey = useMemo(() => {
     if (!youtubePreviewVideoId) return '';
-    return `${youtubePreviewVideoId}-${youtubeClipStartSec}-${youtubeClipEndSec}-r${youtubePreviewRetryNonce}`;
-  }, [youtubePreviewVideoId, youtubeClipStartSec, youtubeClipEndSec, youtubePreviewRetryNonce]);
+    return `yt-preview-${youtubePreviewVideoId}-r${youtubePreviewRetryNonce}`;
+  }, [youtubePreviewVideoId, youtubePreviewRetryNonce]);
+
+  const seekYoutubePreview = useCallback(
+    (sec: number) => {
+      if (youtubeApiFailed) return;
+      const p = youtubePreviewPlayerRef.current;
+      if (!p) return;
+      const d = youtubePreviewDuration;
+      const raw = Math.floor(Number(sec) || 0);
+      const t = d > 0 ? Math.min(Math.max(0, raw), d) : Math.max(0, raw);
+      try {
+        p.seekToSeconds(t);
+      } catch {
+        /* ignore */
+      }
+    },
+    [youtubeApiFailed, youtubePreviewDuration],
+  );
 
   const teacher = context && isTeacher(context.roles);
   const hasLti = context?.courseId && context.userId !== 'standalone';
@@ -1437,6 +1456,95 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                           placeholder="https://www.youtube.com/watch?v=… or paste embed code"
                         />
                         {youtubeFieldError && <p className="prompter-error-message">{youtubeFieldError}</p>}
+                        <div className="prompter-settings-field">
+                          <label className="prompter-settings-label" htmlFor="youtube-label">
+                            Label (optional)
+                          </label>
+                          <input
+                            id="youtube-label"
+                            type="text"
+                            className="prompter-settings-input"
+                            value={youtubeLabel}
+                            onChange={(e) => setYoutubeLabel(e.target.value)}
+                            placeholder="e.g. Warm-up dialogue"
+                          />
+                        </div>
+                        {youtubePreviewVideoId && (
+                          <div className="prompter-youtube-preview-wrap">
+                            <p className="prompter-hint">Preview (YouTube IFrame API, nocookie host — use controls to scrub)</p>
+                            {youtubeApiFailed ? (
+                              <div className="prompter-youtube-preview-fallback">
+                                <p className="prompter-youtube-clip-range-warning" role="status">
+                                  YouTube preview did not load. Use the clip start/end fields below to configure the
+                                  assignment — saving still works.
+                                </p>
+                                <button
+                                  type="button"
+                                  className="prompter-btn-secondary"
+                                  onClick={() => {
+                                    setYoutubeApiFailed(false);
+                                    setYoutubePreviewRetryNonce((n) => n + 1);
+                                  }}
+                                >
+                                  Retry preview
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="prompter-youtube-preview-frame">
+                                <YoutubeStimulusShell
+                                  subtitleMask={{
+                                    enabled: youtubeSubtitleMaskEnabled,
+                                    heightPercent: youtubeSubtitleMaskHeight,
+                                  }}
+                                >
+                                  <YoutubeIframePlayer
+                                    ref={youtubePreviewPlayerRef}
+                                    key={youtubePreviewPlayerKey}
+                                    videoId={youtubePreviewVideoId}
+                                    clipStartSec={youtubeClipStartSec}
+                                    clipEndSec={youtubeClipEndSec}
+                                    isStudent={false}
+                                    teacherCaptionsEnabled={false}
+                                    showControls
+                                    fullTimelinePreview
+                                    onReady={({ duration }) => {
+                                      const d =
+                                        Number.isFinite(duration) && duration > 0 ? Math.floor(duration) : 0;
+                                      setYoutubePreviewDuration(d);
+                                      setYoutubeApiFailed(false);
+                                      queueMicrotask(() => {
+                                        const p = youtubePreviewPlayerRef.current;
+                                        if (!p || !d) return;
+                                        const s = Math.max(0, Math.floor(Number(youtubeClipStartSec)));
+                                        try {
+                                          p.seekToSeconds(Math.min(s, d));
+                                        } catch {
+                                          /* ignore */
+                                        }
+                                      });
+                                    }}
+                                    onApiError={(msg) => {
+                                      setYoutubeApiFailed(true);
+                                      setYoutubePreviewDuration(0);
+                                      console.warn('[TeacherConfig] YouTube preview:', msg);
+                                    }}
+                                  />
+                                </YoutubeStimulusShell>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        <div className="prompter-youtube-config-range-wrap">
+                          <YoutubeClipRangeEditor
+                            durationSec={youtubePreviewDuration}
+                            startSec={youtubeClipStartSec}
+                            endSec={youtubeClipEndSec}
+                            onStartSecChange={setYoutubeClipStartSec}
+                            onEndSecChange={setYoutubeClipEndSec}
+                            apiFailed={youtubeApiFailed}
+                            onPreviewSeek={seekYoutubePreview}
+                          />
+                        </div>
                         <div className="prompter-settings-field prompter-youtube-clip-fields">
                           <label className="prompter-settings-label" htmlFor="youtube-clip-start">
                             Clip start (seconds from video start)
@@ -1454,10 +1562,12 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                               let v = Math.max(0, raw);
                               if (d > 0) v = Math.min(v, d);
                               setYoutubeClipStartSec(v);
-                              if (v >= youtubeClipEndSec) {
-                                const nextEnd = Math.min(d > 0 ? d : v + 86400, v + 1);
-                                setYoutubeClipEndSec(nextEnd);
+                              let endVal = youtubeClipEndSec;
+                              if (v >= endVal) {
+                                endVal = Math.min(d > 0 ? d : v + 86400, v + 1);
+                                setYoutubeClipEndSec(endVal);
                               }
+                              seekYoutubePreview(v);
                             }}
                             className="prompter-settings-input prompter-settings-input-narrow"
                           />
@@ -1477,21 +1587,14 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                               let v = Math.max(youtubeClipStartSec + 1, raw);
                               if (d > 0) v = Math.min(v, d);
                               setYoutubeClipEndSec(v);
+                              seekYoutubePreview(v);
                             }}
                             className="prompter-settings-input prompter-settings-input-narrow"
                           />
                           <p className="prompter-hint">
-                            Same idea as a YouTube clip: only this segment plays for students. Handles and numbers stay in sync; values
-                            clamp to the video length when the preview loads.
+                            Only this segment plays for students. Move the handles or type times to preview that moment in the
+                            video above. Values clamp to the video length once the preview loads.
                           </p>
-                          <YoutubeClipRangeEditor
-                            durationSec={youtubePreviewDuration}
-                            startSec={youtubeClipStartSec}
-                            endSec={youtubeClipEndSec}
-                            onStartSecChange={setYoutubeClipStartSec}
-                            onEndSecChange={setYoutubeClipEndSec}
-                            apiFailed={youtubeApiFailed}
-                          />
                         </div>
                         <div className="prompter-settings-field">
                           <label className="prompter-settings-label" htmlFor="youtube-allow-student-cc">
@@ -1533,71 +1636,6 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                             disabled={!youtubeSubtitleMaskEnabled}
                           />
                         </div>
-                        <div className="prompter-settings-field">
-                          <label className="prompter-settings-label" htmlFor="youtube-label">
-                            Label (optional)
-                          </label>
-                          <input
-                            id="youtube-label"
-                            type="text"
-                            className="prompter-settings-input"
-                            value={youtubeLabel}
-                            onChange={(e) => setYoutubeLabel(e.target.value)}
-                            placeholder="e.g. Warm-up dialogue"
-                          />
-                        </div>
-                        {youtubePreviewVideoId && (
-                          <div className="prompter-youtube-preview-wrap">
-                            <p className="prompter-hint">Preview (YouTube IFrame API, nocookie host)</p>
-                            {youtubeApiFailed ? (
-                              <div className="prompter-youtube-preview-fallback">
-                                <p className="prompter-youtube-clip-range-warning" role="status">
-                                  YouTube preview did not load. Use the clip start/end fields above to configure the
-                                  assignment — saving still works.
-                                </p>
-                                <button
-                                  type="button"
-                                  className="prompter-btn-secondary"
-                                  onClick={() => {
-                                    setYoutubeApiFailed(false);
-                                    setYoutubePreviewRetryNonce((n) => n + 1);
-                                  }}
-                                >
-                                  Retry preview
-                                </button>
-                              </div>
-                            ) : (
-                              <div className="prompter-youtube-preview-frame">
-                                <YoutubeStimulusShell
-                                  subtitleMask={{
-                                    enabled: youtubeSubtitleMaskEnabled,
-                                    heightPercent: youtubeSubtitleMaskHeight,
-                                  }}
-                                >
-                                  <YoutubeIframePlayer
-                                    key={youtubePreviewKey}
-                                    videoId={youtubePreviewVideoId}
-                                    clipStartSec={youtubeClipStartSec}
-                                    clipEndSec={youtubeClipEndSec}
-                                    isStudent={false}
-                                    teacherCaptionsEnabled={false}
-                                    onReady={({ duration }) => {
-                                      setYoutubePreviewDuration(
-                                        Number.isFinite(duration) && duration > 0 ? Math.floor(duration) : 0,
-                                      );
-                                      setYoutubeApiFailed(false);
-                                    }}
-                                    onApiError={(msg) => {
-                                      setYoutubeApiFailed(true);
-                                      setYoutubePreviewDuration(0);
-                                      console.warn('[TeacherConfig] YouTube preview:', msg);
-                                    }}
-                                  />
-                                </YoutubeStimulusShell>
-                              </div>
-                            )}
-                          </div>
-                        )}
                       </div>
                     )}
                   </div>

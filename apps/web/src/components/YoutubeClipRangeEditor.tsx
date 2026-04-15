@@ -11,6 +11,8 @@ export type YoutubeClipRangeEditorProps = {
   onEndSecChange: (v: number) => void;
   /** When true, hides the track and shows API warning (inputs still work). */
   apiFailed?: boolean;
+  /** Seek preview player so the frame matches the handle the teacher moved. */
+  onPreviewSeek?: (seconds: number) => void;
 };
 
 function clamp(n: number, lo: number, hi: number): number {
@@ -35,6 +37,7 @@ export function YoutubeClipRangeEditor({
   onStartSecChange,
   onEndSecChange,
   apiFailed = false,
+  onPreviewSeek,
 }: YoutubeClipRangeEditorProps) {
   const trackRef = useRef<HTMLDivElement | null>(null);
   const draggingRef = useRef<Dragging>(null);
@@ -56,8 +59,10 @@ export function YoutubeClipRangeEditor({
       }
       if (a !== start) onStartSecChange(a);
       if (b !== end) onEndSecChange(b);
+      if (a !== start) onPreviewSeek?.(a);
+      if (b !== end) onPreviewSeek?.(b);
     },
-    [dur, start, end, onStartSecChange, onEndSecChange],
+    [dur, start, end, onStartSecChange, onEndSecChange, onPreviewSeek],
   );
 
   const onPointerMove = useCallback(
