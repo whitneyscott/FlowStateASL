@@ -279,6 +279,8 @@ export async function uploadVideo(
   assignmentId?: string | null,
   options?: {
     deckTimeline?: DeckTimelineEntry[];
+    /** Text/HTML prompt snapshot for non-deck uploads; stored in post-upload submission comment JSON. */
+    promptSnapshotHtml?: string;
     /** Pre-recording stimulus (e.g. YouTube clip) shown in TeacherViewer. */
     mediaStimulus?: MediaStimulusPayload;
     idempotencyKey?: string;
@@ -302,6 +304,9 @@ export async function uploadVideo(
   form.append('video', blob, filename);
   if (options?.deckTimeline?.length) {
     form.append('deckTimeline', JSON.stringify(options.deckTimeline));
+  }
+  if (options?.promptSnapshotHtml?.trim()) {
+    form.append('promptSnapshotHtml', options.promptSnapshotHtml.trim());
   }
   if (options?.mediaStimulus) {
     form.append('mediaStimulus', JSON.stringify(options.mediaStimulus));
@@ -372,11 +377,13 @@ export interface PromptSubmission {
   videoUrl?: string;
   attempt?: number;
   rubricAssessment?: Record<string, unknown>;
-  /** Prompt from quiz storage (preferred when present). */
+  /** Prompt HTML resolved from submission comments/body. */
   promptHtml?: string;
   /** From submission comment JSON, prompt-config fallback, or unknown. */
   videoDurationSeconds?: number | null;
   durationSource?: 'submission' | 'prompts' | 'unknown';
+  /** Canvas assignment allowed_attempts when returned with my-submission (-1 = unlimited). */
+  allowedAttempts?: number;
 }
 
 export async function getSubmissionCount(assignmentId?: string | null): Promise<number> {
@@ -462,6 +469,10 @@ export async function getAssignment(assignmentId?: string | null): Promise<{
   pointsPossible?: number;
   rubric?: Array<unknown>;
   sproutAccountId?: string;
+  allowedAttempts?: number;
+  promptMode?: 'text' | 'decks' | 'youtube';
+  textPrompts?: string[];
+  youtubeLabel?: string;
 } | null> {
   return fetchJson(withAssignmentId(base + '/assignment', assignmentId));
 }
@@ -471,6 +482,10 @@ export async function getAssignmentForViewer(assignmentId?: string | null): Prom
   pointsPossible?: number;
   rubric?: Array<unknown>;
   sproutAccountId?: string;
+  allowedAttempts?: number;
+  promptMode?: 'text' | 'decks' | 'youtube';
+  textPrompts?: string[];
+  youtubeLabel?: string;
 } | null> {
   return fetchJson(withAssignmentId(base + '/assignment-for-viewer', assignmentId));
 }

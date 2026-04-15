@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
 import * as promptApi from '../api/prompt.api';
@@ -240,12 +241,23 @@ function recordSecondsForDeckCard(item: DeckPromptItem | undefined): number {
 }
 
 export default function TimerPage({ context }: TimerPageProps) {
+  const navigate = useNavigate();
   const { setLastFunction, setLastApiResult, setLastApiError } = useDebug();
   const [config, setConfig] = useState<promptApi.PromptConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [phase, setPhase] = useState<
-    'access' | 'warmup' | 'getReady' | 'youtubeStimulus' | 'preflight' | 'record' | 'upload' | 'done'
+    | 'access'
+    | 'warmup'
+    | 'getReady'
+    | 'youtubeStimulus'
+    | 'preflight'
+    | 'record'
+    | 'upload'
+    | 'done'
+    | 'submissionChoice'
   >('access');
+  const [gateAssignmentId, setGateAssignmentId] = useState<string | null>(null);
+  const [gateChooserMeta, setGateChooserMeta] = useState<{ allowed: number; attempt: number } | null>(null);
   const [accessCode, setAccessCode] = useState('');
   const [accessError, setAccessError] = useState<string | null>(null);
   const [blocked, setBlocked] = useState(false);
@@ -303,6 +315,36 @@ export default function TimerPage({ context }: TimerPageProps) {
   const effectiveAssignmentId =
     ltiOrUrlAssignmentId || (config?.resolvedAssignmentId?.trim() ?? '') || null;
   const teacherViewingTimer = context ? isPrompterTeacher(context.roles) : false;
+
+  type SubmissionEntryGateResult =
+    | { kind: 'continue' }
+    | { kind: 'feedback' }
+    | { kind: 'chooser'; allowed: number; attempt: number };
+
+  const resolveSubmissionEntryGate = useCallback(
+    async (cfg: promptApi.PromptConfig, aid: string | null): Promise<SubmissionEntryGateResult> => {
+      if (teacherViewingTimer || !aid?.trim()) return { kind: 'continue' };
+      try {
+        const sub = await promptApi.getMySubmission(aid);
+        let allowed = Number(cfg.allowedAttempts ?? sub?.allowedAttempts ?? 1);
+        if (!Number.isFinite(allowed)) allowed = 1;
+        if (allowed === 0) allowed = 1;
+        const attempt = Math.max(1, Number(sub?.attempt ?? 1));
+        if (!sub?.videoUrl) return { kind: 'continue' };
+        if (allowed === 1) return { kind: 'feedback' };
+        if (allowed === -1) return { kind: 'chooser', allowed, attempt };
+        if (allowed > 1) {
+          const k = Math.max(0, allowed - attempt);
+          if (k === 0) return { kind: 'feedback' };
+          return { kind: 'chooser', allowed, attempt };
+        }
+      } catch {
+        /* ignore */
+      }
+      return { kind: 'continue' };
+    },
+    [teacherViewingTimer],
+  );
 
   const doSubmit = useCallback(
     async (
@@ -464,6 +506,9 @@ export default function TimerPage({ context }: TimerPageProps) {
               effectiveAssignmentId,
               {
                 deckTimeline,
+                ...(!deckTimeline?.length && promptSnapshot.trim()
+                  ? { promptSnapshotHtml: promptSnapshot.trim() }
+                  : {}),
                 idempotencyKey: `upload-${submitAttemptKey}`,
                 captureProfile: captureProfile ?? undefined,
                 ...(durationSeconds != null ? { durationSeconds } : {}),
@@ -679,7 +724,18 @@ export default function TimerPage({ context }: TimerPageProps) {
         setDeckPrompts([]);
       }
 
-      if (!data?.accessCode?.trim()) {
+      if (data && !data.accessCode?.trim()) {
+        const gate = await resolveSubmissionEntryGate(data, targetAssignmentId);
+        if (gate.kind === 'feedback' && targetAssignmentId) {
+          navigate(`/viewer?assignmentId=${encodeURIComponent(targetAssignmentId)}`);
+          return;
+        }
+        if (gate.kind === 'chooser' && targetAssignmentId) {
+          setGateAssignmentId(targetAssignmentId);
+          setGateChooserMeta({ allowed: gate.allowed, attempt: gate.attempt });
+          setPhase('submissionChoice');
+          return;
+        }
         if (isDeckAssignment || isYoutubeAssignment) {
           setPhase('preflight');
         } else {
@@ -701,6 +757,8 @@ export default function TimerPage({ context }: TimerPageProps) {
   }, [
     context?.courseId,
     ltiOrUrlAssignmentId,
+    resolveSubmissionEntryGate,
+    navigate,
     setLastFunction,
     setLastApiResult,
     setLastApiError,
@@ -793,6 +851,19 @@ export default function TimerPage({ context }: TimerPageProps) {
         setAccessError('Invalid code.');
         return;
       }
+      if (config) {
+        const gate = await resolveSubmissionEntryGate(config, effectiveAssignmentId);
+        if (gate.kind === 'feedback' && effectiveAssignmentId) {
+          navigate(`/viewer?assignmentId=${encodeURIComponent(effectiveAssignmentId)}`);
+          return;
+        }
+        if (gate.kind === 'chooser' && effectiveAssignmentId) {
+          setGateAssignmentId(effectiveAssignmentId);
+          setGateChooserMeta({ allowed: gate.allowed, attempt: gate.attempt });
+          setPhase('submissionChoice');
+          return;
+        }
+      }
       const deckAfterAccess =
         config?.promptMode === 'decks' && (config.videoPromptConfig?.selectedDecks?.length ?? 0) > 0;
       const youtubeAfterAccess =
@@ -810,6 +881,22 @@ export default function TimerPage({ context }: TimerPageProps) {
       setAccessError(e instanceof Error ? e.message : 'Verify failed');
     }
   };
+
+  const openViewerFromSubmissionGate = useCallback(() => {
+    const aid = (gateAssignmentId || effectiveAssignmentId || '').trim();
+    if (aid) navigate(`/viewer?assignmentId=${encodeURIComponent(aid)}`);
+  }, [gateAssignmentId, effectiveAssignmentId, navigate]);
+
+  const continueNewAttemptFromSubmissionGate = useCallback(() => {
+    setGateChooserMeta(null);
+    setGateAssignmentId(null);
+    if (studentDeckFlow || studentYoutubeFlow) {
+      setPhase('preflight');
+    } else {
+      setPhase('warmup');
+      setSecondsLeft((config?.minutes ?? 5) * 60);
+    }
+  }, [studentDeckFlow, studentYoutubeFlow, config?.minutes]);
 
   const startPreflight = () => {
     if (!streamRef.current) return;
@@ -1036,6 +1123,42 @@ export default function TimerPage({ context }: TimerPageProps) {
 
   if (teacherViewingTimer) {
     return <div className="prompter-page" />;
+  }
+
+  if (phase === 'submissionChoice') {
+    const allowed = gateChooserMeta?.allowed ?? config?.allowedAttempts ?? 1;
+    const attempt = gateChooserMeta?.attempt ?? 1;
+    const attemptsLabel =
+      allowed === -1
+        ? 'Unlimited attempts'
+        : allowed > 1
+          ? `Attempts remaining: ${Math.max(0, allowed - attempt)}`
+          : null;
+    return (
+      <div className="prompter-page">
+        <div className="prompter-card">
+          <h1>Your submission</h1>
+          <p className="prompter-info-message">You already have a recording for this assignment.</p>
+          {attemptsLabel ? <p className="prompter-info-message">{attemptsLabel}</p> : null}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '16px' }}>
+            <button
+              type="button"
+              onClick={openViewerFromSubmissionGate}
+              className="prompter-btn-ready prompter-btn-full prompter-btn-lg"
+            >
+              View feedback
+            </button>
+            <button
+              type="button"
+              onClick={continueNewAttemptFromSubmissionGate}
+              className="prompter-btn-ready prompter-btn-full prompter-btn-lg"
+            >
+              Start another attempt
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   if (phase === 'access' && needsAccessCode) {

@@ -265,6 +265,74 @@ type RubricCriterionDraft = {
   comments?: string;
 };
 
+const CANVAS_RUBRIC_CRITERION_COMMENT_MAX_CHARS = 8192;
+const RUBRIC_PROMPT_PREFIX = 'Prompt: ';
+
+/** Context for stripping / composing Canvas rubric criterion `comments` with a leading Prompt: line. */
+type RubricPromptEditorContext = {
+  deckTimeline: DeckTimelineEntry[];
+  resolvedDeckIndices: Array<number | null>;
+  textPrompts?: string[];
+  youtubeLabel?: string;
+};
+
+function stripHtmlToPlain(html: string): string {
+  if (typeof document !== 'undefined') {
+    const d = document.createElement('div');
+    d.innerHTML = html;
+    return (d.textContent || d.innerText || '').replace(/\s+/g, ' ').trim();
+  }
+  return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function stripPromptPrefixFromCanvasComment(full: string | undefined, expectedPromptPlain: string): string {
+  const f = (full ?? '').trim();
+  if (!f) return '';
+  const exp = expectedPromptPlain.trim();
+  if (!exp) return f;
+  const head = `${RUBRIC_PROMPT_PREFIX}${exp}`;
+  if (f.startsWith(head + '\n\n')) return f.slice(head.length + 2).trimStart();
+  if (f.startsWith(head)) {
+    const rest = f.slice(head.length).trimStart();
+    if (rest.startsWith('\n\n')) return rest.slice(2).trimStart();
+    return rest;
+  }
+  return f;
+}
+
+function clampRubricComment(s: string): string {
+  if (s.length <= CANVAS_RUBRIC_CRITERION_COMMENT_MAX_CHARS) return s;
+  return s.slice(0, CANVAS_RUBRIC_CRITERION_COMMENT_MAX_CHARS);
+}
+
+function composeCanvasCriterionComment(expectedPlain: string, teacherSuffix: string): string {
+  const ev = expectedPlain.trim();
+  const ts = teacherSuffix.trim();
+  if (!ev) return clampRubricComment(ts);
+  const prefixBody = `${RUBRIC_PROMPT_PREFIX}${ev}`;
+  if (!ts) return clampRubricComment(prefixBody);
+  return clampRubricComment(`${prefixBody}\n\n${ts}`);
+}
+
+function getCriterionExpectedPromptPlain(
+  rowIdx: number,
+  c: RubricCriterion,
+  rubricList: RubricCriterion[],
+  ctx: RubricPromptEditorContext,
+): string {
+  const dIdx = ctx.resolvedDeckIndices[rowIdx];
+  if (dIdx != null && dIdx >= 0 && dIdx < ctx.deckTimeline.length) {
+    return stripHtmlToPlain(ctx.deckTimeline[dIdx].title || '');
+  }
+  const yl = (ctx.youtubeLabel ?? '').trim();
+  if (yl) return stripHtmlToPlain(yl);
+  const tp = ctx.textPrompts;
+  if (tp && tp.length === rubricList.length) {
+    return stripHtmlToPlain(String(tp[rowIdx] ?? ''));
+  }
+  return stripHtmlToPlain(String(c.description ?? ''));
+}
+
 /** Canvas sometimes uses `_<criterionId>` keys in rubric_assessment. */
 function pickRubricCriterionAssessment(
   raw: Record<string, unknown> | undefined,
@@ -296,6 +364,7 @@ function getRubricRowAssessment(
 function parseRubricAssessmentToDraft(
   raw: Record<string, unknown> | undefined,
   rubricList: RubricCriterion[],
+  promptCtx?: RubricPromptEditorContext,
 ): Record<string, RubricCriterionDraft> {
   const out: Record<string, RubricCriterionDraft> = {};
   rubricList.forEach((c, idx) => {
@@ -309,8 +378,13 @@ function parseRubricAssessmentToDraft(
         rating_id: rid != null ? String(rid) : undefined,
         points: pts != null ? Number(pts) : undefined,
       };
-      if (typeof com === 'string') entry.comments = com;
-      else if (com != null) entry.comments = String(com);
+      if (typeof com === 'string') {
+        const expected = promptCtx ? getCriterionExpectedPromptPlain(idx, c, rubricList, promptCtx) : '';
+        entry.comments =
+          promptCtx && expected.trim()
+            ? stripPromptPrefixFromCanvasComment(com, expected)
+            : com.trim();
+      } else if (com != null) entry.comments = String(com);
       out[critId] = entry;
     } else {
       out[critId] = {};
@@ -351,6 +425,7 @@ function sumRubricEarnedPoints(
 function buildRubricAssessmentPayload(
   rubricList: RubricCriterion[],
   draft: Record<string, RubricCriterionDraft>,
+  promptCtx?: RubricPromptEditorContext,
 ): Record<string, Record<string, unknown>> {
   const payload: Record<string, Record<string, unknown>> = {};
   rubricList.forEach((c, idx) => {
@@ -363,7 +438,16 @@ function buildRubricAssessmentPayload(
       row.points = Number(d.points);
     }
     if ('comments' in d) {
-      row.comments = typeof d.comments === 'string' ? d.comments.trim() : '';
+      const raw = typeof d.comments === 'string' ? d.comments : '';
+      if (promptCtx) {
+        const expected = getCriterionExpectedPromptPlain(idx, c, rubricList, promptCtx);
+        row.comments =
+          expected.trim().length > 0
+            ? composeCanvasCriterionComment(expected, raw)
+            : raw.trim();
+      } else {
+        row.comments = raw.trim();
+      }
     }
     if (Object.keys(row).length > 0) {
       const keyVariants = new Set<string>([
@@ -396,6 +480,30 @@ function rubricDraftHasAnyRating(rubricList: RubricCriterion[], draft: Record<st
   });
 }
 
+function criterionRubricRowIsIncorrect(
+  c: RubricCriterion,
+  critId: string,
+  draft: Record<string, RubricCriterionDraft>,
+  assess: Record<string, { rating_id?: string; points?: number }>,
+): boolean {
+  const d = draft[critId];
+  const a = getRubricRowAssessment(assess, c, critId);
+  const maxPts = c.points != null ? Number(c.points) : NaN;
+  if (!Number.isFinite(maxPts)) return false;
+  const earned =
+    d?.points != null && Number.isFinite(Number(d.points))
+      ? Number(d.points)
+      : a?.points != null && Number.isFinite(Number(a.points))
+        ? Number(a.points)
+        : undefined;
+  if (earned == null) return false;
+  const rated =
+    (d?.rating_id != null && String(d.rating_id).trim() !== '') ||
+    (a?.rating_id != null && String(a.rating_id).trim() !== '');
+  if (!rated) return false;
+  return earned < maxPts;
+}
+
 export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   const { setLastFunction, setLastApiResult, setLastApiError } = useDebug();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -411,6 +519,10 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     pointsPossible?: number;
     rubric?: Array<unknown>;
     sproutAccountId?: string;
+    allowedAttempts?: number;
+    promptMode?: 'text' | 'decks' | 'youtube';
+    textPrompts?: string[];
+    youtubeLabel?: string;
   } | null>(null);
   const [mySubmission, setMySubmission] = useState<promptApi.PromptSubmission | null>(null);
   const [loading, setLoading] = useState(true);
@@ -424,6 +536,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   const [commentText, setCommentText] = useState('');
   const [feedbackEntries, setFeedbackEntries] = useState<FeedbackEntry[]>([]);
   const [rubricDraft, setRubricDraft] = useState<Record<string, RubricCriterionDraft>>({});
+  const rubricPromptEditorCtxRef = useRef<RubricPromptEditorContext | undefined>(undefined);
   const [configuredAssignments, setConfiguredAssignments] = useState<promptApi.ConfiguredAssignment[]>([]);
   const [loadingAssignments, setLoadingAssignments] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -502,17 +615,6 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   }, [current?.submissionComments]);
 
   useEffect(() => { syncFeedbackFromCurrent(); }, [syncFeedbackFromCurrent]);
-
-  useEffect(() => {
-    const c = currentRef.current;
-    if (!c) {
-      setRubricDraft({});
-      return;
-    }
-    setRubricDraft(
-      parseRubricAssessmentToDraft(c.rubricAssessment as Record<string, unknown> | undefined, rubricRef.current)
-    );
-  }, [rubricDraftBootstrapKey, rubricAssessmentSyncSig, rubricIdsKey]);
 
   const loadTeacher = useCallback(async () => {
     if (!teacher || !assignmentId) return;
@@ -642,7 +744,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   const persistRubricAssessment = useCallback(
     async (draft: Record<string, RubricCriterionDraft>) => {
       if (!teacher || !current || !assignmentId) return;
-      const payload = buildRubricAssessmentPayload(rubric, draft);
+      const payload = buildRubricAssessmentPayload(rubric, draft, rubricPromptEditorCtxRef.current);
       if (Object.keys(payload).length === 0) return;
       setSaving(true);
       setRubricSaveStatus('');
@@ -679,7 +781,16 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
         setSaving(false);
       }
     },
-    [teacher, current, assignmentId, pointsPossible, index, rubric, setLastFunction, setLastApiResult]
+    [
+      teacher,
+      current,
+      assignmentId,
+      pointsPossible,
+      index,
+      rubric,
+      setLastFunction,
+      setLastApiResult,
+    ]
   );
 
   const handleGrade = async () => {
@@ -1040,6 +1151,32 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     [rubricPromptIndexMap, deckTimeline.length, rubric.length],
   );
 
+  const rubricPromptEditorCtx = useMemo((): RubricPromptEditorContext | undefined => {
+    if (!rubric.length) return undefined;
+    return {
+      deckTimeline,
+      resolvedDeckIndices: resolvedRubricDeckIndexMap,
+      textPrompts: assignment?.textPrompts,
+      youtubeLabel: assignment?.youtubeLabel,
+    };
+  }, [rubric.length, deckTimeline, resolvedRubricDeckIndexMap, assignment?.textPrompts, assignment?.youtubeLabel]);
+  rubricPromptEditorCtxRef.current = rubricPromptEditorCtx;
+
+  useEffect(() => {
+    const c = currentRef.current;
+    if (!c) {
+      setRubricDraft({});
+      return;
+    }
+    setRubricDraft(
+      parseRubricAssessmentToDraft(
+        c.rubricAssessment as Record<string, unknown> | undefined,
+        rubricRef.current,
+        rubricPromptEditorCtx,
+      ),
+    );
+  }, [rubricDraftBootstrapKey, rubricAssessmentSyncSig, rubricIdsKey, rubricPromptEditorCtx]);
+
   const feedbackByDeckRubricRow = useMemo(() => {
     const byDeckIndex = new Map<number, FeedbackEntry[]>();
     for (const entry of feedbackEntries) {
@@ -1343,11 +1480,40 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                               tabIndex={mappedDeckPrompt ? 0 : undefined}
                             >
                               <td>{mappedDeckPrompt ? formatTime(Math.floor(mappedDeckPrompt.startSec)) : '—'}</td>
-                              <td>
-                                <div
-                                  className="prompter-viewer-rubric-card-prompt-text"
-                                  dangerouslySetInnerHTML={{ __html: mappedDeckPrompt?.title || (c.description ?? 'Criterion') }}
-                                />
+                              <td onClick={(e) => e.stopPropagation()}>
+                                {mappedDeckPrompt &&
+                                sproutAccountIdForEmbed &&
+                                (mappedDeckPrompt.videoId ?? '').trim() &&
+                                criterionRubricRowIsIncorrect(c, critId, rubricDraft, rubricAssessment) ? (
+                                  <a
+                                    href="#sprout-source"
+                                    className="prompter-viewer-feedback-seek-btn"
+                                    style={{ display: 'inline-block' }}
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      const vid = (mappedDeckPrompt.videoId ?? '').trim();
+                                      if (vid) {
+                                        videoRef.current?.pause();
+                                        setSourceCardPreviewVideoId(vid);
+                                      }
+                                    }}
+                                  >
+                                    <span
+                                      className="prompter-viewer-rubric-card-prompt-text"
+                                      dangerouslySetInnerHTML={{
+                                        __html: mappedDeckPrompt?.title || (c.description ?? 'Criterion'),
+                                      }}
+                                    />
+                                  </a>
+                                ) : (
+                                  <div
+                                    className="prompter-viewer-rubric-card-prompt-text"
+                                    dangerouslySetInnerHTML={{
+                                      __html: mappedDeckPrompt?.title || (c.description ?? 'Criterion'),
+                                    }}
+                                  />
+                                )}
                               </td>
                               <td>
                                 <div className="prompter-viewer-rubric-ratings">

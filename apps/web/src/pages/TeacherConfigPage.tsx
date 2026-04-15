@@ -194,7 +194,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         setDueAt(data.dueAt ?? '');
         setUnlockAt(data.unlockAt ?? '');
         setLockAt(data.lockAt ?? '');
-        setAllowedAttempts(Math.max(1, Number(data.allowedAttempts ?? 1) || 1));
+        const aa = Number(data.allowedAttempts ?? 1);
+        setAllowedAttempts(Number.isFinite(aa) && aa === -1 ? -1 : Math.max(1, aa || 1));
         setInstructions(data.instructions ?? '');
         setPromptMode(data.promptMode ?? 'text');
         if (data.promptMode === 'youtube' && data.youtubePromptConfig?.videoId) {
@@ -1101,7 +1102,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                         <label className="prompter-settings-label">Allowed Attempts:</label>
                         <input
                           type="number"
-                          min={1}
+                          min={-1}
                           value={allowedAttempts}
                           onChange={(e) => {
                             const raw = e.target.value.trim();
@@ -1110,12 +1111,17 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                               return;
                             }
                             const n = Number(raw);
-                            setAllowedAttempts(Number.isFinite(n) ? Math.max(1, Math.round(n)) : 1);
+                            if (!Number.isFinite(n)) {
+                              setAllowedAttempts(1);
+                              return;
+                            }
+                            if (n === -1) setAllowedAttempts(-1);
+                            else setAllowedAttempts(Math.max(1, Math.round(n)));
                           }}
                           className="prompter-settings-input prompter-settings-input-narrow"
-                          title="Minimum 1 attempt"
+                          title="Use -1 for unlimited attempts (Canvas)"
                         />
-                        <span className="prompter-hint">(Minimum 1)</span>
+                        <span className="prompter-hint">(1 or more, or -1 for unlimited)</span>
                       </div>
                       <div className="prompter-settings-field">
                         <label className="prompter-settings-label">Instructions (optional):</label>

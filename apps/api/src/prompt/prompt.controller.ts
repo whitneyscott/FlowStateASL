@@ -85,8 +85,8 @@ export class PromptController {
     }
     if (dto.allowedAttempts !== undefined) {
       const v = Number(dto.allowedAttempts);
-      if (!Number.isFinite(v) || !Number.isInteger(v) || v < 1) {
-        throw new BadRequestException('allowedAttempts must be an integer greater than or equal to 1');
+      if (!Number.isFinite(v) || !Number.isInteger(v) || (v !== -1 && v < 1)) {
+        throw new BadRequestException('allowedAttempts must be -1 (unlimited) or an integer greater than or equal to 1');
       }
     }
     if (dto.videoPromptConfig?.totalCards !== undefined) {
@@ -254,6 +254,7 @@ export class PromptController {
       captureProfile?: string;
       durationSeconds?: string;
       mediaStimulus?: string;
+      promptSnapshotHtml?: string;
     };
     let captureProfile:
       | {
@@ -301,6 +302,10 @@ export class PromptController {
         durationSeconds = Math.round(n * 1000) / 1000;
       }
     }
+    const rawPromptSnap = body?.promptSnapshotHtml;
+    const promptSnapshotHtml =
+      typeof rawPromptSnap === 'string' && rawPromptSnap.trim() ? rawPromptSnap.trim() : undefined;
+
     let mediaStimulus: unknown | undefined;
     const rawMedia = body?.mediaStimulus;
     if (typeof rawMedia === 'string' && rawMedia.trim()) {
@@ -376,6 +381,7 @@ export class PromptController {
         filename,
         {
           ...(deckTimeline?.length ? { deckTimeline } : {}),
+          ...(promptSnapshotHtml ? { promptSnapshotHtml } : {}),
           ...(captureProfile ? { captureProfile } : {}),
           ...(durationSeconds != null ? { durationSeconds } : {}),
           ...(mediaStimulus !== undefined ? { mediaStimulus } : {}),

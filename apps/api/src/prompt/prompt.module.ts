@@ -7,7 +7,6 @@ import { DataModule } from '../data/data.module';
 import { CanvasModule } from '../canvas/canvas.module';
 import { CourseSettingsModule } from '../course-settings/course-settings.module';
 import { LtiModule } from '../lti/lti.module';
-import { QuizModule } from '../quiz/quiz.module';
 import { SproutVideoModule } from '../sproutvideo/sproutvideo.module';
 import { SproutPlaylistVideoEntity } from '../sproutvideo/entities/sprout-playlist-video.entity';
 @Module({
@@ -16,7 +15,6 @@ import { SproutPlaylistVideoEntity } from '../sproutvideo/entities/sprout-playli
     forwardRef(() => CanvasModule),
     forwardRef(() => CourseSettingsModule),
     forwardRef(() => LtiModule),
-    forwardRef(() => QuizModule),
     SproutVideoModule,
     TypeOrmModule.forFeature([SproutPlaylistVideoEntity]),
   ],

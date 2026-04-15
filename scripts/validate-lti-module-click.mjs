@@ -676,9 +676,12 @@ function buildPutConfigBody(config) {
     if (config?.[k] !== undefined) out[k] = config[k];
   }
   const attemptsRaw = Number(out.allowedAttempts);
-  out.allowedAttempts = Number.isFinite(attemptsRaw) && attemptsRaw >= 1
-    ? Math.floor(attemptsRaw)
-    : 1;
+  out.allowedAttempts =
+    Number.isFinite(attemptsRaw) && (attemptsRaw === -1 || attemptsRaw >= 1)
+      ? attemptsRaw === -1
+        ? -1
+        : Math.floor(attemptsRaw)
+      : 1;
   const pointsRaw = Number(out.pointsPossible);
   out.pointsPossible = Number.isFinite(pointsRaw) && pointsRaw >= 0
     ? Math.floor(pointsRaw)

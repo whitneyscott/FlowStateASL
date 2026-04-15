@@ -16,7 +16,6 @@ import { CourseSettingsService } from '../course-settings/course-settings.servic
 import { LtiAgsService } from '../lti/lti-ags.service';
 import { LtiDeepLinkFileStore } from '../lti/lti-deep-link-file.store';
 import { LtiDeepLinkResponseService } from '../lti/lti-deep-link-response.service';
-import { QuizService } from '../quiz/quiz.service';
 import { SproutVideoService } from '../sproutvideo/sproutvideo.service';
 import { SproutPlaylistVideoEntity } from '../sproutvideo/entities/sprout-playlist-video.entity';
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
@@ -36,8 +35,6 @@ import type { Response } from 'express';
 
 const PROMPT_MANAGER_SETTINGS_ASSIGNMENT_TITLE = 'Prompt Manager Settings';
 const PROMPT_MANAGER_SETTINGS_ANNOUNCEMENT_TITLE = 'ASL Express Prompt Manager Settings';
-const PROMPT_LEDGER_ASSIGNMENT_TITLE = 'ASL Express Prompt Ledger';
-
 /**
  * Deck card timing (mirrors TimerPage): minimum prompt floor + cognitive transition.
  */
@@ -56,52 +53,12 @@ interface PromptManagerSettingsBlob {
   /** Maps LTI resource_link_id -> Canvas assignment id for launches where assignment_id is absent. */
   resourceLinkAssignmentMap?: Record<string, string>;
   updatedAt?: string;
-  /** Canvas assignment id for assignment-based prompt ledger. */
-  promptLedgerAssignmentId?: string;
-}
-
-interface PromptLedgerPayload {
-  eventId: string;
-  assignmentId: string;
-  promptHtml: string;
-  studentCanvasUserId: string;
-  submittedAt: string;
-}
-
-interface PromptLedgerRecord extends PromptLedgerPayload {
-  parsedSubmittedAtMs: number;
 }
 
 interface DeckCardSource {
   id: string;
   title: string;
   durationSeconds: number | null;
-}
-
-function parsePromptLedgerPayload(rawBody: string | undefined): PromptLedgerRecord | null {
-  const raw = (rawBody ?? '').trim();
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as Partial<PromptLedgerPayload>;
-    const eventId = (parsed.eventId ?? '').toString().trim();
-    const assignmentId = (parsed.assignmentId ?? '').toString().trim();
-    const promptHtml = (parsed.promptHtml ?? '').toString();
-    const studentCanvasUserId = (parsed.studentCanvasUserId ?? '').toString().trim();
-    const submittedAt = (parsed.submittedAt ?? '').toString().trim();
-    if (!eventId || !assignmentId || !promptHtml || !studentCanvasUserId || !submittedAt) return null;
-    const submittedAtMs = Date.parse(submittedAt);
-    if (!Number.isFinite(submittedAtMs)) return null;
-    return {
-      eventId,
-      assignmentId,
-      promptHtml,
-      studentCanvasUserId,
-      submittedAt,
-      parsedSubmittedAtMs: submittedAtMs,
-    };
-  } catch {
-    return null;
-  }
 }
 
 /** Canvas shows "submitted" when workflow_state is submitted or graded. Match that. */
@@ -222,7 +179,6 @@ export class PromptService {
     private readonly ltiAgs: LtiAgsService,
     private readonly deepLinkFileStore: LtiDeepLinkFileStore,
     private readonly deepLinkResponse: LtiDeepLinkResponseService,
-    private readonly quiz: QuizService,
     private readonly sproutVideo: SproutVideoService,
     @InjectRepository(SproutPlaylistVideoEntity)
     private readonly sproutPlaylistVideoRepo: Repository<SproutPlaylistVideoEntity>,
@@ -505,66 +461,6 @@ export class PromptService {
       }
     }
     throw new Error('Assignment ID required. In course_navigation, pass assignmentId as query parameter.');
-  }
-
-  private async ensureLedgerAssignment(
-    courseId: string,
-    domainOverride: string | undefined,
-    token: string,
-  ): Promise<string> {
-    const settingsAssignmentId = await this.ensurePromptManagerSettingsAssignment(courseId, domainOverride, token);
-    const blob = await this.readPromptManagerSettingsBlob(courseId, domainOverride, token);
-    const fromBlob = (blob?.promptLedgerAssignmentId ?? '').trim();
-    if (fromBlob) {
-      appendLtiLog('ledger', 'ensureLedgerAssignment: using assignment id from Prompt Manager Settings blob', { assignmentId: fromBlob });
-      return fromBlob;
-    }
-
-    let ledgerAssignmentId = await this.canvas.findAssignmentByTitle(
-      courseId,
-      PROMPT_LEDGER_ASSIGNMENT_TITLE,
-      domainOverride,
-      token,
-    );
-    if (!ledgerAssignmentId) {
-      ledgerAssignmentId = await this.canvas.createAssignment(
-        courseId,
-        PROMPT_LEDGER_ASSIGNMENT_TITLE,
-        {
-          submissionTypes: ['online_text_entry'],
-          pointsPossible: 0,
-          published: true,
-          description: 'ASL Express append-only prompt ledger (auto-created).',
-          omitFromFinalGrade: true,
-          hideInGradebook: true,
-          gradingType: 'not_graded',
-          tokenOverride: token,
-        },
-        domainOverride,
-      );
-      appendLtiLog('ledger', 'ensureLedgerAssignment: created ledger assignment', { assignmentId: ledgerAssignmentId });
-    } else {
-      appendLtiLog('ledger', 'ensureLedgerAssignment: found existing ledger assignment by title', { assignmentId: ledgerAssignmentId });
-    }
-
-    const payload: PromptManagerSettingsBlob = {
-      ...blob,
-      v: blob?.v ?? 1,
-      configs: blob?.configs ?? {},
-      promptLedgerAssignmentId: ledgerAssignmentId,
-      updatedAt: new Date().toISOString(),
-    };
-    await this.canvas.updateAssignmentDescription(
-      courseId,
-      settingsAssignmentId,
-      JSON.stringify(payload),
-      domainOverride,
-      token,
-    );
-    appendLtiLog('ledger', 'ensureLedgerAssignment: persisted assignment id to Prompt Manager Settings blob', {
-      assignmentId: ledgerAssignmentId,
-    });
-    return ledgerAssignmentId;
   }
 
   private async ensurePromptManagerSettingsAssignment(
@@ -1272,12 +1168,6 @@ export class PromptService {
       domainOverride: domainOverride ?? '(none)',
     });
 
-    try {
-      await this.quiz.ensurePromptStorageQuiz(ctx);
-    } catch (quizErr) {
-      appendLtiLog('prompt', 'putConfig: ensurePromptStorageQuiz failed (non-fatal)', { error: String(quizErr) });
-    }
-
     appendLtiLog('prompt', 'putConfig: dto from dropdown', {
       assignmentGroupId: dto.assignmentGroupId,
       newGroupName: dto.newGroupName?.trim() || '(empty)',
@@ -1438,13 +1328,6 @@ export class PromptService {
           error: String(bankErr),
         });
       }
-    }
-
-    const assignmentTitle = (merged.assignmentName ?? '').trim() || `Assignment ${assignmentId}`;
-    try {
-      await this.quiz.ensureQuestionForAssignment(ctx, assignmentId, assignmentTitle);
-    } catch (qErr) {
-      appendLtiLog('prompt', 'putConfig: ensureQuestionForAssignment failed (non-fatal)', { error: String(qErr) });
     }
 
     const settingsAssignmentId = await this.ensurePromptManagerSettingsAssignment(
@@ -1834,10 +1717,19 @@ export class PromptService {
     const lockAt = toCanvasIso8601(rawLockAt);
     const allowedAttemptsRaw = merged.allowedAttempts ?? 1;
     const allowedAttempts = Number.isFinite(Number(allowedAttemptsRaw))
-      ? Math.max(1, Math.round(Number(allowedAttemptsRaw)))
+      ? Math.round(Number(allowedAttemptsRaw)) === -1
+        ? -1
+        : Math.max(1, Math.round(Number(allowedAttemptsRaw)))
       : 1;
     const hasAssignmentUpdates = Boolean(
-      agId || assignmentName || instructions !== '' || pointsPossible !== 100 || dueAt || unlockAt || lockAt || allowedAttempts !== 1,
+      agId ||
+        assignmentName ||
+        instructions !== '' ||
+        pointsPossible !== 100 ||
+        dueAt ||
+        unlockAt ||
+        lockAt ||
+        allowedAttempts !== 1,
     );
 
     if (rawDueAt || dueAt) {
@@ -1855,50 +1747,22 @@ export class PromptService {
     if (hasAssignmentUpdates || rubricId) {
       try {
         if (hasAssignmentUpdates) {
-          try {
-            await this.canvas.updateAssignment(
-              ctx.courseId,
-              assignmentId,
-              {
-                ...(agId && { assignmentGroupId: agId }),
-                ...(assignmentName && { name: assignmentName }),
-                description: instructions,
-                pointsPossible,
-                ...(dueAt && { dueAt }),
-                ...(unlockAt && { unlockAt }),
-                ...(lockAt && { lockAt }),
-                allowedAttempts,
-              },
-              domainOverride,
-              token,
-            );
-          } catch (attemptErr) {
-            const msg = String(attemptErr);
-            if (msg.toLowerCase().includes('allowed_attempts') && msg.toLowerCase().includes('greater than 0')) {
-              appendLtiLog('prompt', 'putConfig: allowed_attempts rejected, retrying with fallback=1', {
-                assignmentId,
-                attemptedAllowedAttempts: allowedAttempts,
-              });
-              await this.canvas.updateAssignment(
-                ctx.courseId,
-                assignmentId,
-                {
-                  ...(agId && { assignmentGroupId: agId }),
-                  ...(assignmentName && { name: assignmentName }),
-                  description: instructions,
-                  pointsPossible,
-                  ...(dueAt && { dueAt }),
-                  ...(unlockAt && { unlockAt }),
-                  ...(lockAt && { lockAt }),
-                  allowedAttempts: 1,
-                },
-                domainOverride,
-                token,
-              );
-            } else {
-              throw attemptErr;
-            }
-          }
+          await this.canvas.updateAssignment(
+            ctx.courseId,
+            assignmentId,
+            {
+              ...(agId && { assignmentGroupId: agId }),
+              ...(assignmentName && { name: assignmentName }),
+              description: instructions,
+              pointsPossible,
+              ...(dueAt && { dueAt }),
+              ...(unlockAt && { unlockAt }),
+              ...(lockAt && { lockAt }),
+              allowedAttempts,
+            },
+            domainOverride,
+            token,
+          );
         }
         if (rubricId) {
           await this.canvas.associateRubricWithAssignment(
@@ -2383,7 +2247,6 @@ export class PromptService {
       sanitizedDeckTimeline?.length && sanitizedDeckTimeline.length > 0
         ? this.buildPromptHtmlFromDeckTimeline(sanitizedDeckTimeline).trim()
         : '';
-    const promptForLedgerQuiz = deckDerived.length > 0 ? deckDerived : snap;
     const bodyPayload: Record<string, unknown> = {
       submittedAt: new Date().toISOString(),
     };
@@ -2415,62 +2278,59 @@ export class PromptService {
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
     const userId = await this.resolveCanvasUserIdForRestApi(ctx, token, domainOverride);
 
-    // Phase 1: Assignment-based prompt ledger write (append-only row per prompt event).
-    // TODO SECURITY PHASE 2: Add signed server token validation before writing ledger row.
-    // Issue HMAC/JWT during assignment load with claims: courseId, assignmentId,
-    // studentCanvasUserId, resourceLinkId, exp, nonce.
-    // Verify signature, TTL, and nonce uniqueness before accepting ledger write.
-    // Reject invalid/expired/replayed tokens. See Assignment-Based Prompt Ledger Plan doc.
+    const commentPayload: Record<string, unknown> = {
+      ...(JSON.parse(bodyString) as Record<string, unknown>),
+      fsaslKind: 'fsasl_prompt_submit',
+    };
+    const commentText = JSON.stringify(commentPayload);
     try {
-      if (promptForLedgerQuiz.length > 0) {
-        const ledgerAssignmentId = await this.ensureLedgerAssignment(ctx.courseId, domainOverride, token);
-        const payload: PromptLedgerPayload = {
-          eventId: randomUUID(),
-          assignmentId,
-          promptHtml: promptForLedgerQuiz,
-          studentCanvasUserId: userId,
-          submittedAt: new Date().toISOString(),
-        };
-        const payloadJson = JSON.stringify(payload);
-        await this.canvas.createSubmissionWithBody(
-          ctx.courseId,
-          ledgerAssignmentId,
-          userId,
-          payloadJson,
-          domainOverride,
-          token,
-          false,
-        );
-        appendLtiLog('ledger', 'submit: ledger row written', {
-          assignmentId,
-          ledgerAssignmentId,
-          studentCanvasUserId: userId,
-          eventId: payload.eventId,
-          writeMode: 'self-submit',
-        });
-      }
-    } catch (ledgerErr) {
-      appendLtiLog('ledger', 'submit: ledger write failed (non-fatal)', {
+      await this.canvas.putSubmissionTextComment(
+        ctx.courseId,
         assignmentId,
-        studentCanvasUserId: userId,
-        error: String(ledgerErr),
+        userId,
+        commentText,
+        domainOverride,
+        token,
+      );
+      appendLtiLog('prompt-submit', 'submit: prompt snapshot mirrored to submission comment', {
+        assignmentId,
+        studentUserId: userId,
+      });
+    } catch (cErr) {
+      appendLtiLog('prompt-submit', 'submit: submission comment mirror failed (non-fatal)', {
+        assignmentId,
+        studentUserId: userId,
+        error: String(cErr),
       });
     }
 
-    try {
-      if (promptForLedgerQuiz.length > 0) {
-        const assign = await this.canvas.getAssignment(ctx.courseId, assignmentId, domainOverride, token);
-        const assignmentTitle = (assign?.name ?? '').trim() || assignmentId;
-        await this.quiz.storePrompt(ctx, assignmentId, assignmentTitle, promptForLedgerQuiz, userId);
-      }
-    } catch (quizErr) {
-      appendLtiLog('prompt-submit', 'submit: storePrompt in quiz failed (non-fatal)', { error: String(quizErr) });
-    }
-
-    appendLtiLog('prompt-submit', 'submit DONE (Canvas body + quiz)', {
+    appendLtiLog('prompt-submit', 'submit DONE', {
       assignmentId,
       deckTimelineStored: sanitizedDeckTimeline?.length ?? 0,
     });
+  }
+
+  /** Recover prompt HTML from submission body JSON (same shape as submit writeSubmissionBody). */
+  private extractPromptHtmlFromSubmissionBody(body: string | undefined): string | undefined {
+    const raw = (body ?? '').trim();
+    if (!raw) return undefined;
+    try {
+      const parsed = JSON.parse(raw) as { deckTimeline?: unknown; promptSnapshotHtml?: unknown };
+      const deck = this.sanitizeDeckTimelineInput(
+        Array.isArray(parsed.deckTimeline)
+          ? (parsed.deckTimeline as Array<{ title?: unknown; startSec?: unknown; videoId?: unknown }>)
+          : undefined,
+      );
+      if (deck?.length) {
+        const html = this.buildPromptHtmlFromDeckTimeline(deck).trim();
+        if (html) return html;
+      }
+      const snap = String(parsed.promptSnapshotHtml ?? '').trim();
+      if (snap) return snap;
+    } catch {
+      /* ignore */
+    }
+    return undefined;
   }
 
   /**
@@ -2552,6 +2412,8 @@ export class PromptService {
     filename: string,
     options?: {
       deckTimeline?: Array<{ title: string; startSec: number; videoId?: string }>;
+      /** Text / HTML snapshot for non-deck prompts; mirrored into the post-upload JSON comment. */
+      promptSnapshotHtml?: string;
       /** Pre-recording stimulus (e.g. YouTube clip) for grading replay; stored in upload JSON comment. */
       mediaStimulus?: unknown;
       /** Client-measured recording length (seconds). */
@@ -2719,10 +2581,12 @@ export class PromptService {
     );
     sanitizedCommentDeck = await this.enrichDeckTimelineVideoIds(ctx, sanitizedCommentDeck);
     const sanitizedMediaStimulus = this.sanitizeMediaStimulusInput(options?.mediaStimulus);
+    const promptSnapUpload = (options?.promptSnapshotHtml ?? '').trim();
 
-    if (sanitizedCommentDeck?.length || durationRounded != null || sanitizedMediaStimulus) {
+    if (sanitizedCommentDeck?.length || durationRounded != null || sanitizedMediaStimulus || promptSnapUpload) {
       const commentPayload: Record<string, unknown> = {
         submittedAt: new Date().toISOString(),
+        fsaslKind: 'fsasl_prompt_upload',
       };
       if (sanitizedCommentDeck?.length) {
         commentPayload.deckTimeline = sanitizedCommentDeck;
@@ -2732,6 +2596,9 @@ export class PromptService {
       }
       if (sanitizedMediaStimulus) {
         commentPayload.mediaStimulus = sanitizedMediaStimulus;
+      }
+      if (promptSnapUpload) {
+        commentPayload.promptSnapshotHtml = promptSnapUpload;
       }
       const commentText = JSON.stringify(commentPayload);
       appendLtiLog('duration', 'uploadVideo: Canvas comment payload (full JSON as sent)', {
@@ -3026,72 +2893,6 @@ export class PromptService {
         ...(rubricAssessment ? { rubricAssessment } : {}),
       };
     });
-    const ledgerPromptByUser = new Map<string, string>();
-    try {
-      const ledgerAssignmentId = await this.ensureLedgerAssignment(ctx.courseId, domainOverride, token);
-      const ledgerSubmissions = await this.canvas.listSubmissions(
-        ctx.courseId,
-        ledgerAssignmentId,
-        domainOverride,
-        token,
-      );
-      appendLtiLog('ledger', 'getSubmissions: fetched ledger submissions', {
-        ledgerAssignmentId,
-        count: ledgerSubmissions.length,
-      });
-
-      const eventsByUser = new Map<string, PromptLedgerRecord[]>();
-      for (const s of ledgerSubmissions) {
-        const top = parsePromptLedgerPayload(s.body);
-        if (top) {
-          const arr = eventsByUser.get(top.studentCanvasUserId) ?? [];
-          arr.push(top);
-          eventsByUser.set(top.studentCanvasUserId, arr);
-        }
-        const history = Array.isArray((s as { submission_history?: unknown[] }).submission_history)
-          ? ((s as { submission_history?: Array<{ body?: string }> }).submission_history ?? [])
-          : [];
-        for (const h of history) {
-          const fromHistory = parsePromptLedgerPayload((h as { body?: string }).body);
-          if (!fromHistory) continue;
-          const arr = eventsByUser.get(fromHistory.studentCanvasUserId) ?? [];
-          arr.push(fromHistory);
-          eventsByUser.set(fromHistory.studentCanvasUserId, arr);
-        }
-      }
-
-      for (const row of baseRows) {
-        const allForUser = (eventsByUser.get(row.userId) ?? []).filter((ev) => ev.assignmentId === assignmentId);
-        if (allForUser.length === 0) {
-          appendLtiLog('ledger', 'getSubmissions ledger correlation: no-ledger-match', {
-            userId: row.userId,
-            assignmentId,
-          });
-          continue;
-        }
-        allForUser.sort((a, b) => b.parsedSubmittedAtMs - a.parsedSubmittedAtMs);
-        const videoSubmittedAtMs = videoSubmittedAtByUser.get(row.userId);
-        const nearestAtOrBefore =
-          videoSubmittedAtMs == null
-            ? null
-            : allForUser.find((ev) => ev.parsedSubmittedAtMs <= videoSubmittedAtMs) ?? null;
-        const selected = nearestAtOrBefore ?? allForUser[0];
-        const decision = nearestAtOrBefore ? 'matched' : 'fallback-latest';
-        ledgerPromptByUser.set(row.userId, selected.promptHtml);
-        appendLtiLog('ledger', `getSubmissions ledger correlation: ${decision}`, {
-          userId: row.userId,
-          assignmentId,
-          eventId: selected.eventId,
-          ledgerSubmittedAt: selected.submittedAt,
-          candidateCount: allForUser.length,
-        });
-      }
-    } catch (e) {
-      appendLtiLog('ledger', 'getSubmissions: ledger retrieval failed (non-fatal)', {
-        assignmentId,
-        error: String(e),
-      });
-    }
     if (process.env.NODE_ENV !== 'production') {
       appendLtiLog('viewer', 'getSubmissions: video state', {
         rows: baseRows.map((r) => ({
@@ -3107,89 +2908,81 @@ export class PromptService {
     } catch {
       promptsFallbackDuration = null;
     }
-    const withQuizPrompts = await Promise.all(
-      baseRows.map(async (row) => {
-        const latestDeck = this.parseLatestDeckStructuredComment(row.submissionComments);
+    const rowsWithPrompts = baseRows.map((row) => {
+      const latestDeck = this.parseLatestDeckStructuredComment(row.submissionComments);
 
-        let videoDurationSeconds: number | null = null;
-        let durationSource: 'submission' | 'prompts' | 'unknown' = 'unknown';
-        if (latestDeck?.durationSeconds != null) {
-          videoDurationSeconds = latestDeck.durationSeconds;
+      let videoDurationSeconds: number | null = null;
+      let durationSource: 'submission' | 'prompts' | 'unknown' = 'unknown';
+      if (latestDeck?.durationSeconds != null) {
+        videoDurationSeconds = latestDeck.durationSeconds;
+        durationSource = 'submission';
+      } else if (latestDeck?.deckTimeline.length) {
+        const est = this.estimateDurationFromDeckTimelineEntries(latestDeck.deckTimeline);
+        if (est != null) {
+          videoDurationSeconds = est;
           durationSource = 'submission';
-        } else if (latestDeck?.deckTimeline.length) {
-          const est = this.estimateDurationFromDeckTimelineEntries(latestDeck.deckTimeline);
-          if (est != null) {
-            videoDurationSeconds = est;
-            durationSource = 'submission';
-          }
-        } else {
-          const fromSubmission = this.extractDurationSecondsFromSubmissionComments(row.submissionComments);
-          if (fromSubmission != null) {
-            videoDurationSeconds = fromSubmission;
-            durationSource = 'submission';
-          } else if (promptsFallbackDuration != null) {
-            videoDurationSeconds = promptsFallbackDuration;
-            durationSource = 'prompts';
-          }
         }
+      } else {
+        const fromSubmission = this.extractDurationSecondsFromSubmissionComments(row.submissionComments);
+        if (fromSubmission != null) {
+          videoDurationSeconds = fromSubmission;
+          durationSource = 'submission';
+        } else if (promptsFallbackDuration != null) {
+          videoDurationSeconds = promptsFallbackDuration;
+          durationSource = 'prompts';
+        }
+      }
 
-        const deckPromptHtml =
-          latestDeck != null && latestDeck.deckTimeline.length > 0
-            ? this.buildPromptHtmlFromDeckTimeline(latestDeck.deckTimeline).trim()
-            : '';
-        if (deckPromptHtml.length > 0) {
-          appendLtiLog('viewer', 'getSubmissions: prompt source selected', {
-            userId: row.userId,
-            assignmentId,
-            source: 'submission_comment_deck_timeline',
-          });
-          return { ...row, promptHtml: deckPromptHtml, videoDurationSeconds, durationSource };
-        }
+      const deckPromptHtml =
+        latestDeck != null && latestDeck.deckTimeline.length > 0
+          ? this.buildPromptHtmlFromDeckTimeline(latestDeck.deckTimeline).trim()
+          : '';
+      if (deckPromptHtml.length > 0) {
+        appendLtiLog('viewer', 'getSubmissions: prompt source selected', {
+          userId: row.userId,
+          assignmentId,
+          source: 'submission_comment_deck_timeline',
+        });
+        return { ...row, promptHtml: deckPromptHtml, videoDurationSeconds, durationSource };
+      }
 
-        const commentPrompt = this.extractPromptSnapshotFromSubmissionComments(row.submissionComments);
-        if (commentPrompt) {
-          appendLtiLog('viewer', 'getSubmissions: prompt source selected', {
-            userId: row.userId,
-            assignmentId,
-            source: 'submission_comment',
-          });
-          return { ...row, promptHtml: commentPrompt, videoDurationSeconds, durationSource };
-        }
-        const ledgerPrompt = ledgerPromptByUser.get(row.userId);
-        if (ledgerPrompt) {
-          appendLtiLog('viewer', 'getSubmissions: prompt source selected', {
-            userId: row.userId,
-            assignmentId,
-            source: 'ledger',
-          });
-          return { ...row, promptHtml: ledgerPrompt, videoDurationSeconds, durationSource };
-        }
-        try {
-          const promptHtml = await this.quiz.getPromptForAssignment(ctx, row.userId, assignmentId);
-          appendLtiLog('viewer', 'getSubmissions: prompt source selected', {
-            userId: row.userId,
-            assignmentId,
-            source: promptHtml ? 'quiz-legacy' : 'none',
-          });
-          return { ...row, promptHtml: promptHtml ?? undefined, videoDurationSeconds, durationSource };
-        } catch {
-          appendLtiLog('viewer', 'getSubmissions: prompt source selected', {
-            userId: row.userId,
-            assignmentId,
-            source: 'none',
-          });
-          return { ...row, videoDurationSeconds, durationSource };
-        }
-      }),
-    );
-    for (const row of withQuizPrompts) {
+      const commentPrompt = this.extractPromptSnapshotFromSubmissionComments(row.submissionComments);
+      if (commentPrompt) {
+        appendLtiLog('viewer', 'getSubmissions: prompt source selected', {
+          userId: row.userId,
+          assignmentId,
+          source: 'submission_comment',
+        });
+        return { ...row, promptHtml: commentPrompt, videoDurationSeconds, durationSource };
+      }
+
+      const bodyPrompt = this.extractPromptHtmlFromSubmissionBody(
+        typeof row.body === 'string' ? row.body : undefined,
+      );
+      if (bodyPrompt) {
+        appendLtiLog('viewer', 'getSubmissions: prompt source selected', {
+          userId: row.userId,
+          assignmentId,
+          source: 'submission_body',
+        });
+        return { ...row, promptHtml: bodyPrompt, videoDurationSeconds, durationSource };
+      }
+
+      appendLtiLog('viewer', 'getSubmissions: prompt source selected', {
+        userId: row.userId,
+        assignmentId,
+        source: 'none',
+      });
+      return { ...row, videoDurationSeconds, durationSource };
+    });
+    for (const row of rowsWithPrompts) {
       appendLtiLog('duration', 'getSubmissions: submission row', {
         userId: row.userId,
         videoDurationSeconds: row.videoDurationSeconds,
         durationSource: row.durationSource,
       });
     }
-    return withQuizPrompts;
+    return rowsWithPrompts;
   }
 
   /**
@@ -3346,6 +3139,8 @@ export class PromptService {
     promptHtml?: string;
     videoDurationSeconds: number | null;
     durationSource: 'submission' | 'prompts' | 'unknown';
+    /** From Canvas assignment `allowed_attempts` (-1 = unlimited). */
+    allowedAttempts?: number;
   } | null> {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
     if (!token) return null;
@@ -3385,11 +3180,18 @@ export class PromptService {
         ? deckPromptHtml
         : this.extractPromptSnapshotFromSubmissionComments(mappedComments);
     if (!promptHtml) {
-      try {
-        promptHtml = (await this.quiz.getPromptForAssignment(ctx, userId, assignmentId)) ?? undefined;
-      } catch {
-        // ignore
+      promptHtml = this.extractPromptHtmlFromSubmissionBody(
+        typeof sub.body === 'string' ? sub.body : undefined,
+      );
+    }
+    let allowedAttempts: number | undefined;
+    try {
+      const am = await this.canvas.getAssignment(ctx.courseId, assignmentId, domainOverride, token);
+      if (am?.allowed_attempts != null && Number.isFinite(Number(am.allowed_attempts))) {
+        allowedAttempts = Number(am.allowed_attempts);
       }
+    } catch {
+      allowedAttempts = undefined;
     }
     let promptsFallbackDuration: number | null = null;
     try {
@@ -3433,6 +3235,7 @@ export class PromptService {
       promptHtml,
       videoDurationSeconds,
       durationSource,
+      ...(allowedAttempts !== undefined ? { allowedAttempts } : {}),
     };
   }
 
@@ -3443,6 +3246,10 @@ export class PromptService {
     rubric?: Array<unknown>;
     /** Sprout account id for embed URLs (same source as flashcard / course settings). */
     sproutAccountId?: string;
+    allowedAttempts?: number;
+    promptMode?: 'text' | 'decks' | 'youtube';
+    textPrompts?: string[];
+    youtubeLabel?: string;
   } | null> {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
     if (!token) return null;
@@ -3451,8 +3258,8 @@ export class PromptService {
     const raw = await this.canvas.getAssignment(ctx.courseId, assignmentId, domainOverride, token);
     if (!raw) return null;
     let rubric = Array.isArray(raw.rubric) && raw.rubric.length > 0 ? raw.rubric : null;
+    const blob = await this.readPromptManagerSettingsBlob(ctx.courseId, domainOverride, token);
     if (!rubric) {
-      const blob = await this.readPromptManagerSettingsBlob(ctx.courseId, domainOverride, token);
       const rubricId = blob?.configs?.[assignmentId]?.rubricId?.trim();
       if (rubricId) {
         const fetched = await this.canvas.getRubric(ctx.courseId, rubricId, domainOverride, token);
@@ -3461,6 +3268,17 @@ export class PromptService {
     }
     const name = typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : undefined;
     const sproutAccountId = getSproutAccountId(this.config);
+    const cfg = blob?.configs?.[assignmentId];
+    const allowedAttempts =
+      raw.allowed_attempts != null && Number.isFinite(Number(raw.allowed_attempts))
+        ? Number(raw.allowed_attempts)
+        : undefined;
+    const promptMode = cfg?.promptMode;
+    const textPrompts = Array.isArray(cfg?.prompts) ? cfg.prompts.map((p) => String(p ?? '')) : undefined;
+    const youtubeLabel =
+      cfg?.youtubePromptConfig?.label != null && String(cfg.youtubePromptConfig.label).trim()
+        ? String(cfg.youtubePromptConfig.label).trim()
+        : undefined;
     appendLtiLog('viewer', 'getAssignmentForGrading: sprout embed config snapshot', {
       assignmentId,
       hasSproutAccountId: !!sproutAccountId,
@@ -3468,7 +3286,16 @@ export class PromptService {
       sproutAccountIdSuffix: sproutAccountId ? sproutAccountId.slice(-4) : '(none)',
       hasRubric: !!(rubric && Array.isArray(rubric) && rubric.length > 0),
     });
-    return { name, pointsPossible: raw.points_possible, rubric: rubric ?? undefined, sproutAccountId };
+    return {
+      name,
+      pointsPossible: raw.points_possible,
+      rubric: rubric ?? undefined,
+      sproutAccountId,
+      ...(allowedAttempts !== undefined ? { allowedAttempts } : {}),
+      ...(promptMode ? { promptMode } : {}),
+      ...(textPrompts?.length ? { textPrompts } : {}),
+      ...(youtubeLabel ? { youtubeLabel } : {}),
+    };
   }
 
   /** Teacher only. Returns configured assignments with names and counts from Canvas.

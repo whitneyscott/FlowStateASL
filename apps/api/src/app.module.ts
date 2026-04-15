@@ -14,7 +14,6 @@ import { DebugModule } from './debug/debug.module';
 import { SubmissionModule } from './submission/submission.module';
 import { CourseSettingsModule } from './course-settings/course-settings.module';
 import { PromptModule } from './prompt/prompt.module';
-import { QuizModule } from './quiz/quiz.module';
 import { HealthModule } from './health/health.module';
 import { AuthStateModule } from './auth-state/auth-state.module';
 import { AuthSessionEntity } from './auth-state/entities/auth-session.entity';
@@ -96,7 +95,6 @@ const webRoot = join(__dirname, '..', '..', 'web');
     SubmissionModule,
     CourseSettingsModule,
     PromptModule,
-    QuizModule,
   ],
   providers: [BearerAuthMiddleware, RoutingLogMiddleware],
 })
