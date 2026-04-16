@@ -133,7 +133,7 @@ export function AppModeModal({
           />
           <span>
             <div className="app-mode-option-label">Developer</div>
-            <div className="app-mode-option-hint">Bridge Log, clear Canvas token, ?debug=1 parity.</div>
+            <div className="app-mode-option-hint">Bridge Log and clear Canvas token on teacher routes.</div>
           </span>
         </label>
 

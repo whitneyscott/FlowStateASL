@@ -22,19 +22,17 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
   const { lastFunctionCalled, lastApiResult } = useDebug();
   const { isDeveloperMode } = useAppMode();
   const [searchParams] = useSearchParams();
-  const isPrompterPath =
-    window.location.pathname.includes('/prompter') ||
-    window.location.pathname.includes('/config') ||
-    window.location.pathname.includes('/viewer');
   /** Allow forcing Bridge Log with ?debug=1 (teachers only; students never see Bridge). */
   const debugParamEnabled = searchParams.get('debug') === '1';
   const isTeacherRole =
     /instructor|administrator|faculty|teacher|staff|contentdeveloper|teachingassistant|ta/i.test(
       context?.roles || '',
     );
-  /** Students must not see Bridge; teachers see it on prompter routes or when dev / ?debug=1. */
-  const developerUi =
-    isTeacherRole && (isDeveloperMode || debugParamEnabled || isPrompterPath);
+  /**
+   * Demo / Production: no Bridge Log (matches App Mode modal). Developer mode or ?debug=1 only.
+   * Do not auto-enable by route — that bypassed the mode switch for teachers on prompter/config/viewer.
+   */
+  const developerUi = isTeacherRole && (isDeveloperMode || debugParamEnabled);
   const canClearLog = isDeveloperMode || debugParamEnabled;
   const [lastServerError, setLastServerError] = useState<{ endpoint: string; message: string } | null>(null);
   const [ltiLog, setLtiLog] = useState<string[]>([]);
