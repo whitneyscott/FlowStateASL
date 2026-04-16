@@ -46,22 +46,15 @@ export function clearBridgeClientFallbackLines(): void {
   }
 }
 
-/** Same policy as BridgeLog UI: only Developer mode or ?debug=1 (Prompt Manager + Flashcards share this). */
+/** Same policy as BridgeLog UI: only Developer app mode (localStorage; Prompt Manager + Flashcards). */
 function isBridgeClientDiagnosticsEnabled(): boolean {
   if (typeof window === 'undefined') return false;
   try {
-    const u = new URL(window.location.href);
-    if (u.searchParams.get('debug') === '1') return true;
-  } catch {
-    /* ignore */
-  }
-  try {
     const v = localStorage.getItem(APP_MODE_STORAGE_KEY);
-    if (v === 'developer') return true;
+    return v === 'developer';
   } catch {
-    /* ignore */
+    return false;
   }
-  return false;
 }
 
 export function appendBridgeLog(tag: string, message: string, extra?: Record<string, unknown>): void {

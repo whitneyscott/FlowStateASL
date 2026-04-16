@@ -2,7 +2,6 @@ import { useState, useEffect, useRef } from 'react';
 import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
 import { useAppMode } from '../contexts/AppModeContext';
-import { useSearchParams } from 'react-router-dom';
 import { ltiTokenHeaders } from '../api/lti-token';
 import { clearBridgeClientFallbackLines, readBridgeClientFallbackLines } from '../utils/bridge-log';
 
@@ -21,26 +20,22 @@ type DebugVersion = {
 export function BridgeLog({ context, loading, error }: BridgeLogProps) {
   const { lastFunctionCalled, lastApiResult } = useDebug();
   const { isDeveloperMode } = useAppMode();
-  const [searchParams] = useSearchParams();
-  /** Allow forcing Bridge Log with ?debug=1 (teachers only; students never see Bridge). */
-  const debugParamEnabled = searchParams.get('debug') === '1';
   const isTeacherRole =
     /instructor|administrator|faculty|teacher|staff|contentdeveloper|teachingassistant|ta/i.test(
       context?.roles || '',
     );
   /**
-   * Demo / Production: no Bridge Log (matches App Mode modal). Developer mode or ?debug=1 only.
-   * Applies to both LTI surfaces in this SPA (Prompt Manager and Flashcards); do not auto-enable by route.
+   * Bridge log only in password-gated Developer app mode. Demo and Production never show it — not even with
+   * ?debug=1 (that query previously bypassed the mode switch and confused “Production mode”).
    */
-  const developerUi = isTeacherRole && (isDeveloperMode || debugParamEnabled);
-  const canClearLog = isDeveloperMode || debugParamEnabled;
+  const developerUi = isTeacherRole && isDeveloperMode;
+  const canClearLog = isDeveloperMode;
   const [lastServerError, setLastServerError] = useState<{ endpoint: string; message: string } | null>(null);
   const [ltiLog, setLtiLog] = useState<string[]>([]);
   const [debugVersion, setDebugVersion] = useState<DebugVersion | null>(null);
   const [lines, setLines] = useState<string[]>(['Initializing...']);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // When ?debug=1, force expanded and scroll into view (like my-canvas-app developer mode)
   const [expanded, setExpanded] = useState(true);
   useEffect(() => {
     if (developerUi) {

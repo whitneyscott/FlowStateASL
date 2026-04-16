@@ -105,9 +105,9 @@ export function AppModeModal({
       <div className="app-mode-modal">
         <h2 id={titleId}>Application mode</h2>
         <p className="app-mode-modal-desc">
-          Applies to <strong>Prompt Manager</strong> and <strong>Flashcards</strong> in this app. Demo hides developer
-          tools. Developer shows the Bridge debug log and token reset. Production matches Demo here (no debug UI) — use
-          it to mirror Canvas Bulk Editor workflows.
+          Applies to <strong>Prompt Manager</strong> and <strong>Flashcards</strong> in this app. Demo and Production
+          hide the Bridge debug log and related client diagnostics. Only <strong>Developer</strong> shows them (after
+          password). Production matches Demo for this UI — use it to mirror Canvas Bulk Editor workflows.
         </p>
 
         <label className="app-mode-option">
