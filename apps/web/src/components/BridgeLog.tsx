@@ -30,7 +30,7 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
     );
   /**
    * Demo / Production: no Bridge Log (matches App Mode modal). Developer mode or ?debug=1 only.
-   * Do not auto-enable by route — that bypassed the mode switch for teachers on prompter/config/viewer.
+   * Applies to both LTI surfaces in this SPA (Prompt Manager and Flashcards); do not auto-enable by route.
    */
   const developerUi = isTeacherRole && (isDeveloperMode || debugParamEnabled);
   const canClearLog = isDeveloperMode || debugParamEnabled;

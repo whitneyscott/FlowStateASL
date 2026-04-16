@@ -1,4 +1,5 @@
 import { ltiTokenHeaders } from '../api/lti-token';
+import { APP_MODE_STORAGE_KEY } from './app-mode';
 
 const CLIENT_FALLBACK_KEY = 'aslexpress_bridge_log_client_fallback_v1';
 const MAX_CLIENT_FALLBACK_LINES = 120;
@@ -45,7 +46,27 @@ export function clearBridgeClientFallbackLines(): void {
   }
 }
 
+/** Same policy as BridgeLog UI: only Developer mode or ?debug=1 (Prompt Manager + Flashcards share this). */
+function isBridgeClientDiagnosticsEnabled(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    const u = new URL(window.location.href);
+    if (u.searchParams.get('debug') === '1') return true;
+  } catch {
+    /* ignore */
+  }
+  try {
+    const v = localStorage.getItem(APP_MODE_STORAGE_KEY);
+    if (v === 'developer') return true;
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
 export function appendBridgeLog(tag: string, message: string, extra?: Record<string, unknown>): void {
+  if (!isBridgeClientDiagnosticsEnabled()) return;
+
   const fullMessage = `${message}${extra ? ` ${JSON.stringify(extra)}` : ''}`;
   // Always keep a local mirror so BridgeLog remains useful even if backend logs are on another instance/process.
   appendClientFallbackLine(buildLine(tag, `${fullMessage} [client-mirror]`));
