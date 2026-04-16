@@ -34,4 +34,9 @@ export interface LtiContext {
   submissionToken?: string;
   /** Submission display title from deep-link item (resource_link.title or custom.sprout_video_title). */
   submissionTitle?: string;
+  /**
+   * How this browser session was established with the API: LTI 1.3 (OIDC + id_token) vs app-labeled 1.1
+   * (includes dedicated /launch/prompter|flashcards posts where OAuth signature is not verified).
+   */
+  ltiLaunchType?: '1.1' | '1.3';
 }

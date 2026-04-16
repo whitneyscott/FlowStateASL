@@ -73,6 +73,7 @@ export class AuthSessionService implements OnModuleInit {
     const expiresAt = new Date(now + AUTH_TTL_MS);
     const nonceExpiresAt = new Date(now + NONCE_TTL_MS);
     const sanitized = sanitizeLtiContext(ctx);
+    const ltiContextToStore = { ...sanitized, ltiLaunchType: launchType } as unknown as Record<string, unknown>;
     const canvasUserId = ((sanitized.canvasUserId ?? '').trim() || sanitized.userId || '').trim();
     const row = this.repo.create({
       tokenHash: this.hash(bearerToken),
@@ -85,7 +86,7 @@ export class AuthSessionService implements OnModuleInit {
       canonicalKey: this.canonicalKeyFromContext(sanitized),
       ltiLaunchType: launchType,
       canvasAccessToken: existingCanvasAccessToken?.trim() || null,
-      ltiContext: sanitized as unknown as Record<string, unknown>,
+      ltiContext: ltiContextToStore,
     });
     await this.repo.save(row);
     return { bearerToken, bootstrapNonce };
@@ -101,7 +102,10 @@ export class AuthSessionService implements OnModuleInit {
       await this.repo.delete({ id: row.id });
       return null;
     }
-    const ctx = sanitizeLtiContext((row.ltiContext ?? {}) as unknown as LtiContext);
+    const ctx = sanitizeLtiContext({
+      ...(row.ltiContext ?? {}),
+      ltiLaunchType: row.ltiLaunchType,
+    } as unknown as LtiContext);
     return { row, ctx };
   }
 
@@ -126,7 +130,10 @@ export class AuthSessionService implements OnModuleInit {
     row.nonceHash = this.hash(rotatedNonce);
     row.nonceExpiresAt = new Date(now + NONCE_TTL_MS);
     await this.repo.save(row);
-    const ctx = sanitizeLtiContext((row.ltiContext ?? {}) as unknown as LtiContext);
+    const ctx = sanitizeLtiContext({
+      ...(row.ltiContext ?? {}),
+      ltiLaunchType: row.ltiLaunchType,
+    } as unknown as LtiContext);
     return { bearerToken, rotatedNonce, row, ctx };
   }
 
@@ -147,7 +154,10 @@ export class AuthSessionService implements OnModuleInit {
       await this.repo.delete({ id: row.id });
       return null;
     }
-    const ctx = sanitizeLtiContext((row.ltiContext ?? {}) as unknown as LtiContext);
+    const ctx = sanitizeLtiContext({
+      ...(row.ltiContext ?? {}),
+      ltiLaunchType: row.ltiLaunchType,
+    } as unknown as LtiContext);
     return { row, ctx };
   }
 

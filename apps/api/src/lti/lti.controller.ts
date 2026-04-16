@@ -156,6 +156,10 @@ export class LtiController {
     }
     ctx.toolType = 'flashcards';
     this.repairCanvasHostFromLaunchRequest(req, ctx);
+    appendLtiLog(
+      'launch',
+      '[launch-entry] LTI auth session: 1.1 (Canvas POST /api/lti/launch/flashcards — OAuth signature not verified by API)',
+    );
     await this.issueAuthAndRedirect(req, res, ctx, '1.1', '/flashcards');
   }
 
@@ -180,6 +184,10 @@ export class LtiController {
     }
     ctx.toolType = 'prompter';
     this.repairCanvasHostFromLaunchRequest(req, ctx);
+    appendLtiLog(
+      'launch',
+      '[launch-entry] LTI auth session: 1.1 (Canvas POST /api/lti/launch/prompter — OAuth signature not verified by API)',
+    );
     try {
       await this.promptService.rememberResourceLinkAssignmentMappingFromLaunch({
         ...ctx,
@@ -471,6 +479,7 @@ export class LtiController {
     }
     const ctx = result.context;
     this.repairCanvasHostFromLaunchRequest(req, ctx);
+    appendLtiLog('launch', '[launch-entry] LTI auth session: 1.3 (LTI Advantage — OIDC + id_token via POST /api/lti/launch)');
     appendLtiLog('launch', 'LTI context extracted', {
       courseId: ctx.courseId,
       toolType: ctx.toolType,
@@ -553,6 +562,11 @@ export class LtiController {
     }
 
     const data = result.data;
+
+    appendLtiLog(
+      'launch',
+      '[launch-entry] LTI auth session: 1.1 (OAuth-signed POST /api/lti/launch — HMAC-SHA1 verified)',
+    );
 
     const ctx = {
       courseId: data.courseId,

@@ -107,6 +107,19 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
     newLines.push('--- Build Fingerprint ---');
     newLines.push(`web=${webSha} api=${apiSha} branch=${apiBranch} env=${nodeEnv}`);
     newLines.push('');
+    newLines.push('--- LTI (this browser session) ---');
+    if (context?.ltiLaunchType === '1.3') {
+      newLines.push('Launch: LTI 1.3 (LTI Advantage — OIDC + id_token)');
+    } else if (context?.ltiLaunchType === '1.1') {
+      newLines.push(
+        'Launch: LTI 1.1 — check "Module Launch Diagnostics" below for OAuth-signed /api/lti/launch vs dedicated /launch/*',
+      );
+    } else if (context?.courseId) {
+      newLines.push('Launch: unknown (re-launch from Canvas to refresh; older sessions omit this field)');
+    } else {
+      newLines.push('Launch: — (no course context yet)');
+    }
+    newLines.push('');
 
     const lineLc = (line: string) => line.toLowerCase();
     const isSettingsBlobNoise = (line: string): boolean => {
@@ -301,7 +314,7 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
       newLines.push(`  → ${lastServerError.message}`);
     }
     setLines(newLines);
-  }, [lastFunctionCalled, lastApiResult, lastServerError, ltiLog, debugVersion]);
+  }, [context?.ltiLaunchType, context?.courseId, lastFunctionCalled, lastApiResult, lastServerError, ltiLog, debugVersion]);
 
   const text = ['BRIDGE DEBUG LOG:', ...lines].join('\n');
 
