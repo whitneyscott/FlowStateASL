@@ -2,6 +2,9 @@
  * Deepgram pre-recorded transcription → WebVTT (utterances when available).
  */
 
+import { createReadStream } from 'node:fs';
+import { DeepgramClient } from '@deepgram/sdk';
+
 function formatVttTimestamp(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) seconds = 0;
   const ms = Math.round(seconds * 1000);
@@ -85,39 +88,45 @@ export function deepgramJsonToWebVtt(json: unknown): string {
   return vtt;
 }
 
-export async function transcribeAudioWithDeepgram(
-  audioBuffer: Buffer,
-  contentType: string,
-  apiKey: string,
-): Promise<{ vtt: string; raw: unknown }> {
+function deepgramErrorToHttpStyle(err: unknown): Error {
+  if (err && typeof err === 'object' && 'statusCode' in err) {
+    const statusCode = Number((err as { statusCode?: number }).statusCode);
+    const body = (err as { body?: unknown }).body;
+    const snippet =
+      typeof body === 'string'
+        ? body.slice(0, 400)
+        : body != null
+          ? JSON.stringify(body).slice(0, 400)
+          : '';
+    if (Number.isFinite(statusCode)) {
+      return new Error(`deepgram_http_${statusCode}: ${snippet}`);
+    }
+  }
+  return err instanceof Error ? err : new Error(String(err));
+}
+
+/**
+ * Stream WAV from disk to Deepgram (avoids loading the full file into memory).
+ */
+export async function transcribeWavFileWithDeepgram(wavPath: string, apiKey: string): Promise<{ vtt: string; raw: unknown }> {
   const key = apiKey.trim();
   if (!key) throw new Error('missing_deepgram_api_key');
 
-  const params = new URLSearchParams({
-    model: 'nova-2',
-    smart_format: 'true',
-    punctuate: 'true',
-    utterances: 'true',
-    language: 'en',
-  });
-  const url = `https://api.deepgram.com/v1/listen?${params.toString()}`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Token ${key}`,
-      'Content-Type': contentType || 'audio/wav',
-    },
-    body: audioBuffer,
-  });
-  const text = await res.text();
-  if (!res.ok) {
-    throw new Error(`deepgram_http_${res.status}: ${text.slice(0, 400)}`);
-  }
-  let json: unknown;
+  const client = new DeepgramClient({ apiKey: key });
   try {
-    json = JSON.parse(text) as unknown;
-  } catch {
-    throw new Error('deepgram_invalid_json');
+    const response = await client.listen.v1.media.transcribeFile(createReadStream(wavPath), {
+      model: 'nova-2',
+      smart_format: true,
+      punctuate: true,
+      utterances: true,
+      language: 'en',
+    });
+    const json: unknown =
+      response && typeof response === 'object' && 'data' in response
+        ? (response as { data: unknown }).data
+        : response;
+    return { vtt: deepgramJsonToWebVtt(json), raw: json };
+  } catch (e) {
+    throw deepgramErrorToHttpStyle(e);
   }
-  return { vtt: deepgramJsonToWebVtt(json), raw: json };
 }

@@ -9,6 +9,12 @@ const DEFAULT_TIMEOUT_MS = Math.min(
   600_000,
 );
 
+/** Caption pipeline WebM download cap (independent of WEBM_PROMPT_PROBE_MAX_BYTES). Default 48 MiB. */
+export const DEFAULT_SIGN_TO_VOICE_DOWNLOAD_MAX_BYTES = Math.min(
+  Math.max(Number(process.env.SIGN_TO_VOICE_MAX_DOWNLOAD_BYTES ?? 48 * 1024 * 1024) || 48 * 1024 * 1024, 256 * 1024),
+  512 * 1024 * 1024,
+);
+
 function runFfmpeg(args: string[], timeoutMs: number): Promise<{ code: number | null; stderr: string }> {
   const bin = resolveFfmpegPathForCaptions();
   return new Promise((resolve) => {

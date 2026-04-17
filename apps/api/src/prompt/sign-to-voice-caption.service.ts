@@ -1,14 +1,18 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
-import { readFileSync } from 'node:fs';
+import { statSync } from 'node:fs';
 import { ConfigService } from '@nestjs/config';
 import { appendLtiLog } from '../common/last-error.store';
 import { CanvasService } from '../canvas/canvas.service';
-import { transcribeAudioWithDeepgram } from './deepgram-transcribe.util';
-import { downloadToTempWebm, extractAudioWavFromWebm, muxWebVttIntoWebm } from './ffmpeg-captions.util';
+import { transcribeWavFileWithDeepgram } from './deepgram-transcribe.util';
+import {
+  DEFAULT_SIGN_TO_VOICE_DOWNLOAD_MAX_BYTES,
+  downloadToTempWebm,
+  extractAudioWavFromWebm,
+  muxWebVttIntoWebm,
+} from './ffmpeg-captions.util';
 import { PromptSubmissionCaptionsEntity, type PromptCaptionsStatus } from './entities/prompt-submission-captions.entity';
-import { DEFAULT_WEBM_PROBE_DOWNLOAD_MAX_BYTES } from './webm-prompt-metadata.util';
 
 function pickVideoDownloadUrlForFileId(
   sub: NonNullable<Awaited<ReturnType<CanvasService['getSubmissionFull']>>>,
@@ -30,12 +34,31 @@ function pickVideoDownloadUrlForFileId(
 
 @Injectable()
 export class SignToVoiceCaptionService {
+  private static readonly captionPipelineConcurrency = 2;
+  private captionPipelineActive = 0;
+  private readonly captionPipelineWaiters: Array<() => void> = [];
+
   constructor(
     @InjectRepository(PromptSubmissionCaptionsEntity)
     private readonly repo: Repository<PromptSubmissionCaptionsEntity>,
     private readonly canvas: CanvasService,
     private readonly config: ConfigService,
   ) {}
+
+  private async acquireCaptionPipelineSlot(): Promise<void> {
+    if (this.captionPipelineActive < SignToVoiceCaptionService.captionPipelineConcurrency) {
+      this.captionPipelineActive++;
+      return;
+    }
+    await new Promise<void>((resolve) => this.captionPipelineWaiters.push(resolve));
+    this.captionPipelineActive++;
+  }
+
+  private releaseCaptionPipelineSlot(): void {
+    this.captionPipelineActive--;
+    const next = this.captionPipelineWaiters.shift();
+    if (next) next();
+  }
 
   async getStatusesForUsers(
     courseId: string,
@@ -95,10 +118,17 @@ export class SignToVoiceCaptionService {
       void this.markFailed(args.courseId, args.assignmentId, args.studentUserId, 'deepgram_api_key_missing');
       return;
     }
-    void this.runPipeline({ ...args, deepgramApiKey: apiKey }).catch((e) => {
-      appendLtiLog('sign-to-voice', 'pipeline unhandled', { error: String(e), userId: args.studentUserId });
-      return this.markFailed(args.courseId, args.assignmentId, args.studentUserId, String(e));
-    });
+    void (async () => {
+      await this.acquireCaptionPipelineSlot();
+      try {
+        await this.runPipeline({ ...args, deepgramApiKey: apiKey });
+      } catch (e) {
+        appendLtiLog('sign-to-voice', 'pipeline unhandled', { error: String(e), userId: args.studentUserId });
+        await this.markFailed(args.courseId, args.assignmentId, args.studentUserId, String(e));
+      } finally {
+        this.releaseCaptionPipelineSlot();
+      }
+    })();
   }
 
   private async markFailed(courseId: string, assignmentId: string, userId: string, message: string): Promise<void> {
@@ -155,24 +185,29 @@ export class SignToVoiceCaptionService {
       const { path: webmPath, cleanup: c1 } = await downloadToTempWebm(
         videoUrl,
         canvasToken,
-        DEFAULT_WEBM_PROBE_DOWNLOAD_MAX_BYTES,
+        DEFAULT_SIGN_TO_VOICE_DOWNLOAD_MAX_BYTES,
       );
       webmDlCleanup = c1;
       appendLtiLog('sign-to-voice', 'pipeline: WebM downloaded for extract', {
         userId: studentUserId,
-        maxBytesProbed: DEFAULT_WEBM_PROBE_DOWNLOAD_MAX_BYTES,
+        maxBytesDownloaded: DEFAULT_SIGN_TO_VOICE_DOWNLOAD_MAX_BYTES,
       });
 
       const { wavPath, cleanup: c2 } = await extractAudioWavFromWebm(webmPath);
       audioCleanup = c2;
-      const wavBuf = readFileSync(wavPath);
+      let wavBytes = 0;
+      try {
+        wavBytes = statSync(wavPath).size;
+      } catch {
+        /* ignore */
+      }
       appendLtiLog('sign-to-voice', 'pipeline: WAV extracted for Deepgram', {
         userId: studentUserId,
-        wavBytes: wavBuf.length,
+        wavBytes,
       });
 
       appendLtiLog('sign-to-voice', 'pipeline: Deepgram transcribe request', { userId: studentUserId });
-      const { vtt } = await transcribeAudioWithDeepgram(wavBuf, 'audio/wav', args.deepgramApiKey);
+      const { vtt } = await transcribeWavFileWithDeepgram(wavPath, args.deepgramApiKey);
       const vttLen = (vtt ?? '').length;
       appendLtiLog('sign-to-voice', 'pipeline: Deepgram transcribe OK', {
         userId: studentUserId,
