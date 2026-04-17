@@ -91,7 +91,7 @@ export class DebugController {
   /** Call this (e.g. open in browser) to verify Bridge Log is reading from this API process. */
   @Get('ping')
   ping() {
-    appendLtiLog('debug', 'PING — if you see this in Bridge Log, API logging works');
+    appendLtiLog('webm-prompt', 'bridge: ping (lti-log path OK)');
     return { ok: true, ts: new Date().toISOString() };
   }
 

@@ -7,6 +7,7 @@ import type { IPromptDataRepository } from '../data/interfaces/prompt-data-repos
 import {
   appendLtiLog,
   appendPlacementMarker,
+  isBridgeLogFocusWebmEnabled,
   type PlacementLtiVersion,
   type PlacementPath,
 } from '../common/last-error.store';
@@ -292,6 +293,20 @@ export class PromptService {
     if (!upstream.body) {
       if (!res.headersSent) res.status(502).end();
       return;
+    }
+    if (isBridgeLogFocusWebmEnabled() && !clientRange?.trim()) {
+      let targetHint = targetUrl.slice(0, 96);
+      try {
+        const u = new URL(targetUrl);
+        targetHint = `${u.hostname}${u.pathname}`.slice(0, 96);
+      } catch {
+        /* keep slice */
+      }
+      appendLtiLog('webm-prompt', 'playback: video-proxy (initial)', {
+        courseId: courseId.trim(),
+        targetHint,
+        contentType: contentTypeRaw,
+      });
     }
     res.status(upstream.status);
     res.setHeader('Content-Type', contentTypeRaw);

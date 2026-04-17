@@ -114,12 +114,12 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
     newLines.push(`web=${webSha} api=${apiSha} branch=${apiBranch} env=${nodeEnv}`);
     newLines.push('');
     if (debugVersion?.bridgeLogFocusWebm) {
-      newLines.push('--- WebM PROMPT_DATA (BRIDGE_LOG_FOCUS_WEBM) ---');
-      const wm = ltiLog.filter(
-        (line) => line.includes('] [webm-prompt] ') || line.includes('] [debug] '),
-      );
+      newLines.push('--- WebM + Bridge focus (BRIDGE_LOG_FOCUS_WEBM) ---');
+      newLines.push('Build Fingerprint above = git/deploy; below = [webm-prompt] only.');
+      newLines.push('');
+      const wm = ltiLog.filter((line) => line.includes('] [webm-prompt] '));
       if (wm.length === 0) {
-        newLines.push('(no webm-prompt / debug lines yet)');
+        newLines.push('(no webm-prompt lines yet — upload, open viewer, or GET /api/debug/ping)');
       } else {
         newLines.push(...wm);
       }

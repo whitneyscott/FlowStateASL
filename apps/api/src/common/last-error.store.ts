@@ -3,8 +3,8 @@ const ltiLog: string[] = [];
 const MAX_LTI_LOG_LINES = 400;
 let lastCanvasApiResponse: { status: number; statusText: string; bodyPreview: string } | null = null;
 
-/** When set, Bridge server log keeps only allowlisted tags (temporary WebM validation). */
-const BRIDGE_LOG_FOCUS_WEBM_TAGS = new Set(['webm-prompt', 'debug']);
+/** When set, Bridge server log keeps only `webm-prompt` (build SHA still from /api/debug/version). */
+const BRIDGE_LOG_FOCUS_WEBM_TAGS = new Set(['webm-prompt']);
 
 export function isBridgeLogFocusWebmEnabled(): boolean {
   const v = (process.env.BRIDGE_LOG_FOCUS_WEBM ?? '').trim().toLowerCase();
