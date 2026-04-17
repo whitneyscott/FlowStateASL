@@ -131,6 +131,8 @@ export interface PromptConfig {
   promptMode?: 'text' | 'decks' | 'youtube';
   videoPromptConfig?: VideoPromptConfig;
   youtubePromptConfig?: YoutubePromptConfig;
+  /** When true, successful student uploads run async Deepgram → WebVTT → remux; grading viewer can show CC. */
+  signToVoiceRequired?: boolean;
 }
 
 export interface DeckPromptItem {
@@ -394,6 +396,8 @@ export interface PromptSubmission {
   durationSource?: 'submission' | 'prompts' | 'unknown';
   /** Canvas assignment allowed_attempts when returned with my-submission (-1 = unlimited). */
   allowedAttempts?: number;
+  /** Sign-to-voice caption pipeline status (teacher submissions list only). */
+  captionsStatus?: 'pending' | 'ready' | 'failed';
 }
 
 export async function getSubmissionCount(assignmentId?: string | null): Promise<number> {
@@ -403,6 +407,12 @@ export async function getSubmissionCount(assignmentId?: string | null): Promise<
 
 export async function getSubmissions(assignmentId?: string | null): Promise<PromptSubmission[]> {
   return fetchJson<PromptSubmission[]>(withAssignmentId(base + '/submissions', assignmentId));
+}
+
+/** Teacher grading: URL for &lt;track src&gt; when `captionsStatus === 'ready'` (same-origin; session cookie). */
+export function submissionCaptionsVttUrl(userId: string, assignmentId?: string | null): string {
+  const path = `${base}/submission-captions.vtt?userId=${encodeURIComponent(userId)}`;
+  return withAssignmentId(path, assignmentId);
 }
 
 export type SubmitGradeResponse = { ok?: boolean; score?: number; grade?: string };
@@ -504,6 +514,7 @@ export async function getAssignmentForViewer(assignmentId?: string | null): Prom
     allowStudentCaptions: boolean;
     subtitleMask: YoutubeSubtitleMask;
   };
+  signToVoiceRequired?: boolean;
 } | null> {
   return fetchJson(withAssignmentId(base + '/assignment-for-viewer', assignmentId));
 }

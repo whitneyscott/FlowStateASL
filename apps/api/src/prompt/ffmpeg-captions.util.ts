@@ -1,0 +1,167 @@
+import { spawn } from 'node:child_process';
+import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { resolveFfmpegPathForCaptions } from './ffmpeg-binary.util';
+
+const DEFAULT_TIMEOUT_MS = Math.min(
+  Math.max(Number(process.env.SIGN_TO_VOICE_FFMPEG_TIMEOUT_MS ?? 120_000) || 120_000, 10_000),
+  600_000,
+);
+
+function runFfmpeg(args: string[], timeoutMs: number): Promise<{ code: number | null; stderr: string }> {
+  const bin = resolveFfmpegPathForCaptions();
+  return new Promise((resolve) => {
+    const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stderr = '';
+    child.stderr?.on('data', (c: Buffer) => {
+      stderr += c.toString();
+      if (stderr.length > 24_000) stderr = stderr.slice(-24_000);
+    });
+    const timer = setTimeout(() => {
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        /* ignore */
+      }
+    }, timeoutMs);
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve({ code, stderr });
+    });
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      resolve({ code: -1, stderr: String(err) });
+    });
+  });
+}
+
+/**
+ * Extract mono 16kHz WAV for Deepgram.
+ */
+export async function extractAudioWavFromWebm(webmPath: string, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<{
+  wavPath: string;
+  cleanup: () => void;
+}> {
+  const dir = mkdtempSync(join(tmpdir(), 'fsasl-cap-audio-'));
+  const wavPath = join(dir, 'audio.wav');
+  const { code, stderr } = await runFfmpeg(
+    [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-y',
+      '-i',
+      webmPath,
+      '-vn',
+      '-ac',
+      '1',
+      '-ar',
+      '16000',
+      '-acodec',
+      'pcm_s16le',
+      wavPath,
+    ],
+    timeoutMs,
+  );
+  if (code !== 0) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+    throw new Error(`ffmpeg_extract_audio_${code}: ${stderr.slice(0, 600)}`);
+  }
+  return {
+    wavPath,
+    cleanup: () => {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+        /* ignore */
+      }
+    },
+  };
+}
+
+/**
+ * Mux WebVTT as a subtitle track into WebM (copy video/audio streams).
+ */
+export async function muxWebVttIntoWebm(options: {
+  webmPath: string;
+  vttContent: string;
+  timeoutMs?: number;
+}): Promise<{ outputPath: string; size: number; cleanup: () => void }> {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const dir = mkdtempSync(join(tmpdir(), 'fsasl-cap-mux-'));
+  const vttPath = join(dir, 'captions.vtt');
+  const outPath = join(dir, 'out.webm');
+  writeFileSync(vttPath, options.vttContent, 'utf8');
+
+  const { code, stderr } = await runFfmpeg(
+    [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-y',
+      '-i',
+      options.webmPath,
+      '-i',
+      vttPath,
+      '-map',
+      '0',
+      '-map',
+      '1',
+      '-c',
+      'copy',
+      '-c:s',
+      'webvtt',
+      '-disposition:s:0',
+      'default',
+      outPath,
+    ],
+    timeoutMs,
+  );
+  if (code !== 0) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+    throw new Error(`ffmpeg_mux_vtt_${code}: ${stderr.slice(0, 800)}`);
+  }
+  const st = statSync(outPath);
+  if (!st.isFile() || st.size <= 0) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+    throw new Error('mux_output_empty');
+  }
+  return {
+    outputPath: outPath,
+    size: st.size,
+    cleanup: () => {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+        /* ignore */
+      }
+    },
+  };
+}
+
+/** Download URL to temp WebM file (streaming, capped). */
+export async function downloadToTempWebm(
+  url: string,
+  bearerToken: string,
+  maxBytes: number,
+): Promise<{ path: string; cleanup: () => void }> {
+  const { downloadAuthenticatedVideoToTempFile } = await import('./webm-prompt-metadata.util');
+  const dl = await downloadAuthenticatedVideoToTempFile(url, bearerToken, maxBytes);
+  if (!dl.ok) {
+    throw new Error(`download_${dl.error}`);
+  }
+  return { path: dl.path, cleanup: dl.cleanup };
+}

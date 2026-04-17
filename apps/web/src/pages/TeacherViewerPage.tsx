@@ -605,6 +605,11 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     youtubeStimulusForGrading?.videoId,
   ]);
 
+  const submissionCaptionsVttSrc = useMemo(() => {
+    if (!gradingMode || !assignmentId || !current?.userId || current.captionsStatus !== 'ready') return undefined;
+    return promptApi.submissionCaptionsVttUrl(current.userId, assignmentId);
+  }, [gradingMode, assignmentId, current?.userId, current?.captionsStatus]);
+
   useEffect(() => {
     setTeacherStimulusCaptions(false);
     setStudentStimulusCaptions(false);
@@ -1972,6 +1977,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                       videoRef={videoRef}
                       videoDurationSeconds={current.videoDurationSeconds}
                       durationSource={current.durationSource}
+                      captionsVttSrc={submissionCaptionsVttSrc}
                     />
                   </div>
                 </div>
@@ -2053,6 +2059,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                     videoRef={videoRef}
                     videoDurationSeconds={current.videoDurationSeconds}
                     durationSource={current.durationSource}
+                    captionsVttSrc={submissionCaptionsVttSrc}
                   />
                 ) : hasSubmissionNoVideo ? (
                   <div className="prompter-viewer-processing">

@@ -3050,5 +3050,66 @@ export class CanvasService {
       domainOverride,
     );
   }
+
+  /**
+   * Set submission to online_upload with exactly these file ids (replaces prior attachment list when Canvas accepts PUT).
+   */
+  async putSubmissionOnlineUploadFileIds(
+    courseId: string,
+    assignmentId: string,
+    userId: string,
+    fileIds: string[],
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<void> {
+    if (!fileIds.length) {
+      throw new Error('putSubmissionOnlineUploadFileIds: at least one file id required');
+    }
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}/submissions/${encodeURIComponent(userId)}`;
+    const body = {
+      submission: {
+        submission_type: 'online_upload' as const,
+        file_ids: fileIds.map(toCanvasFileIdInt),
+      },
+    };
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: this.getAuthHeaders(tokenOverride),
+      body: JSON.stringify(body),
+    });
+    const raw = await res.text();
+    appendLtiLog('canvas', 'putSubmissionOnlineUploadFileIds', {
+      courseId,
+      assignmentId,
+      userId,
+      fileIdCount: fileIds.length,
+      status: res.status,
+      preview: raw.slice(0, 500),
+    });
+    if (!res.ok) {
+      throw new Error(`Canvas put submission file_ids failed: ${res.status} ${raw.slice(0, 400)}`);
+    }
+  }
+
+  /** Delete a Canvas file by id (fails open for 404). */
+  async deleteCanvasFile(
+    fileId: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<void> {
+    const base = this.getBaseUrl(domainOverride);
+    const id = toCanvasFileIdInt(fileId);
+    const url = `${base}/api/v1/files/${id}`;
+    const res = await fetch(url, {
+      method: 'DELETE',
+      headers: this.getAuthHeaders(tokenOverride),
+    });
+    if (!res.ok && res.status !== 404) {
+      const raw = await res.text();
+      appendLtiLog('canvas', 'deleteCanvasFile FAIL', { fileId, status: res.status, preview: raw.slice(0, 200) });
+      throw new Error(`Canvas delete file failed: ${res.status}`);
+    }
+  }
 }
 

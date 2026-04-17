@@ -82,6 +82,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const [lockAt, setLockAt] = useState('');
   const [allowedAttempts, setAllowedAttempts] = useState(1);
   const [instructions, setInstructions] = useState('');
+  const [signToVoiceRequired, setSignToVoiceRequired] = useState(false);
   const [showSettings, setShowSettings] = useState(true);
   const [showManualTokenModal, setShowManualTokenModal] = useState(false);
   
@@ -230,6 +231,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         const aa = Number(data.allowedAttempts ?? 1);
         setAllowedAttempts(Number.isFinite(aa) && aa === -1 ? -1 : Math.max(1, aa || 1));
         setInstructions(data.instructions ?? '');
+        setSignToVoiceRequired(data.signToVoiceRequired === true);
         setPromptMode(data.promptMode ?? 'text');
         if (data.promptMode === 'youtube' && data.youtubePromptConfig?.videoId) {
           const vid = data.youtubePromptConfig.videoId;
@@ -318,6 +320,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         setLockAt('');
         setAllowedAttempts(1);
         setInstructions('');
+        setSignToVoiceRequired(false);
         setPromptMode('text');
         setSelectedDecks([]);
         setTotalCards(10);
@@ -576,6 +579,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
           unlockAt: unlockAt.trim() || undefined,
           lockAt: lockAt.trim() || undefined,
           allowedAttempts,
+          signToVoiceRequired,
           promptMode,
           videoPromptConfig: promptMode === 'decks' ? { selectedDecks, totalCards } : undefined,
           youtubePromptConfig:
@@ -679,6 +683,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setLockAt('');
     setAllowedAttempts(1);
     setInstructions('');
+    setSignToVoiceRequired(false);
     setPromptMode('text');
     setYoutubeUrlOrId('');
     setYoutubeLabel('');
@@ -823,6 +828,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setLockAt('');
     setAllowedAttempts(1);
     setInstructions('');
+    setSignToVoiceRequired(false);
     setPromptMode('text');
     setSelectedDecks([]);
     setTotalCards(10);
@@ -857,7 +863,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     try {
       setLastFunction('PUT /api/prompt/config');
       await promptApi.putPromptConfig(
-        { minutes: 5, prompts: [], accessCode: '', assignmentName: '', moduleId: '', pointsPossible: 10, instructions: '', dueAt: '', unlockAt: '', lockAt: '', allowedAttempts: 1, promptMode: 'text' },
+        { minutes: 5, prompts: [], accessCode: '', assignmentName: '', moduleId: '', pointsPossible: 10, instructions: '', dueAt: '', unlockAt: '', lockAt: '', allowedAttempts: 1, signToVoiceRequired: false, promptMode: 'text' },
         assignmentId
       );
       setLastApiResult('PUT /api/prompt/config', 200, true);
@@ -1220,6 +1226,20 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                         <label className="prompter-settings-label">Instructions (optional):</label>
                         <p className="prompter-hint">Displayed in the assignment description and on the first screen students see.</p>
                         <textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={4} placeholder="Instructions for students..." className="prompter-settings-input" />
+                      </div>
+                      <div className="prompter-settings-field">
+                        <label className="prompter-settings-label prompter-settings-label-block">
+                          <input
+                            type="checkbox"
+                            checked={signToVoiceRequired}
+                            onChange={(e) => setSignToVoiceRequired(e.target.checked)}
+                          />{' '}
+                          Sign-to-voice: add automatic speech captions to student video submissions (for grading CC)
+                        </label>
+                        <p className="prompter-hint">
+                          After upload, the server transcribes audio (Deepgram), muxes WebVTT into the WebM, and replaces the Canvas file.
+                          Requires <code>DEEPGRAM_API_KEY</code> on the API host.
+                        </p>
                       </div>
                       {rubricSelector}
                     </div>

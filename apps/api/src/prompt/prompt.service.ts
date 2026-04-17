@@ -21,6 +21,8 @@ import {
 import { resolveCanvasApiUserId } from '../common/utils/canvas-api-user.util';
 import { getSproutAccountId } from '../common/utils/sprout-account-id.util';
 import type { PromptConfigJson, PutPromptConfigDto } from './dto/prompt-config.dto';
+import { SignToVoiceCaptionService } from './sign-to-voice-caption.service';
+import type { PromptCaptionsStatus } from './entities/prompt-submission-captions.entity';
 import { normalizeYoutubeInputToVideoId } from './youtube-video-id.util';
 import { normalizeCanvasRubricAssessment } from './canvas-rubric-assessment.util';
 import {
@@ -191,6 +193,7 @@ export class PromptService {
     private readonly sproutVideo: SproutVideoService,
     @InjectRepository(SproutPlaylistVideoEntity)
     private readonly sproutPlaylistVideoRepo: Repository<SproutPlaylistVideoEntity>,
+    private readonly signToVoiceCaptions: SignToVoiceCaptionService,
   ) {}
 
   /**
@@ -572,6 +575,17 @@ export class PromptService {
       return annBlob;
     }
     return null;
+  }
+
+  private async resolveSignToVoiceRequired(
+    courseId: string,
+    assignmentId: string,
+    domainOverride: string | undefined,
+    token: string,
+  ): Promise<boolean> {
+    const blob = await this.readPromptManagerSettingsBlob(courseId, domainOverride, token);
+    const cfg = blob?.configs?.[assignmentId];
+    return cfg?.signToVoiceRequired === true;
   }
 
   private async rememberResourceLinkAssignmentMapping(
@@ -1260,6 +1274,7 @@ export class PromptService {
       ...(dto.lockAt !== undefined && { lockAt: dto.lockAt }),
       ...(dto.allowedAttempts !== undefined && { allowedAttempts: dto.allowedAttempts }),
       ...(dto.version !== undefined && { version: dto.version }),
+      ...(dto.signToVoiceRequired !== undefined && { signToVoiceRequired: dto.signToVoiceRequired === true }),
       // NEW: Deck-based prompt configuration
       ...(dto.promptMode !== undefined && { promptMode: dto.promptMode }),
       ...(dto.videoPromptConfig !== undefined && {
@@ -2895,6 +2910,28 @@ export class PromptService {
       );
     }
     appendLtiLog('prompt-upload', 'uploadVideo DONE', { fileId, assignmentId, studentUserId, ...verify });
+    void (async () => {
+      try {
+        const signToVoiceRequired = await this.resolveSignToVoiceRequired(
+          ctx.courseId,
+          assignmentId,
+          domainOverride,
+          token,
+        );
+        this.signToVoiceCaptions.scheduleAfterSuccessfulUpload({
+          signToVoiceRequired,
+          courseId: ctx.courseId,
+          assignmentId,
+          studentUserId,
+          initialCanvasFileId: fileId,
+          filename,
+          domainOverride,
+          canvasToken: token,
+        });
+      } catch (e) {
+        appendLtiLog('sign-to-voice', 'scheduleAfterSuccessfulUpload: resolve failed', { error: String(e) });
+      }
+    })();
     return {
       fileId,
       courseId: ctx.courseId,
@@ -3002,6 +3039,7 @@ export class PromptService {
       videoDurationSeconds: number | null;
       durationSource: 'submission' | 'prompts' | 'unknown';
       rubricAssessment?: Record<string, unknown>;
+      captionsStatus?: PromptCaptionsStatus;
     }>
   > {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
@@ -3118,7 +3156,37 @@ export class PromptService {
         durationSource: row.durationSource,
       });
     }
-    return rowsWithPrompts;
+    const capMap = await this.signToVoiceCaptions.getStatusesForUsers(
+      ctx.courseId,
+      assignmentId,
+      rowsWithPrompts.map((r) => r.userId),
+    );
+    return rowsWithPrompts.map((r) => {
+      const st = capMap.get(r.userId);
+      return st ? { ...r, captionsStatus: st } : r;
+    });
+  }
+
+  /** Teacher grading: WebVTT for a student when captions pipeline finished (`captionsStatus === 'ready'`). */
+  async getSubmissionCaptionsVtt(ctx: LtiContext, studentUserId: string): Promise<string | null> {
+    const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
+    if (!token) {
+      throw new ForbiddenException('Canvas token required');
+    }
+    const assignmentId = await this.getPrompterAssignmentId(ctx);
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
+    const list = await this.canvas.listSubmissions(ctx.courseId, assignmentId, domainOverride, token);
+    const visible = list.filter(
+      (s) =>
+        submissionHasFile(s) ||
+        !!this.deepLinkFileStore.getSubmissionToken(ctx.courseId, assignmentId, String(s.user_id ?? '')),
+    );
+    const ok = visible.some((s) => String(s.user_id) === String(studentUserId));
+    if (!ok) {
+      throw new ForbiddenException('Submission not found for this user');
+    }
+    const got = await this.signToVoiceCaptions.getVttIfReady(ctx.courseId, assignmentId, studentUserId);
+    return got?.vtt ?? null;
   }
 
   /**
@@ -3381,6 +3449,7 @@ export class PromptService {
       allowStudentCaptions: boolean;
       subtitleMask: { enabled: boolean; heightPercent: number };
     };
+    signToVoiceRequired?: boolean;
   } | null> {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
     if (!token) return null;
@@ -3449,6 +3518,7 @@ export class PromptService {
       ...(textPrompts?.length ? { textPrompts } : {}),
       ...(youtubeLabel ? { youtubeLabel } : {}),
       ...(youtubePromptConfigViewer ? { youtubePromptConfig: youtubePromptConfigViewer } : {}),
+      ...(cfg?.signToVoiceRequired === true ? { signToVoiceRequired: true } : {}),
     };
   }
 

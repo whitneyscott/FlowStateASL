@@ -1,4 +1,4 @@
-import { useMemo, type Ref, type RefObject } from 'react';
+import { useEffect, useMemo, useState, type Ref, type RefObject } from 'react';
 import { GradingPlaybackBar, type GradingDurationSource } from './GradingPlaybackBar';
 import type { YoutubeIframePlayerHandle } from './YoutubeIframePlayer';
 
@@ -12,6 +12,8 @@ export interface GradingVideoPlayerProps {
   durationSource?: GradingDurationSource;
   /** Omit transport bar (e.g. dual YouTube grading layout). */
   hideControls?: boolean;
+  /** When set (grading only), shows a CC toggle and a captions &lt;track&gt; (e.g. Deepgram WebVTT). */
+  captionsVttSrc?: string;
   youtubeSync?: {
     youtubeRef: RefObject<YoutubeIframePlayerHandle | null>;
     clipStartSec: number;
@@ -30,8 +32,28 @@ export function GradingVideoPlayer({
   videoDurationSeconds,
   durationSource,
   hideControls = false,
+  captionsVttSrc,
   youtubeSync,
 }: GradingVideoPlayerProps) {
+  const [ccOn, setCcOn] = useState(false);
+
+  useEffect(() => {
+    setCcOn(false);
+  }, [videoKey, captionsVttSrc]);
+
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el || !captionsVttSrc) return;
+    const sync = () => {
+      for (let i = 0; i < el.textTracks.length; i += 1) {
+        el.textTracks[i].mode = ccOn ? 'showing' : 'hidden';
+      }
+    };
+    sync();
+    el.addEventListener('loadedmetadata', sync);
+    return () => el.removeEventListener('loadedmetadata', sync);
+  }, [videoRef, captionsVttSrc, ccOn, videoKey]);
+
   const bar = useMemo(
     () => (
       <GradingPlaybackBar
@@ -55,8 +77,19 @@ export function GradingVideoPlayer({
           playsInline
           preload="metadata"
           className="prompter-viewer-video-element"
-        />
+        >
+          {captionsVttSrc ? (
+            <track kind="captions" srcLang="en" label="Captions" src={captionsVttSrc} />
+          ) : null}
+        </video>
       </div>
+      {captionsVttSrc ? (
+        <div className="prompter-viewer-youtube-dual-toolbar">
+          <label className="prompter-viewer-cc-toggle">
+            <input type="checkbox" checked={ccOn} onChange={(e) => setCcOn(e.target.checked)} /> Show captions (submission)
+          </label>
+        </div>
+      ) : null}
       {!hideControls ? bar : null}
     </div>
   );

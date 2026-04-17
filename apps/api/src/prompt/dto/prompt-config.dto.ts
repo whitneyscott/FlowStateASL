@@ -57,6 +57,8 @@ export interface PromptConfigJson {
   promptMode?: 'text' | 'decks' | 'youtube'; // defaults to 'text' if absent
   videoPromptConfig?: VideoPromptConfig;
   youtubePromptConfig?: YoutubePromptConfig;
+  /** When true, student video uploads trigger async Deepgram captions + WebM remux. */
+  signToVoiceRequired?: boolean;
 }
 
 export class PutPromptConfigDto {
@@ -84,6 +86,8 @@ export class PutPromptConfigDto {
     storedPromptBanks?: Array<Array<{ title?: string; videoId?: string; duration?: number }>>;
     staticFallbackPrompts?: string[];
   };
+  /** Require Sign-to-voice captions (Deepgram) on student video submissions. */
+  signToVoiceRequired?: boolean;
   /** Teacher may send urlOrId or videoId for normalization; persisted shape is YoutubePromptConfig only. */
   youtubePromptConfig?: {
     urlOrId?: string;
