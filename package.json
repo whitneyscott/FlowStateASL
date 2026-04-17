@@ -18,7 +18,8 @@
     "seed:qti": "tsx --tsconfig apps/api/tsconfig.json apps/api/src/scripts/seed-qti.ts",
     "db:migrate": "nx run api:build && npx typeorm migration:run -d dist/apps/api/src/data/data-source.js",
     "seed:sprout:fresh": "tsx --tsconfig apps/api/tsconfig.json apps/api/src/scripts/seed-sprout-fresh.ts",
-    "validate:lti-click": "node scripts/validate-lti-module-click.mjs"
+    "validate:lti-click": "node scripts/validate-lti-module-click.mjs",
+    "verify:webm-prompt-codec": "tsx --tsconfig apps/api/tsconfig.json apps/api/src/scripts/verify-webm-prompt-codec.ts"
   },
   "private": true,
   "dependencies": {

@@ -1,12 +1,13 @@
 /**
  * Canonical JSON helpers for WebM `PROMPT_DATA` mux and PROMPT_MATCH comparisons.
- * Stored mux value should match the submission comment JSON string (same keys/values as sent to Canvas).
+ * The mux tag stores base64(JSON.stringify(payload)) so HTML and newlines in `promptSnapshotHtml`
+ * do not break ffmpeg's single-line metadata values.
  * Comparisons use stable key ordering so key order drift does not false-negative.
  */
 
 export const FSASL_PROMPT_UPLOAD_KIND = 'fsasl_prompt_upload';
 
-/** Fields mirrored from the post-upload submission comment (excluding envelope-only keys for match). */
+/** Fields mirrored for PROMPT_MATCH (excluding envelope-only keys). */
 export type ComparablePromptUploadFields = {
   deckTimeline?: unknown;
   durationSeconds?: unknown;
@@ -40,7 +41,10 @@ export function stableStringifyForPromptMatch(value: unknown): string {
   return JSON.stringify(sortKeysDeep(value));
 }
 
-export function parseJsonObject(raw: string, maxLen: number): { ok: true; obj: Record<string, unknown> } | { ok: false; error: string } {
+export function parseJsonObject(
+  raw: string,
+  maxLen: number,
+): { ok: true; obj: Record<string, unknown> } | { ok: false; error: string } {
   const s = (raw ?? '').trim();
   if (!s) return { ok: false, error: 'empty' };
   if (s.length > maxLen) return { ok: false, error: 'too_long' };
@@ -53,4 +57,55 @@ export function parseJsonObject(raw: string, maxLen: number): { ok: true; obj: R
   } catch (e) {
     return { ok: false, error: `json_parse: ${e instanceof Error ? e.message : String(e)}` };
   }
+}
+
+/**
+ * Compact JSON (no pretty-print) then base64 for ffmpeg `PROMPT_DATA=...` (single-line safe).
+ */
+export function encodePromptDataForFfmpegMetadataTag(payload: Record<string, unknown>): {
+  tag: string;
+  utf8ByteLength: number;
+} {
+  const json = JSON.stringify(payload);
+  return {
+    tag: Buffer.from(json, 'utf8').toString('base64'),
+    utf8ByteLength: Buffer.byteLength(json, 'utf8'),
+  };
+}
+
+export function decodePromptDataFromFfmpegMetadataTag(
+  rawTag: string,
+  maxDecodedUtf8Bytes: number,
+): { ok: true; obj: Record<string, unknown>; utf8ByteLength: number } | { ok: false; error: string } {
+  const s = (rawTag ?? '').trim();
+  if (!s) return { ok: false, error: 'empty_tag' };
+  let utf8: string;
+  try {
+    utf8 = Buffer.from(s, 'base64').toString('utf8');
+  } catch (e) {
+    return { ok: false, error: `base64: ${e instanceof Error ? e.message : String(e)}` };
+  }
+  const byteLen = Buffer.byteLength(utf8, 'utf8');
+  if (byteLen > maxDecodedUtf8Bytes) return { ok: false, error: 'decoded_too_large' };
+  const parsed = parseJsonObject(utf8, maxDecodedUtf8Bytes);
+  if (!parsed.ok) return { ok: false, error: parsed.error };
+  return { ok: true, obj: parsed.obj, utf8ByteLength: byteLen };
+}
+
+export function comparableStableFromSubmissionBodyJson(
+  bodyUtf8: string | undefined,
+  maxLen: number,
+): string | null {
+  const p = parseJsonObject(bodyUtf8 ?? '', maxLen);
+  if (!p.ok) return null;
+  const fields = extractComparablePromptUploadFields(p.obj);
+  if (
+    fields.deckTimeline === undefined &&
+    fields.promptSnapshotHtml === undefined &&
+    fields.durationSeconds === undefined &&
+    fields.mediaStimulus === undefined
+  ) {
+    return null;
+  }
+  return stableStringifyForPromptMatch(fields);
 }

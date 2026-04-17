@@ -2,7 +2,7 @@ import { Controller, Get, Post, Query, Body, Req, UseGuards, ForbiddenException 
 import { ConfigService } from '@nestjs/config';
 import { appendLtiLog } from '../common/last-error.store';
 import type { Request } from 'express';
-import { getLastError, getLtiLog, clearLtiLog, isBridgeLogFocusWebmEnabled } from '../common/last-error.store';
+import { getLastError, getLtiLog, clearLtiLog } from '../common/last-error.store';
 import { LtiLaunchGuard } from '../lti/guards/lti-launch.guard';
 import { CanvasService } from '../canvas/canvas.service';
 import { CourseSettingsService } from '../course-settings/course-settings.service';
@@ -113,7 +113,6 @@ export class DebugController {
       apiSha: apiSha || 'unknown',
       apiBranch: apiBranch || 'unknown',
       nodeEnv: process.env.NODE_ENV ?? 'unknown',
-      bridgeLogFocusWebm: isBridgeLogFocusWebmEnabled(),
     };
   }
 

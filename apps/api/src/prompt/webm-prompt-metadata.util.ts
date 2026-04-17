@@ -54,16 +54,18 @@ export type WebmMuxResult = WebmMuxOk | WebmMuxFail;
 
 /**
  * Remux WebM with Matroska/WebM tag `PROMPT_DATA` (stream copy). Fail-open callers use original bytes on non-ok.
+ * `promptDataTagValue` is base64(JSON.stringify(...)) — see `encodePromptDataForFfmpegMetadataTag`.
  */
 export async function muxWebmWithPromptDataTag(options: {
   inputPath: string;
-  promptDataUtf8: string;
+  promptDataTagValue: string;
   timeoutMs?: number;
 }): Promise<WebmMuxResult> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_WEBM_MUX_TIMEOUT_MS;
-  const tag = options.promptDataUtf8;
+  const tag = options.promptDataTagValue;
   if (!tag) return { ok: false, error: 'empty_prompt_data' };
-  if (tag.length > 512_000) return { ok: false, error: 'prompt_data_too_large' };
+  /** ~512 KiB JSON → base64; cap tag string length for ffmpeg argv safety. */
+  if (tag.length > 900_000) return { ok: false, error: 'prompt_data_too_large' };
   const dir = mkdtempSync(join(tmpdir(), 'fsasl-webm-mux-'));
   const outPath = join(dir, 'out.webm');
   const args = [
@@ -117,6 +119,7 @@ export function cleanupMuxOutputPath(outputPath: string): void {
   }
 }
 
+/** Returns raw `format.tags.PROMPT_DATA` (base64 of compact JSON). */
 export async function ffprobeWebmPromptDataJson(filePath: string, timeoutMs = 20_000): Promise<string | null> {
   const args = [
     '-hide_banner',

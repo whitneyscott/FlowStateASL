@@ -38,7 +38,7 @@ export function readBridgeClientFallbackLines(): string[] {
   return readClientFallbackStore();
 }
 
-/** Bridge log shows only `[webm-prompt]` lines from server + client fallback (matches API buffer policy). */
+/** Bridge log UI filters to `[webm-prompt]` lines from server + client fallback (full LTI log still on server). */
 export function mergeBridgeLogLinesForDisplay(serverLines: string[], fallbackLines: string[]): string[] {
   return [...serverLines, ...fallbackLines].filter((l) => l.includes('] [webm-prompt] '));
 }

@@ -18,7 +18,6 @@ type DebugVersion = {
   apiSha?: string;
   apiBranch?: string;
   nodeEnv?: string;
-  bridgeLogFocusWebm?: boolean;
 };
 
 export function BridgeLog({ context, loading, error }: BridgeLogProps) {
@@ -109,7 +108,7 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
     const wm = ltiLog.filter((line) => line.includes('] [webm-prompt] '));
     if (wm.length === 0) {
       newLines.push(
-        '(no webm-prompt lines yet — upload video, load submissions with USE_WEBM_METADATA_FOR_PROMPT, open viewer, or GET /api/debug/ping)',
+        '(no webm-prompt lines yet — submit a WebM, open grading/submissions, or GET /api/debug/ping)',
       );
     } else {
       newLines.push(...wm);

@@ -605,7 +605,7 @@ export class CanvasService {
   }
 
   /**
-   * Add a text-only submission comment (e.g. prompt snapshot JSON after video upload).
+   * Add a text-only submission comment.
    * PUT .../submissions/:userId with comment[text_comment] only.
    */
   async putSubmissionTextComment(
@@ -2506,7 +2506,7 @@ export class CanvasService {
       appendLtiLog('canvas', 'writeSubmissionBody: skip body write (assignment disallows online_text_entry)', {
         assignmentId,
         submission_types: types ?? [],
-        note: 'Prompt text should be sent via submission comment + file via upload (PHP-style two-step).',
+        note: 'Video prompt snapshots use WebM PROMPT_DATA at upload; text-only flow uses submission body when online_text_entry is allowed.',
       });
       // #region agent log
       appendLtiLog('agent-debug', 'writeSubmissionBody: SKIPPED online_text_entry disallowed (Bridge)', {

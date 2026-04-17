@@ -4,13 +4,7 @@ import { In, Repository } from 'typeorm';
 import { ASSESSMENT_REPOSITORY, PROMPT_DATA_REPOSITORY } from '../data/tokens';
 import type { IAssessmentRepository } from '../data/interfaces/assessment-repository.interface';
 import type { IPromptDataRepository } from '../data/interfaces/prompt-data-repository.interface';
-import {
-  appendLtiLog,
-  appendPlacementMarker,
-  isBridgeLogFocusWebmEnabled,
-  type PlacementLtiVersion,
-  type PlacementPath,
-} from '../common/last-error.store';
+import { appendLtiLog, appendPlacementMarker, type PlacementLtiVersion, type PlacementPath } from '../common/last-error.store';
 import { ConfigService } from '@nestjs/config';
 import { CanvasService } from '../canvas/canvas.service';
 import { CourseSettingsService } from '../course-settings/course-settings.service';
@@ -30,9 +24,11 @@ import type { PromptConfigJson, PutPromptConfigDto } from './dto/prompt-config.d
 import { normalizeYoutubeInputToVideoId } from './youtube-video-id.util';
 import { normalizeCanvasRubricAssessment } from './canvas-rubric-assessment.util';
 import {
+  comparableStableFromSubmissionBodyJson,
+  decodePromptDataFromFfmpegMetadataTag,
+  encodePromptDataForFfmpegMetadataTag,
   extractComparablePromptUploadFields,
   FSASL_PROMPT_UPLOAD_KIND,
-  parseJsonObject,
   stableStringifyForPromptMatch,
 } from './prompt-upload-payload.util';
 import {
@@ -294,7 +290,7 @@ export class PromptService {
       if (!res.headersSent) res.status(502).end();
       return;
     }
-    if (isBridgeLogFocusWebmEnabled() && !clientRange?.trim()) {
+    if (!clientRange?.trim()) {
       let targetHint = targetUrl.slice(0, 96);
       try {
         const u = new URL(targetUrl);
@@ -302,7 +298,7 @@ export class PromptService {
       } catch {
         /* keep slice */
       }
-      appendLtiLog('webm-prompt', 'playback: video-proxy (initial)', {
+      appendLtiLog('viewer', 'video-proxy (initial)', {
         courseId: courseId.trim(),
         targetHint,
         contentType: contentTypeRaw,
@@ -2216,38 +2212,6 @@ export class PromptService {
     return { kind: 'youtube', videoId, clipStartSec, clipEndSec, ...(label ? { label } : {}) };
   }
 
-  /**
-   * Latest JSON submission comment that includes a non-empty `deckTimeline` (multi-attempt safe).
-   */
-  private parseLatestDeckStructuredComment(
-    submissionComments: Array<{ id?: number; comment?: string }> | undefined,
-  ): {
-    deckTimeline: Array<{ title: string; startSec: number; videoId?: string }>;
-    durationSeconds?: number;
-  } | null {
-    if (!submissionComments?.length) return null;
-    for (let i = submissionComments.length - 1; i >= 0; i--) {
-      const raw = (submissionComments[i].comment ?? '').trim();
-      if (!raw) continue;
-      try {
-        const parsed = JSON.parse(raw) as { deckTimeline?: unknown; durationSeconds?: unknown };
-        const deckTimeline = this.sanitizeDeckTimelineInput(
-          Array.isArray(parsed.deckTimeline)
-            ? (parsed.deckTimeline as Array<{ title?: unknown; startSec?: unknown; videoId?: unknown }>)
-            : undefined,
-        );
-        if (!deckTimeline?.length) continue;
-        const dur = Number(parsed.durationSeconds);
-        const durationSeconds =
-          Number.isFinite(dur) && dur > 0 ? Math.round(dur * 1000) / 1000 : undefined;
-        return { deckTimeline, durationSeconds };
-      } catch {
-        continue;
-      }
-    }
-    return null;
-  }
-
   /** HTML blob for teacher list / legacy consumers: concatenated per-card titles from deck timeline. */
   private buildPromptHtmlFromDeckTimeline(
     deckTimeline: Array<{ title: string; startSec: number; videoId?: string }>,
@@ -2328,34 +2292,6 @@ export class PromptService {
     // #endregion
     const ctxWithToken: LtiContext = { ...ctx, canvasAccessToken: token };
     await this.canvas.writeSubmissionBody(ctxWithToken, assignmentId, bodyString, token);
-    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
-    const userId = await this.resolveCanvasUserIdForRestApi(ctx, token, domainOverride);
-
-    const commentPayload: Record<string, unknown> = {
-      ...(JSON.parse(bodyString) as Record<string, unknown>),
-      fsaslKind: 'fsasl_prompt_submit',
-    };
-    const commentText = JSON.stringify(commentPayload);
-    try {
-      await this.canvas.putSubmissionTextComment(
-        ctx.courseId,
-        assignmentId,
-        userId,
-        commentText,
-        domainOverride,
-        token,
-      );
-      appendLtiLog('prompt-submit', 'submit: prompt snapshot mirrored to submission comment', {
-        assignmentId,
-        studentUserId: userId,
-      });
-    } catch (cErr) {
-      appendLtiLog('prompt-submit', 'submit: submission comment mirror failed (non-fatal)', {
-        assignmentId,
-        studentUserId: userId,
-        error: String(cErr),
-      });
-    }
 
     appendLtiLog('prompt-submit', 'submit DONE', {
       assignmentId,
@@ -2386,60 +2322,6 @@ export class PromptService {
     return undefined;
   }
 
-  /**
-   * Parse prompt snapshot HTML from submission comments when stored as JSON (text-prompt legacy).
-   * Prefers the **latest** matching comment (newest first). Deck prompts use `parseLatestDeckStructuredComment` instead.
-   */
-  private extractPromptSnapshotFromSubmissionComments(
-    submissionComments: Array<{ id?: number; comment?: string }> | undefined,
-  ): string | undefined {
-    if (!submissionComments?.length) return undefined;
-    for (let i = submissionComments.length - 1; i >= 0; i--) {
-      const raw = (submissionComments[i].comment ?? '').trim();
-      if (!raw) continue;
-      try {
-        const parsed = JSON.parse(raw) as { promptSnapshotHtml?: string };
-        if (parsed.promptSnapshotHtml?.trim()) return parsed.promptSnapshotHtml.trim();
-      } catch {
-        // not JSON — skip
-      }
-    }
-    return undefined;
-  }
-
-  /**
-   * Latest JSON submission comment that includes finite durationSeconds (from post-upload comment).
-   */
-  private extractDurationSecondsFromSubmissionComments(
-    submissionComments: Array<{ id?: number; comment?: string }> | undefined,
-  ): number | null {
-    if (!submissionComments?.length) return null;
-    for (let i = submissionComments.length - 1; i >= 0; i--) {
-      const raw = (submissionComments[i].comment ?? '').trim();
-      if (!raw) continue;
-      try {
-        const parsed = JSON.parse(raw) as { durationSeconds?: unknown };
-        const d = Number(parsed.durationSeconds);
-        if (Number.isFinite(d) && d > 0) return Math.round(d * 1000) / 1000;
-      } catch {
-        // not JSON — skip
-      }
-    }
-    return null;
-  }
-
-  /**
-   * Fallback for older submissions without durationSeconds:
-   * use the last deck prompt start time + minimum prompt total window.
-   */
-  private estimateDurationFromDeckTimelineMinWindow(
-    submissionComments: Array<{ id?: number; comment?: string }> | undefined,
-  ): number | null {
-    const latest = this.parseLatestDeckStructuredComment(submissionComments);
-    if (!latest?.deckTimeline.length) return null;
-    return this.estimateDurationFromDeckTimelineEntries(latest.deckTimeline);
-  }
-
   /** Sum of card `duration` across all stored prompt banks (deck timing from prompt_configs). */
   private totalDurationSecondsFromStoredPromptBanks(config: PromptConfigJson | null | undefined): number | null {
     const banks = config?.videoPromptConfig?.storedPromptBanks;
@@ -2457,18 +2339,6 @@ export class PromptService {
       }
     }
     return any ? Math.round(sum * 1000) / 1000 : null;
-  }
-
-  private useWebmMetadataForPrompt(): boolean {
-    const v = (
-      this.config.get<string>('USE_WEBM_METADATA_FOR_PROMPT') ??
-      process.env.USE_WEBM_METADATA_FOR_PROMPT ??
-      ''
-    )
-      .toString()
-      .trim()
-      .toLowerCase();
-    return v === '1' || v === 'true' || v === 'yes';
   }
 
   private promptHtmlAndDurationFromUploadRecord(
@@ -2494,35 +2364,23 @@ export class PromptService {
     return { promptHtml, videoDurationSeconds };
   }
 
-  private findLatestFsaslPromptUploadComment(
-    submissionComments: Array<{ id?: number; comment?: string }> | undefined,
-  ): Record<string, unknown> | null {
-    if (!submissionComments?.length) return null;
-    for (let i = submissionComments.length - 1; i >= 0; i--) {
-      const raw = (submissionComments[i].comment ?? '').trim();
-      if (!raw) continue;
-      const p = parseJsonObject(raw, 512_000);
-      if (!p.ok) continue;
-      if (String(p.obj.fsaslKind ?? '') === FSASL_PROMPT_UPLOAD_KIND) {
-        return p.obj;
-      }
+  /** Classify prompt shape from submission body JSON only (prompt snapshot for grading comes from WebM metadata). */
+  private classifyAssignmentPromptKindFromBody(body: string | undefined): 'deck' | 'body' | 'none' {
+    const raw = (body ?? '').trim();
+    if (!raw) return 'none';
+    try {
+      const parsed = JSON.parse(raw) as { deckTimeline?: unknown };
+      if (Array.isArray(parsed.deckTimeline) && parsed.deckTimeline.length > 0) return 'deck';
+    } catch {
+      return 'none';
     }
-    return null;
+    return this.extractPromptHtmlFromSubmissionBody(body) ? 'body' : 'none';
   }
 
-  private classifyAssignmentPromptKind(
-    submissionComments: Array<{ id: number; comment: string }> | undefined,
-    body: string | undefined,
-  ): 'deck' | 'comment_snapshot' | 'body' | 'none' {
-    const latestDeck = this.parseLatestDeckStructuredComment(submissionComments);
-    if (latestDeck != null && latestDeck.deckTimeline.length > 0) return 'deck';
-    if (this.extractPromptSnapshotFromSubmissionComments(submissionComments)) return 'comment_snapshot';
-    if (this.extractPromptHtmlFromSubmissionBody(body)) return 'body';
-    return 'none';
-  }
-
-  private computePromptRowFromAssignmentComments(
-    submissionComments: Array<{ id: number; comment: string }> | undefined,
+  /**
+   * When WebM `PROMPT_DATA` is unavailable, use submission body JSON + assignment prompt-bank duration hints only.
+   */
+  private computeAssignmentFallbackPromptRow(
     body: string | undefined,
     promptsFallbackDuration: number | null,
   ): {
@@ -2531,59 +2389,49 @@ export class PromptService {
     durationSource: 'submission' | 'prompts' | 'unknown';
     comparableStable: string | null;
   } {
-    const latestDeck = this.parseLatestDeckStructuredComment(submissionComments);
     let videoDurationSeconds: number | null = null;
     let durationSource: 'submission' | 'prompts' | 'unknown' = 'unknown';
-    if (latestDeck?.durationSeconds != null) {
-      videoDurationSeconds = latestDeck.durationSeconds;
-      durationSource = 'submission';
-    } else if (latestDeck?.deckTimeline.length) {
-      const est = this.estimateDurationFromDeckTimelineEntries(latestDeck.deckTimeline);
-      if (est != null) {
-        videoDurationSeconds = est;
-        durationSource = 'submission';
-      }
-    } else {
-      const fromSubmission = this.extractDurationSecondsFromSubmissionComments(submissionComments);
-      if (fromSubmission != null) {
-        videoDurationSeconds = fromSubmission;
-        durationSource = 'submission';
-      } else if (promptsFallbackDuration != null) {
-        videoDurationSeconds = promptsFallbackDuration;
-        durationSource = 'prompts';
-      }
-    }
-
-    let promptHtml: string | undefined;
-    const deckPromptHtml =
-      latestDeck != null && latestDeck.deckTimeline.length > 0
-        ? this.buildPromptHtmlFromDeckTimeline(latestDeck.deckTimeline).trim()
-        : '';
-    if (deckPromptHtml.length > 0) {
-      promptHtml = deckPromptHtml;
-    } else {
-      const commentPrompt = this.extractPromptSnapshotFromSubmissionComments(submissionComments);
-      if (commentPrompt) promptHtml = commentPrompt;
-      else {
-        const bodyPrompt = this.extractPromptHtmlFromSubmissionBody(body);
-        if (bodyPrompt) promptHtml = bodyPrompt;
+    const raw = (body ?? '').trim();
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw) as { durationSeconds?: unknown; deckTimeline?: unknown };
+        const d = Number(parsed.durationSeconds);
+        if (Number.isFinite(d) && d > 0) {
+          videoDurationSeconds = Math.round(d * 1000) / 1000;
+          durationSource = 'submission';
+        }
+        const deck = this.sanitizeDeckTimelineInput(
+          Array.isArray(parsed.deckTimeline)
+            ? (parsed.deckTimeline as Array<{ title?: unknown; startSec?: unknown; videoId?: unknown }>)
+            : undefined,
+        );
+        if (videoDurationSeconds == null && deck?.length) {
+          const est = this.estimateDurationFromDeckTimelineEntries(deck);
+          if (est != null) {
+            videoDurationSeconds = est;
+            durationSource = 'submission';
+          }
+        }
+      } catch {
+        /* ignore */
       }
     }
-
-    const structured = this.findLatestFsaslPromptUploadComment(submissionComments);
-    const comparableStable = structured
-      ? stableStringifyForPromptMatch(extractComparablePromptUploadFields(structured))
-      : null;
-
+    if (videoDurationSeconds == null && promptsFallbackDuration != null) {
+      videoDurationSeconds = promptsFallbackDuration;
+      durationSource = 'prompts';
+    }
+    const promptHtml = this.extractPromptHtmlFromSubmissionBody(body);
+    const comparableStable = comparableStableFromSubmissionBodyJson(body, 512_000);
     return { promptHtml, videoDurationSeconds, durationSource, comparableStable };
   }
 
-  private async resolvePromptRowWithOptionalWebmMetadata(args: {
+  private static readonly PROMPT_DATA_DECODE_MAX_UTF8 = 512_000;
+
+  private async resolvePromptRowFromWebmMetadata(args: {
     assignmentId: string;
     userId: string;
     token: string;
     canvasVideoUrl: string | undefined;
-    submissionComments: Array<{ id: number; comment: string }>;
     body: string | undefined;
     promptsFallbackDuration: number | null;
   }): Promise<{
@@ -2592,11 +2440,7 @@ export class PromptService {
     durationSource: 'submission' | 'prompts' | 'unknown';
     metadataPromptResolution: 'webm_metadata' | 'assignment_fallback';
   }> {
-    const derived = this.computePromptRowFromAssignmentComments(
-      args.submissionComments,
-      args.body,
-      args.promptsFallbackDuration,
-    );
+    const derived = this.computeAssignmentFallbackPromptRow(args.body, args.promptsFallbackDuration);
     const fallback = (): {
       promptHtml?: string;
       videoDurationSeconds: number | null;
@@ -2608,13 +2452,6 @@ export class PromptService {
       durationSource: derived.durationSource,
       metadataPromptResolution: 'assignment_fallback',
     });
-    if (!this.useWebmMetadataForPrompt()) {
-      appendLtiLog('webm-prompt', 'read: SKIP (USE_WEBM_METADATA_FOR_PROMPT off)', {
-        userId: args.userId,
-        assignmentId: args.assignmentId,
-      });
-      return fallback();
-    }
 
     const url = (args.canvasVideoUrl ?? '').trim();
     if (!url.startsWith('http://') && !url.startsWith('https://')) {
@@ -2657,30 +2494,30 @@ export class PromptService {
       return fallback();
     }
     try {
-      const tagJson = await ffprobeWebmPromptDataJson(dl.path);
-      if (!tagJson) {
+      const tagRaw = await ffprobeWebmPromptDataJson(dl.path);
+      if (!tagRaw) {
         appendLtiLog('webm-prompt', 'read: FAIL (missing_PROMPT_DATA_tag)', { userId: args.userId });
         appendLtiLog('webm-prompt', 'PROMPT_SOURCE: assignment_fallback', { userId: args.userId });
         return fallback();
       }
-      const parsed = parseJsonObject(tagJson, 512_000);
-      if (!parsed.ok) {
+      const decoded = decodePromptDataFromFfmpegMetadataTag(tagRaw, PromptService.PROMPT_DATA_DECODE_MAX_UTF8);
+      if (!decoded.ok) {
         appendLtiLog('webm-prompt', 'read: FAIL (parse_PROMPT_DATA)', {
           userId: args.userId,
-          error: parsed.error,
+          error: decoded.error,
         });
         appendLtiLog('webm-prompt', 'PROMPT_SOURCE: assignment_fallback', { userId: args.userId });
         return fallback();
       }
-      if (String(parsed.obj.fsaslKind ?? '') !== FSASL_PROMPT_UPLOAD_KIND) {
+      if (String(decoded.obj.fsaslKind ?? '') !== FSASL_PROMPT_UPLOAD_KIND) {
         appendLtiLog('webm-prompt', 'read: FAIL (unexpected_fsaslKind)', {
           userId: args.userId,
-          kind: String(parsed.obj.fsaslKind ?? ''),
+          kind: String(decoded.obj.fsaslKind ?? ''),
         });
         appendLtiLog('webm-prompt', 'PROMPT_SOURCE: assignment_fallback', { userId: args.userId });
         return fallback();
       }
-      const fromTag = this.promptHtmlAndDurationFromUploadRecord(parsed.obj);
+      const fromTag = this.promptHtmlAndDurationFromUploadRecord(decoded.obj);
       const hasPromptHtml = !!(fromTag.promptHtml ?? '').trim();
       const hasDuration = fromTag.videoDurationSeconds != null;
       if (!hasPromptHtml && !hasDuration) {
@@ -2689,16 +2526,21 @@ export class PromptService {
         return fallback();
       }
 
-      appendLtiLog('webm-prompt', 'read: OK', { userId: args.userId, assignmentId: args.assignmentId });
+      appendLtiLog('webm-prompt', 'read: OK', {
+        userId: args.userId,
+        assignmentId: args.assignmentId,
+        promptDataUtf8Bytes: decoded.utf8ByteLength,
+      });
 
-      const metaStable = stableStringifyForPromptMatch(
-        extractComparablePromptUploadFields(parsed.obj),
-      );
-      if (derived.comparableStable != null) {
-        const match = metaStable === derived.comparableStable;
+      const metaStable = stableStringifyForPromptMatch(extractComparablePromptUploadFields(decoded.obj));
+      const bodyStable = comparableStableFromSubmissionBodyJson(args.body, 512_000);
+      if (bodyStable != null) {
+        const match = metaStable === bodyStable;
         appendLtiLog('webm-prompt', `PROMPT_MATCH: ${match ? 'yes' : 'no'}`, { userId: args.userId });
       } else {
-        appendLtiLog('webm-prompt', 'PROMPT_MATCH: n/a (no_fsasl_upload_comment)', { userId: args.userId });
+        appendLtiLog('webm-prompt', 'PROMPT_MATCH: n/a (no_submission_body_match_fields)', {
+          userId: args.userId,
+        });
       }
       appendLtiLog('webm-prompt', 'PROMPT_SOURCE: webm_metadata', { userId: args.userId });
 
@@ -2721,9 +2563,9 @@ export class PromptService {
     filename: string,
     options?: {
       deckTimeline?: Array<{ title: string; startSec: number; videoId?: string }>;
-      /** Text / HTML snapshot for non-deck prompts; mirrored into the post-upload JSON comment. */
+      /** Text / HTML snapshot for non-deck prompts; stored in WebM `PROMPT_DATA` metadata. */
       promptSnapshotHtml?: string;
-      /** Pre-recording stimulus (e.g. YouTube clip) for grading replay; stored in upload JSON comment. */
+      /** Pre-recording stimulus (e.g. YouTube clip) for grading replay; stored in WebM `PROMPT_DATA`. */
       mediaStimulus?: unknown;
       /** Client-measured recording length (seconds). */
       durationSeconds?: number;
@@ -2854,25 +2696,33 @@ export class PromptService {
     const sanitizedMediaStimulus = this.sanitizeMediaStimulusInput(options?.mediaStimulus);
     const promptSnapUpload = (options?.promptSnapshotHtml ?? '').trim();
 
-    let commentText: string | null = null;
+    let promptDataPayload: Record<string, unknown> | null = null;
     if (sanitizedCommentDeck?.length || durationRounded != null || sanitizedMediaStimulus || promptSnapUpload) {
-      const commentPayload: Record<string, unknown> = {
+      const payload: Record<string, unknown> = {
         submittedAt: new Date().toISOString(),
         fsaslKind: FSASL_PROMPT_UPLOAD_KIND,
       };
       if (sanitizedCommentDeck?.length) {
-        commentPayload.deckTimeline = sanitizedCommentDeck;
+        payload.deckTimeline = sanitizedCommentDeck;
       }
       if (durationRounded != null) {
-        commentPayload.durationSeconds = durationRounded;
+        payload.durationSeconds = durationRounded;
       }
       if (sanitizedMediaStimulus) {
-        commentPayload.mediaStimulus = sanitizedMediaStimulus;
+        payload.mediaStimulus = sanitizedMediaStimulus;
       }
       if (promptSnapUpload) {
-        commentPayload.promptSnapshotHtml = promptSnapUpload;
+        payload.promptSnapshotHtml = promptSnapUpload;
       }
-      commentText = JSON.stringify(commentPayload);
+      promptDataPayload = payload;
+    }
+
+    let muxTag: string | null = null;
+    let muxUtf8ByteLength: number | null = null;
+    if (promptDataPayload) {
+      const enc = encodePromptDataForFfmpegMetadataTag(promptDataPayload);
+      muxTag = enc.tag;
+      muxUtf8ByteLength = enc.utf8ByteLength;
     }
 
     let uploadSize = video.size;
@@ -2882,7 +2732,7 @@ export class PromptService {
     let muxOutputPath: string | null = null;
     let muxInputCleanup: (() => void) | null = null;
 
-    if (commentText) {
+    if (muxTag) {
       let inputPathForMux: string | null = null;
       if (video.filePath) {
         inputPathForMux = video.filePath;
@@ -2894,7 +2744,7 @@ export class PromptService {
       if (inputPathForMux) {
         const muxed = await muxWebmWithPromptDataTag({
           inputPath: inputPathForMux,
-          promptDataUtf8: commentText,
+          promptDataTagValue: muxTag,
           timeoutMs: DEFAULT_WEBM_MUX_TIMEOUT_MS,
         });
         if (muxed.ok) {
@@ -2904,6 +2754,7 @@ export class PromptService {
           appendLtiLog('webm-prompt', 'write: OK', {
             initiatedBytes: muxed.size,
             originalBytes: video.size,
+            promptDataUtf8Bytes: muxUtf8ByteLength ?? 0,
           });
         } else {
           appendLtiLog('webm-prompt', 'write: FAIL (using_original)', { error: muxed.error });
@@ -2911,7 +2762,7 @@ export class PromptService {
       }
       if (muxInputCleanup) muxInputCleanup();
     } else {
-      appendLtiLog('webm-prompt', 'write: SKIP (no_comment_payload)', {
+      appendLtiLog('webm-prompt', 'write: SKIP (no_prompt_data_payload)', {
         durationSecondsOption: options?.durationSeconds ?? null,
         hasMediaStimulusOption: options?.mediaStimulus != null,
       });
@@ -2958,41 +2809,6 @@ export class PromptService {
       );
     } finally {
       if (muxOutputPath) cleanupMuxOutputPath(muxOutputPath);
-    }
-
-    if (commentText) {
-      appendLtiLog('duration', 'uploadVideo: Canvas comment payload (full JSON as sent)', {
-        commentJson: commentText,
-      });
-      try {
-        await this.canvas.putSubmissionTextComment(
-          ctx.courseId,
-          assignmentId,
-          studentUserId,
-          commentText,
-          domainOverride,
-          token,
-        );
-        appendLtiLog('prompt-submit', 'post-upload: deck/duration/media stored as submission comment', {
-          assignmentId,
-          studentUserId,
-          commentJsonLength: commentText.length,
-          hasDeckTimeline: !!sanitizedCommentDeck?.length,
-          hasDuration: durationRounded != null,
-          hasMediaStimulus: !!sanitizedMediaStimulus,
-        });
-      } catch (commentErr) {
-        appendLtiLog('prompt-submit', 'post-upload: submission comment failed (non-fatal)', {
-          assignmentId,
-          studentUserId,
-          error: String(commentErr),
-        });
-      }
-    } else {
-      appendLtiLog('duration', 'uploadVideo: skipped Canvas comment (no deck timeline, duration, or media stimulus)', {
-        durationSecondsOption: options?.durationSeconds ?? null,
-        hasMediaStimulusOption: options?.mediaStimulus != null,
-      });
     }
 
     const readVerify = (
@@ -3278,29 +3094,25 @@ export class PromptService {
     const rowsWithPrompts = await Promise.all(
       baseRows.map(async (row) => {
         const { canvasVideoUrlRaw, ...publicRow } = row;
-        const resolved = await this.resolvePromptRowWithOptionalWebmMetadata({
+        const resolved = await this.resolvePromptRowFromWebmMetadata({
           assignmentId,
           userId: row.userId,
           token,
           canvasVideoUrl: canvasVideoUrlRaw,
-          submissionComments: row.submissionComments,
           body: typeof row.body === 'string' ? row.body : undefined,
           promptsFallbackDuration,
         });
-        const kind = this.classifyAssignmentPromptKind(
-          row.submissionComments,
+        const kind = this.classifyAssignmentPromptKindFromBody(
           typeof row.body === 'string' ? row.body : undefined,
         );
         const viewerSource =
           resolved.metadataPromptResolution === 'webm_metadata'
             ? 'webm_metadata'
             : kind === 'deck'
-              ? 'submission_comment_deck_timeline'
-              : kind === 'comment_snapshot'
-                ? 'submission_comment'
-                : kind === 'body'
-                  ? 'submission_body'
-                  : 'none';
+              ? 'submission_body_deck_timeline'
+              : kind === 'body'
+                ? 'submission_body'
+                : 'none';
         appendLtiLog('viewer', 'getSubmissions: prompt source selected', {
           userId: row.userId,
           assignmentId,
@@ -3526,29 +3338,25 @@ export class PromptService {
     } catch {
       promptsFallbackDuration = null;
     }
-    const resolved = await this.resolvePromptRowWithOptionalWebmMetadata({
+    const resolved = await this.resolvePromptRowFromWebmMetadata({
       assignmentId,
       userId,
       token,
       canvasVideoUrl: canvasVideoUrlRaw,
-      submissionComments: mappedComments,
       body: typeof sub.body === 'string' ? sub.body : undefined,
       promptsFallbackDuration,
     });
-    const kind = this.classifyAssignmentPromptKind(
-      mappedComments,
+    const kind = this.classifyAssignmentPromptKindFromBody(
       typeof sub.body === 'string' ? sub.body : undefined,
     );
     const viewerSource =
       resolved.metadataPromptResolution === 'webm_metadata'
         ? 'webm_metadata'
         : kind === 'deck'
-          ? 'submission_comment_deck_timeline'
-          : kind === 'comment_snapshot'
-            ? 'submission_comment'
-            : kind === 'body'
-              ? 'submission_body'
-              : 'none';
+          ? 'submission_body_deck_timeline'
+          : kind === 'body'
+            ? 'submission_body'
+            : 'none';
     appendLtiLog('viewer', 'getMySubmission: prompt source selected', {
       userId,
       assignmentId,
