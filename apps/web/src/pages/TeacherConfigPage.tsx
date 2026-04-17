@@ -579,7 +579,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
           unlockAt: unlockAt.trim() || undefined,
           lockAt: lockAt.trim() || undefined,
           allowedAttempts,
-          signToVoiceRequired,
+          signToVoiceRequired: promptMode === 'youtube' ? signToVoiceRequired : false,
           promptMode,
           videoPromptConfig: promptMode === 'decks' ? { selectedDecks, totalCards } : undefined,
           youtubePromptConfig:
@@ -1227,20 +1227,6 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                         <p className="prompter-hint">Displayed in the assignment description and on the first screen students see.</p>
                         <textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={4} placeholder="Instructions for students..." className="prompter-settings-input" />
                       </div>
-                      <div className="prompter-settings-field">
-                        <label className="prompter-settings-label prompter-settings-label-block">
-                          <input
-                            type="checkbox"
-                            checked={signToVoiceRequired}
-                            onChange={(e) => setSignToVoiceRequired(e.target.checked)}
-                          />{' '}
-                          Sign-to-voice: add automatic speech captions to student video submissions (for grading CC)
-                        </label>
-                        <p className="prompter-hint">
-                          After upload, the server transcribes audio (Deepgram), muxes WebVTT into the WebM, and replaces the Canvas file.
-                          Requires <code>DEEPGRAM_API_KEY</code> on the API host.
-                        </p>
-                      </div>
                       {rubricSelector}
                     </div>
                     <div className="prompter-settings-section prompter-settings-access">
@@ -1653,6 +1639,24 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                             className="prompter-settings-input prompter-settings-input-narrow"
                             disabled={!youtubeSubtitleMaskEnabled}
                           />
+                        </div>
+                        <div className="prompter-settings-field prompter-settings-field-mt-sm">
+                          <p className="prompter-settings-label">
+                            <strong>Student recording (WebM)</strong>
+                          </p>
+                          <label className="prompter-settings-label prompter-settings-label-block" htmlFor="youtube-sign-to-voice">
+                            <input
+                              id="youtube-sign-to-voice"
+                              type="checkbox"
+                              checked={signToVoiceRequired}
+                              onChange={(e) => setSignToVoiceRequired(e.target.checked)}
+                            />{' '}
+                            Sign-to-voice: transcribe student camera audio (Deepgram), mux captions into the submission, for
+                            grading CC
+                          </label>
+                          <p className="prompter-hint">
+                            Runs after Canvas accepts the upload. Requires <code>DEEPGRAM_API_KEY</code> on the API host.
+                          </p>
                         </div>
                       </div>
                     )}
