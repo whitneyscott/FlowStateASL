@@ -104,7 +104,7 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
     newLines.push('--- Build Fingerprint ---');
     newLines.push(`web=${webSha} api=${apiSha} branch=${apiBranch} env=${nodeEnv}`);
     newLines.push('');
-    newLines.push('--- WebM prompt (tag webm-prompt only) ---');
+    newLines.push('--- WebM prompt (tag webm-prompt) ---');
     const wm = ltiLog.filter((line) => line.includes('] [webm-prompt] '));
     if (wm.length === 0) {
       newLines.push(
@@ -112,6 +112,16 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
       );
     } else {
       newLines.push(...wm);
+    }
+    newLines.push('');
+    newLines.push('--- Sign-to-voice / Deepgram captions (tag sign-to-voice) ---');
+    const stv = ltiLog.filter((line) => line.includes('] [sign-to-voice] '));
+    if (stv.length === 0) {
+      newLines.push(
+        '(no sign-to-voice lines yet — enable Sign-to-voice on the assignment, set DEEPGRAM_API_KEY on API, then upload a submission)',
+      );
+    } else {
+      newLines.push(...stv);
     }
     setLines(newLines);
   }, [ltiLog, debugVersion]);

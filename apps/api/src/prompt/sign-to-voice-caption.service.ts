@@ -73,7 +73,19 @@ export class SignToVoiceCaptionService {
     domainOverride: string | undefined;
     canvasToken: string;
   }): void {
-    if (!args.signToVoiceRequired) return;
+    if (!args.signToVoiceRequired) {
+      appendLtiLog('sign-to-voice', 'pipeline: SKIPPED (assignment not configured for sign-to-voice)', {
+        assignmentId: args.assignmentId,
+        userId: args.studentUserId,
+        fileId: args.initialCanvasFileId,
+      });
+      return;
+    }
+    appendLtiLog('sign-to-voice', 'pipeline: scheduled after upload (signToVoiceRequired=true)', {
+      assignmentId: args.assignmentId,
+      userId: args.studentUserId,
+      fileId: args.initialCanvasFileId,
+    });
     const apiKey = (this.config.get<string>('DEEPGRAM_API_KEY') ?? process.env.DEEPGRAM_API_KEY ?? '').trim();
     if (!apiKey) {
       appendLtiLog('sign-to-voice', 'SKIP pipeline: DEEPGRAM_API_KEY unset', {
@@ -146,18 +158,34 @@ export class SignToVoiceCaptionService {
         DEFAULT_WEBM_PROBE_DOWNLOAD_MAX_BYTES,
       );
       webmDlCleanup = c1;
+      appendLtiLog('sign-to-voice', 'pipeline: WebM downloaded for extract', {
+        userId: studentUserId,
+        maxBytesProbed: DEFAULT_WEBM_PROBE_DOWNLOAD_MAX_BYTES,
+      });
 
       const { wavPath, cleanup: c2 } = await extractAudioWavFromWebm(webmPath);
       audioCleanup = c2;
       const wavBuf = readFileSync(wavPath);
+      appendLtiLog('sign-to-voice', 'pipeline: WAV extracted for Deepgram', {
+        userId: studentUserId,
+        wavBytes: wavBuf.length,
+      });
 
+      appendLtiLog('sign-to-voice', 'pipeline: Deepgram transcribe request', { userId: studentUserId });
       const { vtt } = await transcribeAudioWithDeepgram(wavBuf, 'audio/wav', args.deepgramApiKey);
+      const vttLen = (vtt ?? '').length;
+      appendLtiLog('sign-to-voice', 'pipeline: Deepgram transcribe OK', {
+        userId: studentUserId,
+        vttChars: vttLen,
+        vttCueLines: (vtt.match(/\n\n/g) ?? []).length,
+      });
 
       const { outputPath: muxedPath, size: muxedSize, cleanup: c3 } = await muxWebVttIntoWebm({
         webmPath,
         vttContent: vtt,
       });
       muxCleanup = c3;
+      appendLtiLog('sign-to-voice', 'pipeline: WebM+VTT mux complete', { userId: studentUserId, muxedBytes: muxedSize });
 
       const { uploadUrl, uploadParams } = await this.canvas.initiateSubmissionFileUploadForUser(
         courseId,

@@ -38,9 +38,16 @@ export function readBridgeClientFallbackLines(): string[] {
   return readClientFallbackStore();
 }
 
-/** Bridge log UI filters to `[webm-prompt]` lines from server + client fallback (full LTI log still on server). */
+/** Tags mirrored from server `appendLtiLog(scope, …)` for the Bridge debug panel. */
+const BRIDGE_LTI_LOG_SCOPES = ['webm-prompt', 'sign-to-voice'] as const;
+
+export function ltiLogLineMatchesBridgeFilter(line: string): boolean {
+  return BRIDGE_LTI_LOG_SCOPES.some((scope) => line.includes(`] [${scope}] `));
+}
+
+/** Bridge log UI: WebM prompt metadata + sign-to-voice / Deepgram caption pipeline (server + client fallback). */
 export function mergeBridgeLogLinesForDisplay(serverLines: string[], fallbackLines: string[]): string[] {
-  return [...serverLines, ...fallbackLines].filter((l) => l.includes('] [webm-prompt] '));
+  return [...serverLines, ...fallbackLines].filter(ltiLogLineMatchesBridgeFilter);
 }
 
 export function clearBridgeClientFallbackLines(): void {
