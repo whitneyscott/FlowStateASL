@@ -577,15 +577,49 @@ export class PromptService {
     return null;
   }
 
+  /**
+   * Learners often upload with Canvas OAuth; they may be unable to read the Prompt Manager Settings
+   * assignment, so `configs[assignmentId]` is missing from the first blob read. Mirror getConfig: fall back
+   * to the course-stored teacher token so sign-to-voice still resolves after the teacher enables it.
+   */
   private async resolveSignToVoiceRequired(
     courseId: string,
     assignmentId: string,
     domainOverride: string | undefined,
     token: string,
   ): Promise<boolean> {
-    const blob = await this.readPromptManagerSettingsBlob(courseId, domainOverride, token);
-    const cfg = blob?.configs?.[assignmentId];
-    return cfg?.signToVoiceRequired === true;
+    const readCfg = async (tok: string) => {
+      const blob = await this.readPromptManagerSettingsBlob(courseId, domainOverride, tok);
+      return blob?.configs?.[assignmentId] ?? null;
+    };
+    try {
+      let cfg = await readCfg(token);
+      if (!cfg) {
+        const teacherTok = await this.courseSettings.getCourseStoredCanvasToken(courseId);
+        if (teacherTok?.trim() && teacherTok !== token) {
+          try {
+            cfg = (await readCfg(teacherTok)) ?? null;
+            if (cfg) {
+              appendLtiLog('sign-to-voice', 'resolveSignToVoiceRequired: loaded config via course-stored teacher token', {
+                assignmentId,
+              });
+            }
+          } catch (e) {
+            appendLtiLog('sign-to-voice', 'resolveSignToVoiceRequired: teacher token blob read failed', {
+              assignmentId,
+              error: String(e),
+            });
+          }
+        }
+      }
+      return cfg?.signToVoiceRequired === true;
+    } catch (e) {
+      appendLtiLog('sign-to-voice', 'resolveSignToVoiceRequired: read failed', {
+        assignmentId,
+        error: String(e),
+      });
+      return false;
+    }
   }
 
   private async rememberResourceLinkAssignmentMapping(
@@ -1413,6 +1447,11 @@ export class PromptService {
       domainOverride,
       token,
     );
+    appendLtiLog('sign-to-voice', 'config: Prompt Manager blob saved', {
+      assignmentId,
+      signToVoiceRequired: merged.signToVoiceRequired === true,
+      promptMode: merged.promptMode ?? '(unset)',
+    });
 
     try {
       const ann = await this.canvas.findSettingsAnnouncementByTitle(

@@ -118,7 +118,7 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
     const stv = ltiLog.filter((line) => line.includes('] [sign-to-voice] '));
     if (stv.length === 0) {
       newLines.push(
-        '(no sign-to-voice lines yet — enable Sign-to-voice on the assignment, set DEEPGRAM_API_KEY on API, then upload a submission)',
+        '(no sign-to-voice log lines yet — this panel only shows server events. After Save in Prompt Manager and a student upload, lines appear here; if the pipeline was skipped, look for SKIPPED or resolveSignToVoiceRequired.)',
       );
     } else {
       newLines.push(...stv);
