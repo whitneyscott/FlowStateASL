@@ -3,6 +3,14 @@ const ltiLog: string[] = [];
 const MAX_LTI_LOG_LINES = 400;
 let lastCanvasApiResponse: { status: number; statusText: string; bodyPreview: string } | null = null;
 
+/** When set, Bridge server log keeps only allowlisted tags (temporary WebM validation). */
+const BRIDGE_LOG_FOCUS_WEBM_TAGS = new Set(['webm-prompt', 'debug']);
+
+export function isBridgeLogFocusWebmEnabled(): boolean {
+  const v = (process.env.BRIDGE_LOG_FOCUS_WEBM ?? '').trim().toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes';
+}
+
 export type PlacementLtiVersion = '1.1' | '1.3' | 'unknown';
 export type PlacementPath =
   | 'assignment_anchor'
@@ -36,6 +44,9 @@ export function getLastError(): { endpoint: string; message: string } | null {
 }
 
 export function appendLtiLog(tag: string, message: string, extra?: Record<string, unknown>): void {
+  if (isBridgeLogFocusWebmEnabled() && !BRIDGE_LOG_FOCUS_WEBM_TAGS.has(tag)) {
+    return;
+  }
   const line = `[${new Date().toISOString()}] [${tag}] ${message}${extra ? ' ' + JSON.stringify(extra) : ''}`;
   ltiLog.push(line);
   while (ltiLog.length > MAX_LTI_LOG_LINES) ltiLog.shift();

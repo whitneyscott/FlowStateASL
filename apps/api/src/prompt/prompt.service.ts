@@ -28,6 +28,21 @@ import { getSproutAccountId } from '../common/utils/sprout-account-id.util';
 import type { PromptConfigJson, PutPromptConfigDto } from './dto/prompt-config.dto';
 import { normalizeYoutubeInputToVideoId } from './youtube-video-id.util';
 import { normalizeCanvasRubricAssessment } from './canvas-rubric-assessment.util';
+import {
+  extractComparablePromptUploadFields,
+  FSASL_PROMPT_UPLOAD_KIND,
+  parseJsonObject,
+  stableStringifyForPromptMatch,
+} from './prompt-upload-payload.util';
+import {
+  cleanupMuxOutputPath,
+  DEFAULT_WEBM_MUX_TIMEOUT_MS,
+  DEFAULT_WEBM_PROBE_DOWNLOAD_MAX_BYTES,
+  downloadAuthenticatedVideoToTempFile,
+  ffprobeWebmPromptDataJson,
+  muxWebmWithPromptDataTag,
+  writeBufferToTempWebmFile,
+} from './webm-prompt-metadata.util';
 import { randomUUID } from 'crypto';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -2429,6 +2444,246 @@ export class PromptService {
     return any ? Math.round(sum * 1000) / 1000 : null;
   }
 
+  private useWebmMetadataForPrompt(): boolean {
+    const v = (
+      this.config.get<string>('USE_WEBM_METADATA_FOR_PROMPT') ??
+      process.env.USE_WEBM_METADATA_FOR_PROMPT ??
+      ''
+    )
+      .toString()
+      .trim()
+      .toLowerCase();
+    return v === '1' || v === 'true' || v === 'yes';
+  }
+
+  private promptHtmlAndDurationFromUploadRecord(
+    parsed: Record<string, unknown>,
+  ): { promptHtml?: string; videoDurationSeconds: number | null } {
+    const deck = this.sanitizeDeckTimelineInput(
+      Array.isArray(parsed.deckTimeline)
+        ? (parsed.deckTimeline as Array<{ title?: unknown; startSec?: unknown; videoId?: unknown }>)
+        : undefined,
+    );
+    let promptHtml: string | undefined;
+    if (deck?.length) {
+      const h = this.buildPromptHtmlFromDeckTimeline(deck).trim();
+      if (h) promptHtml = h;
+    }
+    if (!promptHtml) {
+      const snap = String(parsed.promptSnapshotHtml ?? '').trim();
+      if (snap) promptHtml = snap;
+    }
+    const dur = Number(parsed.durationSeconds);
+    const videoDurationSeconds =
+      Number.isFinite(dur) && dur > 0 ? Math.round(dur * 1000) / 1000 : null;
+    return { promptHtml, videoDurationSeconds };
+  }
+
+  private findLatestFsaslPromptUploadComment(
+    submissionComments: Array<{ id?: number; comment?: string }> | undefined,
+  ): Record<string, unknown> | null {
+    if (!submissionComments?.length) return null;
+    for (let i = submissionComments.length - 1; i >= 0; i--) {
+      const raw = (submissionComments[i].comment ?? '').trim();
+      if (!raw) continue;
+      const p = parseJsonObject(raw, 512_000);
+      if (!p.ok) continue;
+      if (String(p.obj.fsaslKind ?? '') === FSASL_PROMPT_UPLOAD_KIND) {
+        return p.obj;
+      }
+    }
+    return null;
+  }
+
+  private classifyAssignmentPromptKind(
+    submissionComments: Array<{ id: number; comment: string }> | undefined,
+    body: string | undefined,
+  ): 'deck' | 'comment_snapshot' | 'body' | 'none' {
+    const latestDeck = this.parseLatestDeckStructuredComment(submissionComments);
+    if (latestDeck != null && latestDeck.deckTimeline.length > 0) return 'deck';
+    if (this.extractPromptSnapshotFromSubmissionComments(submissionComments)) return 'comment_snapshot';
+    if (this.extractPromptHtmlFromSubmissionBody(body)) return 'body';
+    return 'none';
+  }
+
+  private computePromptRowFromAssignmentComments(
+    submissionComments: Array<{ id: number; comment: string }> | undefined,
+    body: string | undefined,
+    promptsFallbackDuration: number | null,
+  ): {
+    promptHtml?: string;
+    videoDurationSeconds: number | null;
+    durationSource: 'submission' | 'prompts' | 'unknown';
+    comparableStable: string | null;
+  } {
+    const latestDeck = this.parseLatestDeckStructuredComment(submissionComments);
+    let videoDurationSeconds: number | null = null;
+    let durationSource: 'submission' | 'prompts' | 'unknown' = 'unknown';
+    if (latestDeck?.durationSeconds != null) {
+      videoDurationSeconds = latestDeck.durationSeconds;
+      durationSource = 'submission';
+    } else if (latestDeck?.deckTimeline.length) {
+      const est = this.estimateDurationFromDeckTimelineEntries(latestDeck.deckTimeline);
+      if (est != null) {
+        videoDurationSeconds = est;
+        durationSource = 'submission';
+      }
+    } else {
+      const fromSubmission = this.extractDurationSecondsFromSubmissionComments(submissionComments);
+      if (fromSubmission != null) {
+        videoDurationSeconds = fromSubmission;
+        durationSource = 'submission';
+      } else if (promptsFallbackDuration != null) {
+        videoDurationSeconds = promptsFallbackDuration;
+        durationSource = 'prompts';
+      }
+    }
+
+    let promptHtml: string | undefined;
+    const deckPromptHtml =
+      latestDeck != null && latestDeck.deckTimeline.length > 0
+        ? this.buildPromptHtmlFromDeckTimeline(latestDeck.deckTimeline).trim()
+        : '';
+    if (deckPromptHtml.length > 0) {
+      promptHtml = deckPromptHtml;
+    } else {
+      const commentPrompt = this.extractPromptSnapshotFromSubmissionComments(submissionComments);
+      if (commentPrompt) promptHtml = commentPrompt;
+      else {
+        const bodyPrompt = this.extractPromptHtmlFromSubmissionBody(body);
+        if (bodyPrompt) promptHtml = bodyPrompt;
+      }
+    }
+
+    const structured = this.findLatestFsaslPromptUploadComment(submissionComments);
+    const comparableStable = structured
+      ? stableStringifyForPromptMatch(extractComparablePromptUploadFields(structured))
+      : null;
+
+    return { promptHtml, videoDurationSeconds, durationSource, comparableStable };
+  }
+
+  private async resolvePromptRowWithOptionalWebmMetadata(args: {
+    assignmentId: string;
+    userId: string;
+    token: string;
+    canvasVideoUrl: string | undefined;
+    submissionComments: Array<{ id: number; comment: string }>;
+    body: string | undefined;
+    promptsFallbackDuration: number | null;
+  }): Promise<{
+    promptHtml?: string;
+    videoDurationSeconds: number | null;
+    durationSource: 'submission' | 'prompts' | 'unknown';
+    metadataPromptResolution: 'webm_metadata' | 'assignment_fallback';
+  }> {
+    const derived = this.computePromptRowFromAssignmentComments(
+      args.submissionComments,
+      args.body,
+      args.promptsFallbackDuration,
+    );
+    const fallback = (): {
+      promptHtml?: string;
+      videoDurationSeconds: number | null;
+      durationSource: 'submission' | 'prompts' | 'unknown';
+      metadataPromptResolution: 'assignment_fallback';
+    } => ({
+      promptHtml: derived.promptHtml,
+      videoDurationSeconds: derived.videoDurationSeconds,
+      durationSource: derived.durationSource,
+      metadataPromptResolution: 'assignment_fallback',
+    });
+    if (!this.useWebmMetadataForPrompt()) {
+      return fallback();
+    }
+
+    const url = (args.canvasVideoUrl ?? '').trim();
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      appendLtiLog('webm-prompt', 'read: FAIL (no_canvas_http_video_url)', {
+        userId: args.userId,
+        assignmentId: args.assignmentId,
+      });
+      appendLtiLog('webm-prompt', 'PROMPT_SOURCE: assignment_fallback', { userId: args.userId });
+      return fallback();
+    }
+    if (url.includes('external_tools/retrieve')) {
+      appendLtiLog('webm-prompt', 'read: FAIL (lti_retrieve_url)', { userId: args.userId });
+      appendLtiLog('webm-prompt', 'PROMPT_SOURCE: assignment_fallback', { userId: args.userId });
+      return fallback();
+    }
+
+    const dl = await downloadAuthenticatedVideoToTempFile(
+      url,
+      args.token,
+      DEFAULT_WEBM_PROBE_DOWNLOAD_MAX_BYTES,
+    );
+    if (!dl.ok) {
+      appendLtiLog('webm-prompt', 'read: FAIL (download)', {
+        userId: args.userId,
+        error: dl.error,
+      });
+      appendLtiLog('webm-prompt', 'PROMPT_SOURCE: assignment_fallback', { userId: args.userId });
+      return fallback();
+    }
+    try {
+      const tagJson = await ffprobeWebmPromptDataJson(dl.path);
+      if (!tagJson) {
+        appendLtiLog('webm-prompt', 'read: FAIL (missing_PROMPT_DATA_tag)', { userId: args.userId });
+        appendLtiLog('webm-prompt', 'PROMPT_SOURCE: assignment_fallback', { userId: args.userId });
+        return fallback();
+      }
+      const parsed = parseJsonObject(tagJson, 512_000);
+      if (!parsed.ok) {
+        appendLtiLog('webm-prompt', 'read: FAIL (parse_PROMPT_DATA)', {
+          userId: args.userId,
+          error: parsed.error,
+        });
+        appendLtiLog('webm-prompt', 'PROMPT_SOURCE: assignment_fallback', { userId: args.userId });
+        return fallback();
+      }
+      if (String(parsed.obj.fsaslKind ?? '') !== FSASL_PROMPT_UPLOAD_KIND) {
+        appendLtiLog('webm-prompt', 'read: FAIL (unexpected_fsaslKind)', {
+          userId: args.userId,
+          kind: String(parsed.obj.fsaslKind ?? ''),
+        });
+        appendLtiLog('webm-prompt', 'PROMPT_SOURCE: assignment_fallback', { userId: args.userId });
+        return fallback();
+      }
+      const fromTag = this.promptHtmlAndDurationFromUploadRecord(parsed.obj);
+      const hasPromptHtml = !!(fromTag.promptHtml ?? '').trim();
+      const hasDuration = fromTag.videoDurationSeconds != null;
+      if (!hasPromptHtml && !hasDuration) {
+        appendLtiLog('webm-prompt', 'read: FAIL (empty_prompt_fields)', { userId: args.userId });
+        appendLtiLog('webm-prompt', 'PROMPT_SOURCE: assignment_fallback', { userId: args.userId });
+        return fallback();
+      }
+
+      appendLtiLog('webm-prompt', 'read: OK', { userId: args.userId, assignmentId: args.assignmentId });
+
+      const metaStable = stableStringifyForPromptMatch(
+        extractComparablePromptUploadFields(parsed.obj),
+      );
+      if (derived.comparableStable != null) {
+        const match = metaStable === derived.comparableStable;
+        appendLtiLog('webm-prompt', `PROMPT_MATCH: ${match ? 'yes' : 'no'}`, { userId: args.userId });
+      } else {
+        appendLtiLog('webm-prompt', 'PROMPT_MATCH: n/a (no_fsasl_upload_comment)', { userId: args.userId });
+      }
+      appendLtiLog('webm-prompt', 'PROMPT_SOURCE: webm_metadata', { userId: args.userId });
+
+      return {
+        promptHtml: hasPromptHtml ? fromTag.promptHtml : derived.promptHtml,
+        videoDurationSeconds: hasDuration
+          ? (fromTag.videoDurationSeconds as number)
+          : derived.videoDurationSeconds,
+        durationSource: hasDuration ? 'submission' : derived.durationSource,
+        metadataPromptResolution: 'webm_metadata',
+      };
+    } finally {
+      dl.cleanup();
+    }
+  }
+
   async uploadVideo(
     ctx: LtiContext,
     video: { buffer?: Buffer; filePath?: string; size: number },
@@ -2555,44 +2810,6 @@ export class PromptService {
     });
 
     const assignmentId = await this.getPrompterAssignmentId(ctx);
-    appendLtiLog('prompt-upload', 'uploadVideo: initiateSubmissionFileUploadForUser', {
-      assignmentId,
-      studentUserId,
-      studentIdSource,
-    });
-    const { uploadUrl, uploadParams } = await this.canvas.initiateSubmissionFileUploadForUser(
-      ctx.courseId,
-      assignmentId,
-      studentUserId,
-      filename,
-      video.size,
-      'video/webm',
-      domainOverride,
-      token,
-    );
-    appendLtiLog('prompt-upload', 'uploadVideo: uploadFileToCanvas', {
-      bufferSize: video.size,
-      source: video.filePath ? 'filepath' : 'buffer',
-    });
-    const uploadInput = video.filePath
-      ? { filePath: video.filePath, size: video.size }
-      : (video.buffer ?? Buffer.alloc(0));
-    const { fileId } = await this.canvas.uploadFileToCanvas(uploadUrl, uploadParams, uploadInput, {
-      tokenOverride: token,
-    });
-    appendLtiLog('prompt-upload', 'uploadVideo: attachFileToSubmission', {
-      fileId,
-      assignmentId,
-      studentUserId,
-    });
-    await this.canvas.attachFileToSubmission(
-      ctx.courseId,
-      assignmentId,
-      studentUserId,
-      fileId,
-      domainOverride,
-      token,
-    );
 
     const optDur = options?.durationSeconds;
     const durationFinite =
@@ -2606,10 +2823,11 @@ export class PromptService {
     const sanitizedMediaStimulus = this.sanitizeMediaStimulusInput(options?.mediaStimulus);
     const promptSnapUpload = (options?.promptSnapshotHtml ?? '').trim();
 
+    let commentText: string | null = null;
     if (sanitizedCommentDeck?.length || durationRounded != null || sanitizedMediaStimulus || promptSnapUpload) {
       const commentPayload: Record<string, unknown> = {
         submittedAt: new Date().toISOString(),
-        fsaslKind: 'fsasl_prompt_upload',
+        fsaslKind: FSASL_PROMPT_UPLOAD_KIND,
       };
       if (sanitizedCommentDeck?.length) {
         commentPayload.deckTimeline = sanitizedCommentDeck;
@@ -2623,7 +2841,95 @@ export class PromptService {
       if (promptSnapUpload) {
         commentPayload.promptSnapshotHtml = promptSnapUpload;
       }
-      const commentText = JSON.stringify(commentPayload);
+      commentText = JSON.stringify(commentPayload);
+    }
+
+    let uploadSize = video.size;
+    let uploadInput: { filePath: string; size: number } | Buffer = video.filePath
+      ? { filePath: video.filePath, size: video.size }
+      : (video.buffer ?? Buffer.alloc(0));
+    let muxOutputPath: string | null = null;
+    let muxInputCleanup: (() => void) | null = null;
+
+    if (commentText) {
+      let inputPathForMux: string | null = null;
+      if (video.filePath) {
+        inputPathForMux = video.filePath;
+      } else if (video.buffer) {
+        const t = writeBufferToTempWebmFile(video.buffer);
+        inputPathForMux = t.path;
+        muxInputCleanup = t.cleanup;
+      }
+      if (inputPathForMux) {
+        const muxed = await muxWebmWithPromptDataTag({
+          inputPath: inputPathForMux,
+          promptDataUtf8: commentText,
+          timeoutMs: DEFAULT_WEBM_MUX_TIMEOUT_MS,
+        });
+        if (muxed.ok) {
+          muxOutputPath = muxed.outputPath;
+          uploadSize = muxed.size;
+          uploadInput = { filePath: muxed.outputPath, size: muxed.size };
+          appendLtiLog('webm-prompt', 'write: OK', {
+            initiatedBytes: muxed.size,
+            originalBytes: video.size,
+          });
+        } else {
+          appendLtiLog('webm-prompt', 'write: FAIL (using_original)', { error: muxed.error });
+        }
+      }
+      if (muxInputCleanup) muxInputCleanup();
+    } else {
+      appendLtiLog('webm-prompt', 'write: SKIP (no_comment_payload)', {
+        durationSecondsOption: options?.durationSeconds ?? null,
+        hasMediaStimulusOption: options?.mediaStimulus != null,
+      });
+    }
+
+    appendLtiLog('prompt-upload', 'uploadVideo: initiateSubmissionFileUploadForUser', {
+      assignmentId,
+      studentUserId,
+      studentIdSource,
+      uploadBytes: uploadSize,
+    });
+    let fileId: string;
+    try {
+      const { uploadUrl, uploadParams } = await this.canvas.initiateSubmissionFileUploadForUser(
+        ctx.courseId,
+        assignmentId,
+        studentUserId,
+        filename,
+        uploadSize,
+        'video/webm',
+        domainOverride,
+        token,
+      );
+      appendLtiLog('prompt-upload', 'uploadVideo: uploadFileToCanvas', {
+        bufferSize: uploadSize,
+        source: typeof uploadInput === 'object' && uploadInput && 'filePath' in uploadInput ? 'filepath' : 'buffer',
+      });
+      const up = await this.canvas.uploadFileToCanvas(uploadUrl, uploadParams, uploadInput, {
+        tokenOverride: token,
+      });
+      fileId = up.fileId;
+      appendLtiLog('prompt-upload', 'uploadVideo: attachFileToSubmission', {
+        fileId,
+        assignmentId,
+        studentUserId,
+      });
+      await this.canvas.attachFileToSubmission(
+        ctx.courseId,
+        assignmentId,
+        studentUserId,
+        fileId,
+        domainOverride,
+        token,
+      );
+    } finally {
+      if (muxOutputPath) cleanupMuxOutputPath(muxOutputPath);
+    }
+
+    if (commentText) {
       appendLtiLog('duration', 'uploadVideo: Canvas comment payload (full JSON as sent)', {
         commentJson: commentText,
       });
@@ -2787,6 +3093,11 @@ export class PromptService {
       messageType: ctx.messageType,
       hasDeepLinkReturnUrl: !!ctx.deepLinkReturnUrl,
     });
+    appendLtiLog(
+      'webm-prompt',
+      'scope: submitDeepLink bypasses uploadVideo (no_PROMPT_DATA_mux until wired to shared mux)',
+      { bytes: buffer.length },
+    );
     if (ctx.messageType !== 'LtiDeepLinkingRequest' || !ctx.deepLinkReturnUrl) {
       appendLtiLog('prompt-deeplink', 'submitDeepLink FAIL: missing context');
       throw new Error('Deep Linking context required (messageType LtiDeepLinkingRequest and deepLinkReturnUrl)');
@@ -2891,7 +3202,8 @@ export class PromptService {
       if (Number.isFinite(submittedAtMs)) {
         videoSubmittedAtByUser.set(userId, submittedAtMs);
       }
-      let videoUrl = getVideoUrlFromCanvasSubmission(s);
+      const canvasVideoUrlRaw = getVideoUrlFromCanvasSubmission(s);
+      let videoUrl = canvasVideoUrlRaw;
       if (!videoUrl) {
         const submissionToken = this.deepLinkFileStore.getSubmissionToken(ctx.courseId, assignmentId, userId);
         if (submissionToken) {
@@ -2913,6 +3225,7 @@ export class PromptService {
             ?.filter((c) => c.id != null && c.comment != null)
             .map((c) => ({ id: c.id!, comment: c.comment! })) ?? [],
         videoUrl,
+        canvasVideoUrlRaw,
         ...(rubricAssessment ? { rubricAssessment } : {}),
       };
     });
@@ -2931,73 +3244,45 @@ export class PromptService {
     } catch {
       promptsFallbackDuration = null;
     }
-    const rowsWithPrompts = baseRows.map((row) => {
-      const latestDeck = this.parseLatestDeckStructuredComment(row.submissionComments);
-
-      let videoDurationSeconds: number | null = null;
-      let durationSource: 'submission' | 'prompts' | 'unknown' = 'unknown';
-      if (latestDeck?.durationSeconds != null) {
-        videoDurationSeconds = latestDeck.durationSeconds;
-        durationSource = 'submission';
-      } else if (latestDeck?.deckTimeline.length) {
-        const est = this.estimateDurationFromDeckTimelineEntries(latestDeck.deckTimeline);
-        if (est != null) {
-          videoDurationSeconds = est;
-          durationSource = 'submission';
-        }
-      } else {
-        const fromSubmission = this.extractDurationSecondsFromSubmissionComments(row.submissionComments);
-        if (fromSubmission != null) {
-          videoDurationSeconds = fromSubmission;
-          durationSource = 'submission';
-        } else if (promptsFallbackDuration != null) {
-          videoDurationSeconds = promptsFallbackDuration;
-          durationSource = 'prompts';
-        }
-      }
-
-      const deckPromptHtml =
-        latestDeck != null && latestDeck.deckTimeline.length > 0
-          ? this.buildPromptHtmlFromDeckTimeline(latestDeck.deckTimeline).trim()
-          : '';
-      if (deckPromptHtml.length > 0) {
+    const rowsWithPrompts = await Promise.all(
+      baseRows.map(async (row) => {
+        const { canvasVideoUrlRaw, ...publicRow } = row;
+        const resolved = await this.resolvePromptRowWithOptionalWebmMetadata({
+          assignmentId,
+          userId: row.userId,
+          token,
+          canvasVideoUrl: canvasVideoUrlRaw,
+          submissionComments: row.submissionComments,
+          body: typeof row.body === 'string' ? row.body : undefined,
+          promptsFallbackDuration,
+        });
+        const kind = this.classifyAssignmentPromptKind(
+          row.submissionComments,
+          typeof row.body === 'string' ? row.body : undefined,
+        );
+        const viewerSource =
+          resolved.metadataPromptResolution === 'webm_metadata'
+            ? 'webm_metadata'
+            : kind === 'deck'
+              ? 'submission_comment_deck_timeline'
+              : kind === 'comment_snapshot'
+                ? 'submission_comment'
+                : kind === 'body'
+                  ? 'submission_body'
+                  : 'none';
         appendLtiLog('viewer', 'getSubmissions: prompt source selected', {
           userId: row.userId,
           assignmentId,
-          source: 'submission_comment_deck_timeline',
+          source: viewerSource,
         });
-        return { ...row, promptHtml: deckPromptHtml, videoDurationSeconds, durationSource };
-      }
-
-      const commentPrompt = this.extractPromptSnapshotFromSubmissionComments(row.submissionComments);
-      if (commentPrompt) {
-        appendLtiLog('viewer', 'getSubmissions: prompt source selected', {
-          userId: row.userId,
-          assignmentId,
-          source: 'submission_comment',
-        });
-        return { ...row, promptHtml: commentPrompt, videoDurationSeconds, durationSource };
-      }
-
-      const bodyPrompt = this.extractPromptHtmlFromSubmissionBody(
-        typeof row.body === 'string' ? row.body : undefined,
-      );
-      if (bodyPrompt) {
-        appendLtiLog('viewer', 'getSubmissions: prompt source selected', {
-          userId: row.userId,
-          assignmentId,
-          source: 'submission_body',
-        });
-        return { ...row, promptHtml: bodyPrompt, videoDurationSeconds, durationSource };
-      }
-
-      appendLtiLog('viewer', 'getSubmissions: prompt source selected', {
-        userId: row.userId,
-        assignmentId,
-        source: 'none',
-      });
-      return { ...row, videoDurationSeconds, durationSource };
-    });
+        return {
+          ...publicRow,
+          promptHtml: resolved.promptHtml,
+          videoDurationSeconds: resolved.videoDurationSeconds,
+          durationSource: resolved.durationSource,
+        };
+      }),
+    );
     for (const row of rowsWithPrompts) {
       appendLtiLog('duration', 'getSubmissions: submission row', {
         userId: row.userId,
@@ -3183,7 +3468,8 @@ export class PromptService {
       token,
     );
     if (!sub || (!ctx.roles?.toLowerCase().includes('instructor') && !sub.submitted_at)) return null;
-    let videoUrl = getVideoUrlFromCanvasSubmission(sub);
+    const canvasVideoUrlRaw = getVideoUrlFromCanvasSubmission(sub);
+    let videoUrl = canvasVideoUrlRaw;
     if (!videoUrl) {
       const tok = this.deepLinkFileStore.getSubmissionToken(ctx.courseId, assignmentId, userId);
       if (tok) videoUrl = `/api/prompt/submission/${encodeURIComponent(tok)}`;
@@ -3193,20 +3479,6 @@ export class PromptService {
       sub.submission_comments
         ?.filter((c) => c.id != null && c.comment != null)
         .map((c) => ({ id: c.id!, comment: c.comment! })) ?? [];
-    const latestDeck = this.parseLatestDeckStructuredComment(mappedComments);
-    const deckPromptHtml =
-      latestDeck != null && latestDeck.deckTimeline.length > 0
-        ? this.buildPromptHtmlFromDeckTimeline(latestDeck.deckTimeline).trim()
-        : '';
-    let promptHtml: string | undefined =
-      deckPromptHtml.length > 0
-        ? deckPromptHtml
-        : this.extractPromptSnapshotFromSubmissionComments(mappedComments);
-    if (!promptHtml) {
-      promptHtml = this.extractPromptHtmlFromSubmissionBody(
-        typeof sub.body === 'string' ? sub.body : undefined,
-      );
-    }
     let allowedAttempts: number | undefined;
     try {
       const am = await this.canvas.getAssignment(ctx.courseId, assignmentId, domainOverride, token);
@@ -3223,27 +3495,34 @@ export class PromptService {
     } catch {
       promptsFallbackDuration = null;
     }
-    let videoDurationSeconds: number | null = null;
-    let durationSource: 'submission' | 'prompts' | 'unknown' = 'unknown';
-    if (latestDeck?.durationSeconds != null) {
-      videoDurationSeconds = latestDeck.durationSeconds;
-      durationSource = 'submission';
-    } else if (latestDeck?.deckTimeline.length) {
-      const est = this.estimateDurationFromDeckTimelineEntries(latestDeck.deckTimeline);
-      if (est != null) {
-        videoDurationSeconds = est;
-        durationSource = 'submission';
-      }
-    } else {
-      const fromSubmission = this.extractDurationSecondsFromSubmissionComments(mappedComments);
-      if (fromSubmission != null) {
-        videoDurationSeconds = fromSubmission;
-        durationSource = 'submission';
-      } else if (promptsFallbackDuration != null) {
-        videoDurationSeconds = promptsFallbackDuration;
-        durationSource = 'prompts';
-      }
-    }
+    const resolved = await this.resolvePromptRowWithOptionalWebmMetadata({
+      assignmentId,
+      userId,
+      token,
+      canvasVideoUrl: canvasVideoUrlRaw,
+      submissionComments: mappedComments,
+      body: typeof sub.body === 'string' ? sub.body : undefined,
+      promptsFallbackDuration,
+    });
+    const kind = this.classifyAssignmentPromptKind(
+      mappedComments,
+      typeof sub.body === 'string' ? sub.body : undefined,
+    );
+    const viewerSource =
+      resolved.metadataPromptResolution === 'webm_metadata'
+        ? 'webm_metadata'
+        : kind === 'deck'
+          ? 'submission_comment_deck_timeline'
+          : kind === 'comment_snapshot'
+            ? 'submission_comment'
+            : kind === 'body'
+              ? 'submission_body'
+              : 'none';
+    appendLtiLog('viewer', 'getMySubmission: prompt source selected', {
+      userId,
+      assignmentId,
+      source: viewerSource,
+    });
     return {
       userId,
       body: sub.body,
@@ -3255,9 +3534,9 @@ export class PromptService {
       rubricAssessment: normalizeCanvasRubricAssessment(
         sub.rubric_assessment as Record<string, unknown> | undefined,
       ),
-      promptHtml,
-      videoDurationSeconds,
-      durationSource,
+      promptHtml: resolved.promptHtml,
+      videoDurationSeconds: resolved.videoDurationSeconds,
+      durationSource: resolved.durationSource,
       ...(allowedAttempts !== undefined ? { allowedAttempts } : {}),
     };
   }

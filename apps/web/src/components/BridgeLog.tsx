@@ -3,7 +3,11 @@ import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
 import { useAppMode } from '../contexts/AppModeContext';
 import { ltiTokenHeaders } from '../api/lti-token';
-import { clearBridgeClientFallbackLines, readBridgeClientFallbackLines } from '../utils/bridge-log';
+import {
+  clearBridgeClientFallbackLines,
+  mergeBridgeLogLinesForDisplay,
+  readBridgeClientFallbackLines,
+} from '../utils/bridge-log';
 
 interface BridgeLogProps {
   context: LtiContext | null;
@@ -15,6 +19,7 @@ type DebugVersion = {
   apiSha?: string;
   apiBranch?: string;
   nodeEnv?: string;
+  bridgeLogFocusWebm?: boolean;
 };
 
 export function BridgeLog({ context, loading, error }: BridgeLogProps) {
@@ -62,14 +67,15 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
         ]);
         const serverLines = Array.isArray(ltiData?.lines) ? ltiData.lines : [];
         const fallbackLines = readBridgeClientFallbackLines();
+        const focusWebm = !!(versionData as DebugVersion | null)?.bridgeLogFocusWebm;
         setLastServerError(errData ?? null);
         setDebugVersion(versionData ?? null);
-        setLtiLog([...serverLines, ...fallbackLines]);
+        setLtiLog(mergeBridgeLogLinesForDisplay(serverLines, fallbackLines, focusWebm));
       } catch {
         if (!cancelled) {
           setLastServerError(null);
           setDebugVersion(null);
-          setLtiLog(readBridgeClientFallbackLines());
+          setLtiLog(mergeBridgeLogLinesForDisplay([], readBridgeClientFallbackLines(), false));
         }
       }
     };
@@ -107,6 +113,19 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
     newLines.push('--- Build Fingerprint ---');
     newLines.push(`web=${webSha} api=${apiSha} branch=${apiBranch} env=${nodeEnv}`);
     newLines.push('');
+    if (debugVersion?.bridgeLogFocusWebm) {
+      newLines.push('--- WebM PROMPT_DATA (BRIDGE_LOG_FOCUS_WEBM) ---');
+      const wm = ltiLog.filter(
+        (line) => line.includes('] [webm-prompt] ') || line.includes('] [debug] '),
+      );
+      if (wm.length === 0) {
+        newLines.push('(no webm-prompt / debug lines yet)');
+      } else {
+        newLines.push(...wm);
+      }
+      setLines(newLines);
+      return;
+    }
     newLines.push('--- LTI (this browser session) ---');
     if (context?.ltiLaunchType === '1.3') {
       newLines.push('Launch: LTI 1.3 (LTI Advantage — OIDC + id_token)');
