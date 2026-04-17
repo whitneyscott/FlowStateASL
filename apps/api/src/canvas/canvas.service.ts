@@ -3111,5 +3111,35 @@ export class CanvasService {
       throw new Error(`Canvas delete file failed: ${res.status}`);
     }
   }
+
+  /**
+   * Set/replace media tracks on a submission file (Canvas native CC). PUT replaces the full track list for the attachment.
+   * @see https://canvas.instructure.com/doc/api/media_objects.html — PUT /api/v1/media_attachments/:attachment_id/media_tracks
+   */
+  async putMediaAttachmentMediaTracks(
+    attachmentId: string,
+    tracks: Array<{ locale: string; kind: string; content: string }>,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<void> {
+    const base = this.getBaseUrl(domainOverride);
+    const id = encodeURIComponent(String(attachmentId).trim());
+    const url = `${base}/api/v1/media_attachments/${id}/media_tracks?include[]=content`;
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: this.getAuthHeaders(tokenOverride),
+      body: JSON.stringify(tracks),
+    });
+    const raw = await res.text();
+    appendLtiLog('canvas', 'putMediaAttachmentMediaTracks', {
+      attachmentId,
+      trackCount: tracks.length,
+      status: res.status,
+      preview: raw.slice(0, 400),
+    });
+    if (!res.ok) {
+      throw new Error(`Canvas put media_tracks failed: ${res.status} ${raw.slice(0, 500)}`);
+    }
+  }
 }
 

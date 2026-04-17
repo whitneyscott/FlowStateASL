@@ -18,7 +18,6 @@ import {
   ServiceUnavailableException,
   PayloadTooLargeException,
   HttpException,
-  NotFoundException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Request, Response } from 'express';
@@ -565,22 +564,6 @@ export class PromptController {
     const result = await this.prompt.getSubmissions(ctx);
     appendLtiLog('viewer', 'GET submissions response', { count: result?.length ?? 0 });
     return result;
-  }
-
-  @Get('submission-captions.vtt')
-  @UseGuards(TeacherRoleGuard)
-  async getSubmissionCaptionsVtt(@Req() req: Request, @Res() res: Response) {
-    const q = req.query as { userId?: string; assignmentId?: string };
-    const userId = (q.userId ?? '').toString().trim();
-    if (!userId) {
-      throw new BadRequestException('userId query parameter is required');
-    }
-    const ctx = this.getCtxWithAssignment(req);
-    const vtt = await this.prompt.getSubmissionCaptionsVtt(ctx, userId);
-    if (vtt == null) {
-      throw new NotFoundException('Captions not available');
-    }
-    return res.type('text/vtt; charset=utf-8').send(vtt);
   }
 
   @Get('my-submission')

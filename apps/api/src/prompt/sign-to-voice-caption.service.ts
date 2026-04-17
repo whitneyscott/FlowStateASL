@@ -1,6 +1,4 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
 import { statSync } from 'node:fs';
 import { ConfigService } from '@nestjs/config';
 import { appendLtiLog } from '../common/last-error.store';
@@ -10,12 +8,7 @@ import {
   DEFAULT_SIGN_TO_VOICE_DOWNLOAD_MAX_BYTES,
   downloadToTempWebm,
   extractAudioWavFromWebm,
-  muxWebVttIntoWebm,
 } from './ffmpeg-captions.util';
-import {
-  PromptSubmissionCaptionsEntity,
-  type PromptCaptionsStatus,
-} from './entities/prompt-submission-captions.entity';
 
 /** First Canvas attachment id with a direct HTTP(S) download URL (for deep-link ingest polling). */
 export function pickFirstCanvasVideoFileIdFromSubmission(
@@ -63,8 +56,6 @@ export class SignToVoiceCaptionService {
   private readonly captionPipelineWaiters: Array<() => void> = [];
 
   constructor(
-    @InjectRepository(PromptSubmissionCaptionsEntity)
-    private readonly repo: Repository<PromptSubmissionCaptionsEntity>,
     private readonly canvas: CanvasService,
     private readonly config: ConfigService,
   ) {}
@@ -84,44 +75,8 @@ export class SignToVoiceCaptionService {
     if (next) next();
   }
 
-  async getStatusesForUsers(
-    courseId: string,
-    assignmentId: string,
-    userIds: string[],
-  ): Promise<Map<string, PromptCaptionsStatus>> {
-    const out = new Map<string, PromptCaptionsStatus>();
-    if (!userIds.length) return out;
-    const rows = await this.repo.find({
-      where: { courseId, assignmentId, userId: In(userIds) },
-    });
-    for (const r of rows) {
-      out.set(r.userId, r.captionsStatus);
-    }
-    return out;
-  }
-
-  async getCaptionDetailsForUsers(
-    courseId: string,
-    assignmentId: string,
-    userIds: string[],
-  ): Promise<Map<string, { captionsStatus: PromptCaptionsStatus; errorMessage: string | null; updatedAt: Date }>> {
-    const out = new Map<string, { captionsStatus: PromptCaptionsStatus; errorMessage: string | null; updatedAt: Date }>();
-    if (!userIds.length) return out;
-    const rows = await this.repo.find({
-      where: { courseId, assignmentId, userId: In(userIds) },
-    });
-    for (const r of rows) {
-      out.set(r.userId, {
-        captionsStatus: r.captionsStatus,
-        errorMessage: r.errorMessage,
-        updatedAt: r.updatedAt,
-      });
-    }
-    return out;
-  }
-
   /**
-   * After Deep Link return, Canvas ingests the file asynchronously. Poll until a video attachment id exists, then run the same caption pipeline as upload-video.
+   * After Deep Link return, Canvas ingests the file asynchronously. Poll until a video attachment id exists, then run the caption pipeline.
    */
   pollDeepLinkThenScheduleCaptions(args: {
     signToVoiceRequired: boolean;
@@ -161,22 +116,6 @@ export class SignToVoiceCaptionService {
     }
     if (!args.signToVoiceRequired) {
       appendLtiLog('sign-to-voice', 'deep-link poll: SKIPPED (assignment not configured for sign-to-voice)', {
-        assignmentId,
-        userId: studentUserId,
-      });
-      return;
-    }
-    const existing = await this.repo.findOne({ where: { courseId, assignmentId, userId: studentUserId } });
-    if (existing?.captionsStatus === 'pending' || existing?.captionsStatus === 'ready') {
-      appendLtiLog('sign-to-voice', 'deep-link poll: SKIP (caption row already in progress or done)', {
-        assignmentId,
-        userId: studentUserId,
-        status: existing.captionsStatus,
-      });
-      return;
-    }
-    if (existing?.captionsStatus === 'failed') {
-      appendLtiLog('sign-to-voice', 'deep-link poll: SKIP (existing failed row; no auto-retry)', {
         assignmentId,
         userId: studentUserId,
       });
@@ -238,19 +177,10 @@ export class SignToVoiceCaptionService {
       }
     }
 
-    const msg = 'deep_link_canvas_file_not_visible_after_timeout';
-    appendLtiLog('sign-to-voice', 'deep-link poll: TIMEOUT', { assignmentId, userId: studentUserId, message: msg });
-    await this.markFailed(courseId, assignmentId, studentUserId, msg);
-  }
-
-  async getVttIfReady(
-    courseId: string,
-    assignmentId: string,
-    userId: string,
-  ): Promise<{ vtt: string } | null> {
-    const row = await this.repo.findOne({ where: { courseId, assignmentId, userId } });
-    if (!row || row.captionsStatus !== 'ready' || !(row.vttText ?? '').trim()) return null;
-    return { vtt: row.vttText ?? '' };
+    appendLtiLog('sign-to-voice', 'deep-link poll: TIMEOUT (no Canvas attachment id)', {
+      assignmentId,
+      userId: studentUserId,
+    });
   }
 
   scheduleAfterSuccessfulUpload(args: {
@@ -282,11 +212,6 @@ export class SignToVoiceCaptionService {
         assignmentId: args.assignmentId,
         userId: args.studentUserId,
       });
-      void this.markFailed(args.courseId, args.assignmentId, args.studentUserId, 'deepgram_api_key_missing').catch(
-        (err: unknown) => {
-          console.error('[sign-to-voice] markFailed (deepgram_api_key_missing) rejected', err);
-        },
-      );
       return;
     }
     const run = async () => {
@@ -303,17 +228,6 @@ export class SignToVoiceCaptionService {
       }
       try {
         await this.runPipeline({ ...args, deepgramApiKey: apiKey });
-      } catch (e) {
-        appendLtiLog('sign-to-voice', 'pipeline unhandled', { error: String(e), userId: args.studentUserId });
-        try {
-          await this.markFailed(args.courseId, args.assignmentId, args.studentUserId, String(e));
-        } catch (markErr) {
-          appendLtiLog('sign-to-voice', 'pipeline: markFailed failed after pipeline error', {
-            error: String(markErr),
-            userId: args.studentUserId,
-          });
-          console.error('[sign-to-voice] markFailed failed after pipeline error', markErr);
-        }
       } finally {
         this.releaseCaptionPipelineSlot();
       }
@@ -328,25 +242,6 @@ export class SignToVoiceCaptionService {
     });
   }
 
-  private async markFailed(courseId: string, assignmentId: string, userId: string, message: string): Promise<void> {
-    await this.repo.upsert(
-      {
-        courseId,
-        assignmentId,
-        userId,
-        captionsStatus: 'failed',
-        vttText: null,
-        errorMessage: message.slice(0, 4000),
-        updatedAt: new Date(),
-      },
-      { conflictPaths: ['courseId', 'assignmentId', 'userId'] },
-    );
-  }
-
-  /**
-   * Async caption pipeline. The pending `repo.upsert` sits before the main `try`; if it throws, `runPipeline`
-   * rejects and `scheduleAfterSuccessfulUpload`’s per-job catch runs `markFailed` (same category as other early failures).
-   */
   private async runPipeline(args: {
     courseId: string;
     assignmentId: string;
@@ -357,25 +252,11 @@ export class SignToVoiceCaptionService {
     canvasToken: string;
     deepgramApiKey: string;
   }): Promise<void> {
-    const { courseId, assignmentId, studentUserId, initialCanvasFileId, filename, domainOverride, canvasToken } = args;
+    const { courseId, assignmentId, studentUserId, initialCanvasFileId, domainOverride, canvasToken } = args;
     appendLtiLog('sign-to-voice', 'pipeline: start', { assignmentId, userId: studentUserId, fileId: initialCanvasFileId });
-
-    await this.repo.upsert(
-      {
-        courseId,
-        assignmentId,
-        userId: studentUserId,
-        captionsStatus: 'pending',
-        vttText: null,
-        errorMessage: null,
-        updatedAt: new Date(),
-      },
-      { conflictPaths: ['courseId', 'assignmentId', 'userId'] },
-    );
 
     let webmDlCleanup: (() => void) | null = null;
     let audioCleanup: (() => void) | null = null;
-    let muxCleanup: (() => void) | null = null;
 
     try {
       const sub = await this.canvas.getSubmissionFull(courseId, assignmentId, studentUserId, domainOverride, canvasToken);
@@ -416,77 +297,21 @@ export class SignToVoiceCaptionService {
         vttCueLines: (vtt.match(/\n\n/g) ?? []).length,
       });
 
-      const { outputPath: muxedPath, size: muxedSize, cleanup: c3 } = await muxWebVttIntoWebm({
-        webmPath,
-        vttContent: vtt,
-      });
-      muxCleanup = c3;
-      appendLtiLog('sign-to-voice', 'pipeline: WebM+VTT mux complete', { userId: studentUserId, muxedBytes: muxedSize });
-
-      const { uploadUrl, uploadParams } = await this.canvas.initiateSubmissionFileUploadForUser(
-        courseId,
-        assignmentId,
-        studentUserId,
-        filename,
-        muxedSize,
-        'video/webm',
+      await this.canvas.putMediaAttachmentMediaTracks(
+        initialCanvasFileId,
+        [{ locale: 'en', kind: 'subtitles', content: vtt }],
         domainOverride,
         canvasToken,
       );
-      const up = await this.canvas.uploadFileToCanvas(
-        uploadUrl,
-        uploadParams,
-        { filePath: muxedPath, size: muxedSize },
-        { tokenOverride: canvasToken },
-      );
-      const newFileId = up.fileId;
-
-      try {
-        await this.canvas.putSubmissionOnlineUploadFileIds(
-          courseId,
-          assignmentId,
-          studentUserId,
-          [newFileId],
-          domainOverride,
-          canvasToken,
-        );
-      } catch (putErr) {
-        appendLtiLog('sign-to-voice', 'pipeline: PUT file_ids failed, trying attach', { error: String(putErr) });
-        await this.canvas.attachFileToSubmission(
-          courseId,
-          assignmentId,
-          studentUserId,
-          newFileId,
-          domainOverride,
-          canvasToken,
-        );
-      }
-
-      try {
-        await this.canvas.deleteCanvasFile(initialCanvasFileId, domainOverride, canvasToken);
-      } catch (delErr) {
-        appendLtiLog('sign-to-voice', 'pipeline: delete old file non-fatal', { error: String(delErr) });
-      }
-
-      await this.repo.upsert(
-        {
-          courseId,
-          assignmentId,
-          userId: studentUserId,
-          captionsStatus: 'ready',
-          vttText: vtt,
-          errorMessage: null,
-          updatedAt: new Date(),
-        },
-        { conflictPaths: ['courseId', 'assignmentId', 'userId'] },
-      );
-      appendLtiLog('sign-to-voice', 'pipeline: OK', { userId: studentUserId, newFileId });
+      appendLtiLog('sign-to-voice', 'pipeline: OK (Canvas media_tracks)', {
+        userId: studentUserId,
+        attachmentId: initialCanvasFileId,
+      });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       appendLtiLog('sign-to-voice', 'pipeline: FAIL', { userId: studentUserId, error: msg });
-      await this.markFailed(courseId, assignmentId, studentUserId, msg);
+      console.error('[sign-to-voice] pipeline error', e);
     } finally {
-      muxCleanup?.();
       audioCleanup?.();
       webmDlCleanup?.();
     }

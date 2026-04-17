@@ -379,15 +379,6 @@ export async function submitDeepLink(
   return text;
 }
 
-/** Teacher `GET /submissions`: sign-to-voice pipeline state for the Canvas submission video (not the stimulus clip). */
-export type SubmissionCaptionsPhase = 'off' | 'queued' | 'pending' | 'ready' | 'failed';
-
-export interface SubmissionCaptionsDto {
-  phase: SubmissionCaptionsPhase;
-  message?: string;
-  updatedAt?: string;
-}
-
 export interface PromptSubmission {
   userId: string;
   userName?: string;
@@ -405,10 +396,6 @@ export interface PromptSubmission {
   durationSource?: 'submission' | 'prompts' | 'unknown';
   /** Canvas assignment allowed_attempts when returned with my-submission (-1 = unlimited). */
   allowedAttempts?: number;
-  /** Sign-to-voice caption pipeline status (teacher submissions list only). */
-  captionsStatus?: 'pending' | 'ready' | 'failed';
-  /** Teacher submissions list: normalized caption state (always set for teacher `getSubmissions`). */
-  submissionCaptions?: SubmissionCaptionsDto;
 }
 
 export async function getSubmissionCount(assignmentId?: string | null): Promise<number> {
@@ -418,12 +405,6 @@ export async function getSubmissionCount(assignmentId?: string | null): Promise<
 
 export async function getSubmissions(assignmentId?: string | null): Promise<PromptSubmission[]> {
   return fetchJson<PromptSubmission[]>(withAssignmentId(base + '/submissions', assignmentId));
-}
-
-/** Teacher grading: URL for &lt;track src&gt; when submission captions are ready (same-origin; session cookie). */
-export function submissionCaptionsVttUrl(userId: string, assignmentId?: string | null): string {
-  const path = `${base}/submission-captions.vtt?userId=${encodeURIComponent(userId)}`;
-  return withAssignmentId(path, assignmentId);
 }
 
 export type SubmitGradeResponse = { ok?: boolean; score?: number; grade?: string };

@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveFfmpegPathForCaptions } from './ffmpeg-binary.util';
@@ -80,74 +80,6 @@ export async function extractAudioWavFromWebm(webmPath: string, timeoutMs = DEFA
   }
   return {
     wavPath,
-    cleanup: () => {
-      try {
-        rmSync(dir, { recursive: true, force: true });
-      } catch {
-        /* ignore */
-      }
-    },
-  };
-}
-
-/**
- * Mux WebVTT as a subtitle track into WebM (copy video/audio streams).
- */
-export async function muxWebVttIntoWebm(options: {
-  webmPath: string;
-  vttContent: string;
-  timeoutMs?: number;
-}): Promise<{ outputPath: string; size: number; cleanup: () => void }> {
-  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const dir = mkdtempSync(join(tmpdir(), 'fsasl-cap-mux-'));
-  const vttPath = join(dir, 'captions.vtt');
-  const outPath = join(dir, 'out.webm');
-  writeFileSync(vttPath, options.vttContent, 'utf8');
-
-  const { code, stderr } = await runFfmpeg(
-    [
-      '-hide_banner',
-      '-loglevel',
-      'error',
-      '-y',
-      '-i',
-      options.webmPath,
-      '-i',
-      vttPath,
-      '-map',
-      '0',
-      '-map',
-      '1',
-      '-c',
-      'copy',
-      '-c:s',
-      'webvtt',
-      '-disposition:s:0',
-      'default',
-      outPath,
-    ],
-    timeoutMs,
-  );
-  if (code !== 0) {
-    try {
-      rmSync(dir, { recursive: true, force: true });
-    } catch {
-      /* ignore */
-    }
-    throw new Error(`ffmpeg_mux_vtt_${code}: ${stderr.slice(0, 800)}`);
-  }
-  const st = statSync(outPath);
-  if (!st.isFile() || st.size <= 0) {
-    try {
-      rmSync(dir, { recursive: true, force: true });
-    } catch {
-      /* ignore */
-    }
-    throw new Error('mux_output_empty');
-  }
-  return {
-    outputPath: outPath,
-    size: st.size,
     cleanup: () => {
       try {
         rmSync(dir, { recursive: true, force: true });

@@ -28,8 +28,6 @@ import { SproutPlaylistVideoEntity } from './sproutvideo/entities/sprout-playlis
 import { SyncMetadataEntity } from './sproutvideo/entities/sync-metadata.entity';
 import { AssignmentPromptEntity } from './prompt/entities/assignment-prompt.entity';
 import { StudentResetEntity } from './prompt/entities/student-reset.entity';
-import { PromptSubmissionCaptionsEntity } from './prompt/entities/prompt-submission-captions.entity';
-
 const isProduction = process.env.NODE_ENV === 'production';
 const webRoot = join(__dirname, '..', '..', 'web');
 
@@ -71,7 +69,6 @@ const webRoot = join(__dirname, '..', '..', 'web');
             SyncMetadataEntity,
             AssignmentPromptEntity,
             StudentResetEntity,
-            PromptSubmissionCaptionsEntity,
             AuthSessionEntity,
           ],
           migrations: [__dirname + '/migrations/*{.ts,.js}'],

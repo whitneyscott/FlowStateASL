@@ -22,10 +22,6 @@ import { resolveCanvasApiUserId } from '../common/utils/canvas-api-user.util';
 import { getSproutAccountId } from '../common/utils/sprout-account-id.util';
 import type { PromptConfigJson, PutPromptConfigDto } from './dto/prompt-config.dto';
 import { SignToVoiceCaptionService } from './sign-to-voice-caption.service';
-import type {
-  PromptCaptionsStatus,
-  SubmissionCaptionsDto,
-} from './entities/prompt-submission-captions.entity';
 import { normalizeYoutubeInputToVideoId } from './youtube-video-id.util';
 import { normalizeCanvasRubricAssessment } from './canvas-rubric-assessment.util';
 import {
@@ -3105,8 +3101,6 @@ export class PromptService {
       videoDurationSeconds: number | null;
       durationSource: 'submission' | 'prompts' | 'unknown';
       rubricAssessment?: Record<string, unknown>;
-      captionsStatus?: PromptCaptionsStatus;
-      submissionCaptions: SubmissionCaptionsDto;
     }>
   > {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
@@ -3223,72 +3217,7 @@ export class PromptService {
         durationSource: row.durationSource,
       });
     }
-    const userIds = rowsWithPrompts.map((r) => r.userId);
-    const signToVoiceRequired = await this.resolveSignToVoiceRequired(
-      ctx.courseId,
-      assignmentId,
-      domainOverride,
-      token,
-    );
-    const capDetails = await this.signToVoiceCaptions.getCaptionDetailsForUsers(ctx.courseId, assignmentId, userIds);
-    return rowsWithPrompts.map((r) => {
-      const detail = capDetails.get(r.userId);
-      const submissionCaptions = this.buildSubmissionCaptionsDto(signToVoiceRequired, detail);
-      const captionsStatus = detail?.captionsStatus;
-      return {
-        ...r,
-        submissionCaptions,
-        ...(captionsStatus ? { captionsStatus } : {}),
-      };
-    });
-  }
-
-  private buildSubmissionCaptionsDto(
-    signToVoiceRequired: boolean,
-    detail:
-      | { captionsStatus: PromptCaptionsStatus; errorMessage: string | null; updatedAt: Date }
-      | undefined,
-  ): SubmissionCaptionsDto {
-    if (!signToVoiceRequired) {
-      return { phase: 'off' };
-    }
-    if (!detail) {
-      return { phase: 'queued' };
-    }
-    const updatedAt = detail.updatedAt instanceof Date ? detail.updatedAt.toISOString() : undefined;
-    if (detail.captionsStatus === 'pending') {
-      return { phase: 'pending', updatedAt };
-    }
-    if (detail.captionsStatus === 'ready') {
-      return { phase: 'ready', updatedAt };
-    }
-    if (detail.captionsStatus === 'failed') {
-      const raw = (detail.errorMessage ?? '').trim() || 'Caption pipeline failed.';
-      return { phase: 'failed', message: raw.slice(0, 500), updatedAt };
-    }
-    return { phase: 'queued', updatedAt };
-  }
-
-  /** Teacher grading: WebVTT for a student when captions pipeline finished (`captionsStatus === 'ready'`). */
-  async getSubmissionCaptionsVtt(ctx: LtiContext, studentUserId: string): Promise<string | null> {
-    const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
-    if (!token) {
-      throw new ForbiddenException('Canvas token required');
-    }
-    const assignmentId = await this.getPrompterAssignmentId(ctx);
-    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
-    const list = await this.canvas.listSubmissions(ctx.courseId, assignmentId, domainOverride, token);
-    const visible = list.filter(
-      (s) =>
-        submissionHasFile(s) ||
-        !!this.deepLinkFileStore.getSubmissionToken(ctx.courseId, assignmentId, String(s.user_id ?? '')),
-    );
-    const ok = visible.some((s) => String(s.user_id) === String(studentUserId));
-    if (!ok) {
-      throw new ForbiddenException('Submission not found for this user');
-    }
-    const got = await this.signToVoiceCaptions.getVttIfReady(ctx.courseId, assignmentId, studentUserId);
-    return got?.vtt ?? null;
+    return rowsWithPrompts;
   }
 
   /**
