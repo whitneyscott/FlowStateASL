@@ -1,16 +1,6 @@
-# Plan: PROMPT_MATCH cleanup (done) + Deepgram captions for Canvas video submissions
+# Deepgram captions for Canvas video submissions
 
-## Part A — PROMPT_MATCH removal (completed)
-
-- Removed `PROMPT_MATCH` / `n/a` logging and body-vs-metadata comparison from `resolvePromptRowFromWebmMetadata`.
-- Dropped `comparableStable` from `computeAssignmentFallbackPromptRow` and removed `comparableStableFromSubmissionBodyJson` from `prompt-upload-payload.util.ts`.
-- Kept encode/decode helpers and test-only `extractComparablePromptUploadFields` / `stableStringifyForPromptMatch` for `verify-webm-prompt-codec`.
-
----
-
-## Part B — Deepgram transcription + WebVTT (implementation TBD)
-
-### Goal
+## Goal
 
 When a student submits a WebM for assignments that require **Sign-to-voice** (exact product flag TBD in config), start a **fully async** pipeline:
 
@@ -19,7 +9,7 @@ When a student submits a WebM for assignments that require **Sign-to-voice** (ex
 3. Persist captions and expose `captionsStatus: 'ready'` on the submission row used by grading.
 4. In the **grading viewer only**: show a **CC** control when `captionsStatus === 'ready'`; no CC UI otherwise. No other grading-viewer changes.
 
-### ffmpeg availability
+## ffmpeg availability
 
 - **Local dev:** `ffmpeg` / `ffprobe` present on PATH (verified: system ffmpeg 6.x).
 - **Production (e.g. Render):** default Node runtimes often **do not** include ffmpeg. Before shipping, either:
@@ -27,7 +17,7 @@ When a student submits a WebM for assignments that require **Sign-to-voice** (ex
   - run caption mux / audio extract on a **worker** image that includes ffmpeg.
 - **Action item:** confirm ffmpeg in the same environment that runs the API (or move CPU-heavy steps to a worker with ffmpeg).
 
-### Architecture evaluation — is “mux WebVTT into WebM on Canvas” workable?
+## Architecture evaluation — is “mux WebVTT into WebM on Canvas” workable?
 
 **Facts in this codebase today**
 
@@ -52,15 +42,15 @@ When a student submits a WebM for assignments that require **Sign-to-voice** (ex
 - Grading viewer uses `<video>` + `<track kind="subtitles" src="...">` pointing at **`GET /api/.../captions.vtt`** (auth same as proxy). **No second Canvas upload**, no binary rewrite of Canvas-owned WebM.
 - If product mandate is strictly “VTT inside container,” treat **mux + Canvas replace** as phase 2 after ship-ready VTT delivery.
 
-**Recommendation in plan:** implement **VTT storage + track URL** first unless Canvas replace is explicitly required for compliance; parallel-spike Canvas file replacement for true in-file storage.
+**Recommendation:** implement **VTT storage + track URL** first unless Canvas replace is explicitly required for compliance; parallel-spike Canvas file replacement for true in-file storage.
 
-### Async pipeline (non-blocking HTTP)
+## Async pipeline (non-blocking HTTP)
 
 - `POST upload-video` (or a single “submission complete” hook) should **`void`** a service method (no `await` in controller) or enqueue a job.
 - Use **structured logging** + retries; persist `captionsStatus`: `pending` → `ready` | `failed`.
 - Prefer a small **DB-backed queue** or in-process queue with crash caveats; Redis/Bull only if you already run Redis.
 
-### Deepgram integration sketch
+## Deepgram integration sketch
 
 1. **Trigger:** after successful Canvas attach (or on message from client) **only** when assignment requires Sign-to-voice (define field in `PutPromptConfigDto` / `PromptConfigJson`, e.g. `signToVoiceRequired: boolean` — **not present in repo today; add in spec**).
 2. **Audio:** ffmpeg extract audio to wav/mp3/flac temp file (or stream) from downloaded WebM.
@@ -68,26 +58,23 @@ When a student submits a WebM for assignments that require **Sign-to-voice** (ex
 4. **WebVTT:** map Deepgram segments to WebVTT cues; validate timestamps vs video duration.
 5. **Persist:** save VTT + set `captionsStatus: 'ready'`; on error `failed` + log.
 
-### API + UI changes (future PR)
+## API + UI changes (future PR)
 
 - **DB migration:** new table e.g. `prompt_submission_captions` (`course_id`, `assignment_id`, `user_id`, `captions_status`, `vtt_text` or storage key, `updated_at`, optional `error_message`).
 - **`getSubmissions` / `getMySubmission`:** include `captionsStatus` (and optionally `captionsUrl` for teacher-only signed URL).
 - **`TeacherViewerPage`:** if `captionsStatus === 'ready'`, render CC toggle and attach `<track>`; **no other layout/behavior changes**.
 
-### Testing gates
+## Testing gates
 
 - ffmpeg available in target environment.
 - Async: upload HTTP returns before Deepgram completes.
 - Teacher sees CC only when status ready; student/teacher without captions unchanged.
 - Failure path: `failed` does not break grading; no CC button.
 
----
-
 ## Summary
 
-| Item | Status |
+| Item | Notes |
 |------|--------|
-| Remove PROMPT_MATCH | Done in code |
 | ffmpeg on dev | Yes |
 | ffmpeg on prod | Must be added or worker-based |
 | Mux VTT into WebM | ffmpeg-capable; **Canvas replace** is the hard part |
