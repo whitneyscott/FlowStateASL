@@ -935,7 +935,7 @@ export default function TimerPage({ context }: TimerPageProps) {
     const sec = deckMode
       ? recordSecondsForDeckCard(deckPrompts[promptIndex])
       : studentYoutubeFlow && clipWall > 0
-        ? Math.max(base, clipWall)
+        ? clipWall
         : base;
     setRecordSecondsLeft(sec);
   }, [phase, minutes, deckMode, deckPrompts, promptIndex, studentYoutubeFlow, config?.youtubePromptConfig]);
