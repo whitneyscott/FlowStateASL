@@ -2609,6 +2609,10 @@ export class PromptService {
       metadataPromptResolution: 'assignment_fallback',
     });
     if (!this.useWebmMetadataForPrompt()) {
+      appendLtiLog('webm-prompt', 'read: SKIP (USE_WEBM_METADATA_FOR_PROMPT off)', {
+        userId: args.userId,
+        assignmentId: args.assignmentId,
+      });
       return fallback();
     }
 
@@ -2626,6 +2630,18 @@ export class PromptService {
       appendLtiLog('webm-prompt', 'PROMPT_SOURCE: assignment_fallback', { userId: args.userId });
       return fallback();
     }
+
+    let urlHost = '';
+    try {
+      urlHost = new URL(url).hostname;
+    } catch {
+      urlHost = '(unparsed)';
+    }
+    appendLtiLog('webm-prompt', 'read: attempt (download + ffprobe)', {
+      userId: args.userId,
+      assignmentId: args.assignmentId,
+      urlHost,
+    });
 
     const dl = await downloadAuthenticatedVideoToTempFile(
       url,
