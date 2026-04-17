@@ -41,3 +41,7 @@ services:
         value: https://flowstateasl.onrender.com  # Update after first deploy if you use a custom domain
       - key: FRONTEND_URL
         value: https://flowstateasl.onrender.com
+      - key: BRIDGE_LOG_FOCUS_WEBM
+        value: "1"
+      - key: USE_WEBM_METADATA_FOR_PROMPT
+        value: "1"

@@ -3,12 +3,17 @@ const ltiLog: string[] = [];
 const MAX_LTI_LOG_LINES = 400;
 let lastCanvasApiResponse: { status: number; statusText: string; bodyPreview: string } | null = null;
 
-/** When set, Bridge server log keeps only `webm-prompt` (build SHA still from /api/debug/version). */
+/** Bridge LTI log buffer keeps only `webm-prompt` unless explicitly disabled (build SHA from /api/debug/version). */
 const BRIDGE_LOG_FOCUS_WEBM_TAGS = new Set(['webm-prompt']);
 
+/**
+ * Default **on**: only `webm-prompt` lines are stored in the in-memory LTI log (saves memory, matches Bridge UI).
+ * Set `BRIDGE_LOG_FOCUS_WEBM=0` (or `false` / `no` / `off`) to retain all tags for deep debugging.
+ */
 export function isBridgeLogFocusWebmEnabled(): boolean {
   const v = (process.env.BRIDGE_LOG_FOCUS_WEBM ?? '').trim().toLowerCase();
-  return v === '1' || v === 'true' || v === 'yes';
+  if (v === '0' || v === 'false' || v === 'no' || v === 'off') return false;
+  return true;
 }
 
 export type PlacementLtiVersion = '1.1' | '1.3' | 'unknown';

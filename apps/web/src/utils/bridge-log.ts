@@ -38,15 +38,9 @@ export function readBridgeClientFallbackLines(): string[] {
   return readClientFallbackStore();
 }
 
-/** Align client-side merge with API `BRIDGE_LOG_FOCUS_WEBM` allowlist (`webm-prompt` only). */
-export function mergeBridgeLogLinesForDisplay(
-  serverLines: string[],
-  fallbackLines: string[],
-  bridgeLogFocusWebm: boolean,
-): string[] {
-  const merged = [...serverLines, ...fallbackLines];
-  if (!bridgeLogFocusWebm) return merged;
-  return merged.filter((l) => l.includes('] [webm-prompt] '));
+/** Bridge log shows only `[webm-prompt]` lines from server + client fallback (matches API buffer policy). */
+export function mergeBridgeLogLinesForDisplay(serverLines: string[], fallbackLines: string[]): string[] {
+  return [...serverLines, ...fallbackLines].filter((l) => l.includes('] [webm-prompt] '));
 }
 
 export function clearBridgeClientFallbackLines(): void {

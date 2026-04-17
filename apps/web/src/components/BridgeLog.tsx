@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
 import type { LtiContext } from '@aslexpress/shared-types';
-import { useDebug } from '../contexts/DebugContext';
 import { useAppMode } from '../contexts/AppModeContext';
 import { ltiTokenHeaders } from '../api/lti-token';
 import {
@@ -23,7 +22,6 @@ type DebugVersion = {
 };
 
 export function BridgeLog({ context, loading, error }: BridgeLogProps) {
-  const { lastFunctionCalled, lastApiResult } = useDebug();
   const { isDeveloperMode } = useAppMode();
   const isTeacherRole =
     /instructor|administrator|faculty|teacher|staff|contentdeveloper|teachingassistant|ta/i.test(
@@ -35,7 +33,6 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
    */
   const developerUi = isTeacherRole && isDeveloperMode;
   const canClearLog = isDeveloperMode;
-  const [lastServerError, setLastServerError] = useState<{ endpoint: string; message: string } | null>(null);
   const [ltiLog, setLtiLog] = useState<string[]>([]);
   const [debugVersion, setDebugVersion] = useState<DebugVersion | null>(null);
   const [lines, setLines] = useState<string[]>(['Initializing...']);
@@ -54,28 +51,23 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
     let cancelled = false;
     const poll = async () => {
       try {
-        const [errRes, ltiRes, versionRes] = await Promise.all([
-          fetch('/api/debug/last-error', { credentials: 'include', headers: ltiTokenHeaders() }),
+        const [ltiRes, versionRes] = await Promise.all([
           fetch('/api/debug/lti-log', { credentials: 'include', headers: ltiTokenHeaders() }),
           fetch('/api/debug/version', { credentials: 'include', headers: ltiTokenHeaders() }),
         ]);
         if (cancelled) return;
-        const [errData, ltiData, versionData] = await Promise.all([
-          errRes.json().catch(() => null),
+        const [ltiData, versionData] = await Promise.all([
           ltiRes.json().catch(() => null),
           versionRes.json().catch(() => null),
         ]);
         const serverLines = Array.isArray(ltiData?.lines) ? ltiData.lines : [];
         const fallbackLines = readBridgeClientFallbackLines();
-        const focusWebm = !!(versionData as DebugVersion | null)?.bridgeLogFocusWebm;
-        setLastServerError(errData ?? null);
         setDebugVersion(versionData ?? null);
-        setLtiLog(mergeBridgeLogLinesForDisplay(serverLines, fallbackLines, focusWebm));
+        setLtiLog(mergeBridgeLogLinesForDisplay(serverLines, fallbackLines));
       } catch {
         if (!cancelled) {
-          setLastServerError(null);
           setDebugVersion(null);
-          setLtiLog(mergeBridgeLogLinesForDisplay([], readBridgeClientFallbackLines(), false));
+          setLtiLog(mergeBridgeLogLinesForDisplay([], readBridgeClientFallbackLines()));
         }
       }
     };
@@ -113,227 +105,17 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
     newLines.push('--- Build Fingerprint ---');
     newLines.push(`web=${webSha} api=${apiSha} branch=${apiBranch} env=${nodeEnv}`);
     newLines.push('');
-    if (debugVersion?.bridgeLogFocusWebm) {
-      newLines.push('--- WebM + Bridge focus (BRIDGE_LOG_FOCUS_WEBM) ---');
-      newLines.push('Build Fingerprint above = git/deploy; below = [webm-prompt] only.');
-      newLines.push('');
-      const wm = ltiLog.filter((line) => line.includes('] [webm-prompt] '));
-      if (wm.length === 0) {
-        newLines.push('(no webm-prompt lines yet — upload, open viewer, or GET /api/debug/ping)');
-      } else {
-        newLines.push(...wm);
-      }
-      setLines(newLines);
-      return;
-    }
-    newLines.push('--- LTI (this browser session) ---');
-    if (context?.ltiLaunchType === '1.3') {
-      newLines.push('Launch: LTI 1.3 (LTI Advantage — OIDC + id_token)');
-    } else if (context?.ltiLaunchType === '1.1') {
+    newLines.push('--- WebM prompt (tag webm-prompt only) ---');
+    const wm = ltiLog.filter((line) => line.includes('] [webm-prompt] '));
+    if (wm.length === 0) {
       newLines.push(
-        'Launch: LTI 1.1 — check "Module Launch Diagnostics" below for OAuth-signed /api/lti/launch vs dedicated /launch/*',
+        '(no webm-prompt lines yet — upload video, load submissions with USE_WEBM_METADATA_FOR_PROMPT, open viewer, or GET /api/debug/ping)',
       );
-    } else if (context?.courseId) {
-      newLines.push('Launch: unknown (re-launch from Canvas to refresh; older sessions omit this field)');
     } else {
-      newLines.push('Launch: — (no course context yet)');
-    }
-    newLines.push('');
-
-    const lineLc = (line: string) => line.toLowerCase();
-    const isSettingsBlobNoise = (line: string): boolean => {
-      const lc = lineLc(line);
-      return (
-        lc.includes('settings blob') ||
-        lc.includes('prompt manager settings assignment') ||
-        lc.includes('ensurepromptmanagersettingsassignment') ||
-        lc.includes('readpromptmanagersettingsblob')
-      );
-    };
-    const isSyncTraceLine = (line: string): boolean => {
-      const lc = lineLc(line);
-      return (
-        lc.includes('[placement]') ||
-        lc.includes('sync-to-canvas: putconfig failed')
-      ) && !isSettingsBlobNoise(line);
-    };
-    const isLaunchDiagnosticsLine = (line: string): boolean => {
-      const lc = lineLc(line);
-      return (
-        lc.includes('[placement]') ||
-        lc.includes('[launch-entry]') ||
-        lc.includes('post /api/lti/launch received') ||
-        lc.includes('post /api/lti/launch/prompter received') ||
-        lc.includes('post /api/lti/launch/flashcards received')
-      ) && !isSettingsBlobNoise(line);
-    };
-    const isDeckFlowLine = (line: string): boolean => {
-      const lc = lineLc(line);
-      return (
-        lc.includes('[prompt-decks]') ||
-        lc.includes('[deck-live-build]') ||
-        lc.includes('deck-live-build') ||
-        lc.includes('build-deck-prompts') ||
-        lc.includes('deck flow') ||
-        lc.includes('source selected') ||
-        lc.includes('no prompts available')
-      ) && !isSettingsBlobNoise(line);
-    };
-
-    // Assignment Group & Create Assignment section
-    newLines.push('--- Assignment Group & Create Assignment ---');
-    const agLines = ltiLog.filter(
-      (line) =>
-        (
-          line.toLowerCase().includes('create-assignment failed') ||
-          line.toLowerCase().includes('create-assignment success') ||
-          line.toLowerCase().includes('create-assignment: completed successfully') ||
-          line.toLowerCase().includes('delete-assignment')
-        ) &&
-        !isSettingsBlobNoise(line)
-    );
-    if (agLines.length > 0) {
-      newLines.push(...agLines);
-    } else {
-      newLines.push('(No assignment group activity yet)');
-    }
-
-    // Save trace section (TeacherConfig save flow)
-    newLines.push('');
-    newLines.push('--- Save Trace ---');
-    const syncLines = ltiLog.filter(isSyncTraceLine);
-    if (syncLines.length > 0) {
-      newLines.push(...syncLines);
-    } else {
-      newLines.push('(No sync trace lines yet)');
-    }
-
-    // Launch / module diagnostics (click path + stored Canvas state)
-    newLines.push('');
-    newLines.push('--- Module Launch Diagnostics ---');
-    const launchDiagnosticsLines = ltiLog.filter(isLaunchDiagnosticsLine);
-    if (launchDiagnosticsLines.length > 0) {
-      newLines.push(...launchDiagnosticsLines);
-    } else {
-      newLines.push('(No launch diagnostics yet)');
-    }
-
-    // Deck prompt retrieval/build/fallback flow
-    newLines.push('');
-    newLines.push('--- Deck Prompt Flow (live build / alerts) ---');
-    const deckFlowLines = ltiLog.filter(isDeckFlowLine);
-    if (deckFlowLines.length > 0) {
-      newLines.push(...deckFlowLines);
-    } else {
-      newLines.push('(No deck prompt flow lines yet)');
-    }
-
-    // Video submission flow (Finish & Submit / timer expiry → Canvas)
-    newLines.push('');
-    newLines.push('--- Video Submission Flow (Finish & Submit → Canvas) ---');
-    const submitLines = ltiLog.filter(
-      (line) =>
-        (
-          line.includes('prompt-submit') ||
-          line.includes('prompt-upload') ||
-          line.includes('prompt-deeplink') ||
-          line.includes('submit-deep-link') ||
-          line.includes('upload-video') ||
-          line.includes('writeSubmissionBody') ||
-          line.includes('createSubmissionWithBody') ||
-          line.includes('initiateUserFileUpload') ||
-          line.includes('attachFileToSubmission') ||
-          line.includes('uploadFileToCanvas') ||
-          line.toLowerCase().includes('sproutvideo') ||
-          line.includes('PromptFallbackStore') ||
-          line.includes('fallback') ||
-          (line.includes('prompt') && (line.includes('POST') || line.includes('submit') || line.includes('upload')))
-        ) &&
-        !isSettingsBlobNoise(line)
-    );
-    if (submitLines.length > 0) {
-      newLines.push(...submitLines);
-    } else {
-      newLines.push('(No submission activity yet)');
-    }
-
-    // Duration pipeline (client probe → upload comment JSON → grader rows)
-    newLines.push('');
-    newLines.push('--- Duration pipeline ---');
-    const durationLines = ltiLog.filter((line) => line.includes('] [duration] '));
-    if (durationLines.length > 0) {
-      newLines.push(...durationLines);
-    } else {
-      newLines.push('(No duration pipeline logs yet)');
-    }
-
-    // Resize diagnostics (temporary viewer panel drag telemetry)
-    newLines.push('');
-    newLines.push('--- Resize Diagnostics (panel drag telemetry) ---');
-    const resizeLines = ltiLog.filter(
-      (line) =>
-        (line.includes('[resize]') ||
-          line.toLowerCase().includes('resize-drag') ||
-          line.toLowerCase().includes('leftstyleflex')) &&
-        !isSettingsBlobNoise(line)
-    );
-    if (resizeLines.length > 0) {
-      newLines.push(...resizeLines);
-    } else {
-      newLines.push('(No resize diagnostics yet)');
-    }
-
-    // Viewer / Grading flow (assignment select → getSubmissions → grade)
-    newLines.push('');
-    newLines.push('--- Viewer / Grading (select assignment → submissions) ---');
-    const viewerLines = ltiLog.filter(
-      (line) =>
-        !line.includes('] [duration] ') &&
-        !line.includes('listSubmissions') &&
-        (line.includes('[viewer]') ||
-          line.toLowerCase().includes('submissions') ||
-          line.toLowerCase().includes('configured-assignments') ||
-          line.includes('submissionHasFile') ||
-          line.includes('getVideoUrlFromCanvasSubmission') ||
-          line.includes('ENTRY:') ||
-          line.includes('[debug]') ||
-          line.includes('[resize]') ||
-          line.toLowerCase().includes('resize-drag') ||
-          line.includes('PING') ||
-          line.includes('SproutVideo fallback') ||
-          line.includes('fallback for user')) &&
-        !isSettingsBlobNoise(line)
-    );
-    if (viewerLines.length > 0) {
-      newLines.push(...viewerLines);
-    } else {
-      newLines.push('(No viewer/grading activity yet)');
-    }
-
-    if (lastFunctionCalled) {
-      newLines.push('');
-      newLines.push(`Last function: ${lastFunctionCalled}`);
-    }
-    if (lastApiResult) {
-      newLines.push(`Last API: ${lastApiResult.endpoint} → ${lastApiResult.status} ${lastApiResult.ok ? 'OK' : 'FAILED'}`);
-    }
-    if (
-      lastServerError &&
-      (lastServerError.endpoint?.includes('config') ||
-        lastServerError.endpoint?.includes('assignment-groups') ||
-        lastServerError.endpoint?.includes('create-assignment') ||
-        lastServerError.endpoint?.includes('submit') ||
-        lastServerError.endpoint?.includes('upload-video') ||
-        lastServerError.endpoint?.includes('submit-deep-link') ||
-        lastServerError.endpoint?.includes('submissions') ||
-        lastServerError.endpoint?.includes('configured-assignments'))
-    ) {
-      newLines.push('');
-      newLines.push(`Error: ${lastServerError.endpoint}`);
-      newLines.push(`  → ${lastServerError.message}`);
+      newLines.push(...wm);
     }
     setLines(newLines);
-  }, [context?.ltiLaunchType, context?.courseId, lastFunctionCalled, lastApiResult, lastServerError, ltiLog, debugVersion]);
+  }, [ltiLog, debugVersion]);
 
   const text = ['BRIDGE DEBUG LOG:', ...lines].join('\n');
 
