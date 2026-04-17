@@ -1284,6 +1284,8 @@ export default function TimerPage({ context }: TimerPageProps) {
               : '') ||
             'Respond while the clip plays (interpret or voice along). If the video stays paused, press play — your camera is already recording.'
           : currentPromptText;
+    const youtubeConcurrentSplit =
+      Boolean(studentYoutubeFlow && !deckMode && youtubeVidForConcurrent && ycRec && !youtubeStimulusError);
     return (
       <div className="prompter-page">
         <div className="prompter-card">
@@ -1297,19 +1299,28 @@ export default function TimerPage({ context }: TimerPageProps) {
           )}
           {studentYoutubeFlow && !deckMode && (
             <p className="prompter-info-message prompter-deck-progress-hint">
-              Recording — camera and mic are on while the assignment clip plays below
+              Recording — camera and mic are on beside the assignment clip
             </p>
           )}
-          {youtubeVidForConcurrent && ycRec && (
+          {youtubeConcurrentSplit && ycRec && (
+            <div className="prompter-youtube-record-prompt-banner">
+              <div>{recordPromptText}</div>
+            </div>
+          )}
+          {youtubeVidForConcurrent && ycRec && youtubeStimulusError && (
             <>
               <h2 className="prompter-youtube-stimulus-heading">Assignment clip</h2>
-              {youtubeStimulusError ? (
-                <p className="prompter-error-message prompter-error-message-mt">
-                  Stimulus playback cannot load (YouTube API required): {youtubeStimulusError}
-                </p>
-              ) : (
-                <>
-                  <div className="prompter-youtube-stimulus-frame prompter-youtube-stimulus-frame--record-concurrent">
+              <p className="prompter-error-message prompter-error-message-mt">
+                Stimulus playback cannot load (YouTube API required): {youtubeStimulusError}
+              </p>
+            </>
+          )}
+          {youtubeConcurrentSplit && ycRec ? (
+            <>
+              <div className="prompter-youtube-camera-split">
+                <div className="prompter-youtube-camera-split-col">
+                  <h3 className="prompter-youtube-split-heading">Assignment clip</h3>
+                  <div className="prompter-youtube-stimulus-frame prompter-youtube-stimulus-frame--record-split">
                     <YoutubeStimulusShell subtitleMask={ycRec.subtitleMask}>
                       <YoutubeIframePlayer
                         key={`${youtubeVidForConcurrent}-${youtubeClipStart}-${youtubeClipEndSafe}`}
@@ -1337,7 +1348,7 @@ export default function TimerPage({ context }: TimerPageProps) {
                     </YoutubeStimulusShell>
                   </div>
                   {ycRec.allowStudentCaptions === true ? (
-                    <div className="prompter-youtube-student-cc-toggle">
+                    <div className="prompter-youtube-student-cc-toggle prompter-youtube-student-cc-toggle--split">
                       <button
                         type="button"
                         className="prompter-btn-secondary"
@@ -1347,37 +1358,49 @@ export default function TimerPage({ context }: TimerPageProps) {
                       </button>
                     </div>
                   ) : null}
-                  <p className="prompter-info-message prompter-info-message-spaced">
-                    The clip should autoplay; if your browser blocks it, use the video surface to start playback. Your
-                    response is being recorded the whole time.
-                  </p>
-                </>
-              )}
-            </>
-          )}
-          <div className="prompter-record-layout">
-            {deckMode ? (
-              <div className="prompter-deck-prompt-shell prompter-deck-prompt-shell--record">
-                <div key={promptIndex} className="prompter-deck-prompt-display">
-                  {currentPromptText}
+                </div>
+                <div className="prompter-youtube-camera-split-col">
+                  <h3 className="prompter-youtube-split-heading">Your camera</h3>
+                  <div className="prompter-video-container prompter-video-container--split-match">
+                    <video ref={videoRef} autoPlay muted playsInline />
+                  </div>
+                  {recording && (
+                    <button type="button" onClick={finishAndSubmit} className="prompter-btn-danger prompter-btn-full">
+                      Finish & Submit to Canvas
+                    </button>
+                  )}
                 </div>
               </div>
-            ) : (
-              <div className="prompter-prompt-column" style={{ flex: '1 1 300px', maxWidth: 480 }}>
-                <div>{recordPromptText}</div>
-              </div>
-            )}
-            <div className="prompter-record-video-col">
-              <div className="prompter-video-container">
-                <video ref={videoRef} autoPlay muted playsInline />
-              </div>
-              {recording && (
-                <button type="button" onClick={finishAndSubmit} className="prompter-btn-danger">
-                  {deckMode ? 'Finish deck & submit to Canvas' : 'Finish & Submit to Canvas'}
-                </button>
+              <p className="prompter-info-message prompter-info-message-spaced">
+                The clip should autoplay; if your browser blocks it, use the video surface to start playback. Your
+                response is being recorded the whole time.
+              </p>
+            </>
+          ) : (
+            <div className="prompter-record-layout">
+              {deckMode ? (
+                <div className="prompter-deck-prompt-shell prompter-deck-prompt-shell--record">
+                  <div key={promptIndex} className="prompter-deck-prompt-display">
+                    {currentPromptText}
+                  </div>
+                </div>
+              ) : (
+                <div className="prompter-prompt-column" style={{ flex: '1 1 300px', maxWidth: 480 }}>
+                  <div>{recordPromptText}</div>
+                </div>
               )}
+              <div className="prompter-record-video-col">
+                <div className="prompter-video-container">
+                  <video ref={videoRef} autoPlay muted playsInline />
+                </div>
+                {recording && (
+                  <button type="button" onClick={finishAndSubmit} className="prompter-btn-danger">
+                    {deckMode ? 'Finish deck & submit to Canvas' : 'Finish & Submit to Canvas'}
+                  </button>
+                )}
+              </div>
             </div>
-          </div>
+          )}
           {submitError && <p className="prompter-error-message prompter-error-message-mt">{submitError}</p>}
           {submitInfo && <p className="prompter-info-message">{submitInfo}</p>}
         </div>
