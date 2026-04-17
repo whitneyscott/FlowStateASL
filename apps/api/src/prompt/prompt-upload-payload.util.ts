@@ -1,13 +1,12 @@
 /**
- * Canonical JSON helpers for WebM `PROMPT_DATA` mux and PROMPT_MATCH comparisons.
+ * Canonical JSON helpers for WebM `PROMPT_DATA` mux (encode/decode) and codec verification tests.
  * The mux tag stores base64(JSON.stringify(payload)) so HTML and newlines in `promptSnapshotHtml`
  * do not break ffmpeg's single-line metadata values.
- * Comparisons use stable key ordering so key order drift does not false-negative.
  */
 
 export const FSASL_PROMPT_UPLOAD_KIND = 'fsasl_prompt_upload';
 
-/** Fields mirrored for PROMPT_MATCH (excluding envelope-only keys). */
+/** Subset of prompt-upload fields used for deterministic round-trip checks in tests. */
 export type ComparablePromptUploadFields = {
   deckTimeline?: unknown;
   durationSeconds?: unknown;
@@ -36,7 +35,7 @@ function sortKeysDeep(value: unknown): unknown {
   return next;
 }
 
-/** Deterministic JSON for PROMPT_MATCH (UTF-8, sorted keys at all object levels). */
+/** Deterministic JSON for codec tests (UTF-8, sorted keys at all object levels). */
 export function stableStringifyForPromptMatch(value: unknown): string {
   return JSON.stringify(sortKeysDeep(value));
 }
@@ -90,22 +89,4 @@ export function decodePromptDataFromFfmpegMetadataTag(
   const parsed = parseJsonObject(utf8, maxDecodedUtf8Bytes);
   if (!parsed.ok) return { ok: false, error: parsed.error };
   return { ok: true, obj: parsed.obj, utf8ByteLength: byteLen };
-}
-
-export function comparableStableFromSubmissionBodyJson(
-  bodyUtf8: string | undefined,
-  maxLen: number,
-): string | null {
-  const p = parseJsonObject(bodyUtf8 ?? '', maxLen);
-  if (!p.ok) return null;
-  const fields = extractComparablePromptUploadFields(p.obj);
-  if (
-    fields.deckTimeline === undefined &&
-    fields.promptSnapshotHtml === undefined &&
-    fields.durationSeconds === undefined &&
-    fields.mediaStimulus === undefined
-  ) {
-    return null;
-  }
-  return stableStringifyForPromptMatch(fields);
 }

@@ -24,12 +24,9 @@ import type { PromptConfigJson, PutPromptConfigDto } from './dto/prompt-config.d
 import { normalizeYoutubeInputToVideoId } from './youtube-video-id.util';
 import { normalizeCanvasRubricAssessment } from './canvas-rubric-assessment.util';
 import {
-  comparableStableFromSubmissionBodyJson,
   decodePromptDataFromFfmpegMetadataTag,
   encodePromptDataForFfmpegMetadataTag,
-  extractComparablePromptUploadFields,
   FSASL_PROMPT_UPLOAD_KIND,
-  stableStringifyForPromptMatch,
 } from './prompt-upload-payload.util';
 import {
   cleanupMuxOutputPath,
@@ -2387,7 +2384,6 @@ export class PromptService {
     promptHtml?: string;
     videoDurationSeconds: number | null;
     durationSource: 'submission' | 'prompts' | 'unknown';
-    comparableStable: string | null;
   } {
     let videoDurationSeconds: number | null = null;
     let durationSource: 'submission' | 'prompts' | 'unknown' = 'unknown';
@@ -2421,8 +2417,7 @@ export class PromptService {
       durationSource = 'prompts';
     }
     const promptHtml = this.extractPromptHtmlFromSubmissionBody(body);
-    const comparableStable = comparableStableFromSubmissionBodyJson(body, 512_000);
-    return { promptHtml, videoDurationSeconds, durationSource, comparableStable };
+    return { promptHtml, videoDurationSeconds, durationSource };
   }
 
   private static readonly PROMPT_DATA_DECODE_MAX_UTF8 = 512_000;
@@ -2532,16 +2527,6 @@ export class PromptService {
         promptDataUtf8Bytes: decoded.utf8ByteLength,
       });
 
-      const metaStable = stableStringifyForPromptMatch(extractComparablePromptUploadFields(decoded.obj));
-      const bodyStable = comparableStableFromSubmissionBodyJson(args.body, 512_000);
-      if (bodyStable != null) {
-        const match = metaStable === bodyStable;
-        appendLtiLog('webm-prompt', `PROMPT_MATCH: ${match ? 'yes' : 'no'}`, { userId: args.userId });
-      } else {
-        appendLtiLog('webm-prompt', 'PROMPT_MATCH: n/a (no_submission_body_match_fields)', {
-          userId: args.userId,
-        });
-      }
       appendLtiLog('webm-prompt', 'PROMPT_SOURCE: webm_metadata', { userId: args.userId });
 
       return {
