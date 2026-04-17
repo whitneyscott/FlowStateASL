@@ -3847,12 +3847,13 @@ export class PromptService {
   async createPromptManagerAssignment(
     ctx: LtiContext,
     name: string,
-    options?: { assignmentGroupId?: string; newGroupName?: string },
+    options?: { assignmentGroupId?: string; newGroupName?: string; moduleId?: string },
   ): Promise<{ assignmentId: string }> {
     appendLtiLog('prompt', 'create-assignment: createPromptManagerAssignment called', {
       name,
       optionsAssignmentGroupId: options?.assignmentGroupId ?? '(none)',
       optionsNewGroupName: options?.newGroupName ?? '(none)',
+      optionsModuleId: options?.moduleId?.trim() ?? '(none)',
     });
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
     if (!token) {
@@ -3901,6 +3902,7 @@ export class PromptService {
     );
     const settingsAssignmentId = await this.ensurePromptManagerSettingsAssignment(ctx.courseId, domainOverride, token);
     const blob = await this.readPromptManagerSettingsBlob(ctx.courseId, domainOverride, token);
+    const moduleIdTrim = (options?.moduleId ?? '').trim();
     const configs = {
       ...(blob?.configs ?? {}),
       [assignmentId]: {
@@ -3909,6 +3911,7 @@ export class PromptService {
         accessCode: '',
         assignmentName: name,
         ...(assignmentGroupId != null ? { assignmentGroupId: String(assignmentGroupId) } : {}),
+        ...(moduleIdTrim ? { moduleId: moduleIdTrim } : {}),
         promptMode: 'text',
       } as PromptConfigJson,
     };
@@ -3921,6 +3924,24 @@ export class PromptService {
     };
     const description = JSON.stringify(payload);
     await this.canvas.updateAssignmentDescription(ctx.courseId, settingsAssignmentId, description, domainOverride, token);
+    if (moduleIdTrim) {
+      try {
+        await this.canvas.addAssignmentToModule(
+          ctx.courseId,
+          moduleIdTrim,
+          assignmentId,
+          domainOverride,
+          token,
+        );
+      } catch (modErr) {
+        appendLtiLog('prompt', 'create-assignment: addAssignmentToModule failed (assignment exists; fix in Canvas)', {
+          assignmentId,
+          moduleId: moduleIdTrim,
+          error: String(modErr),
+        });
+        throw modErr;
+      }
+    }
     appendLtiLog('prompt', 'create-assignment: completed successfully', {
       assignmentId,
       courseId: ctx.courseId,

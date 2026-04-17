@@ -503,6 +503,10 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
 
   const handleSave = async () => {
     if (!teacher || !hasLti) return;
+    if (!moduleId.trim()) {
+      setError('Select a Canvas module. All assignments must be placed in a module.');
+      return;
+    }
     if (promptMode === 'decks' && selectedDecks.length === 0) {
       setError('Select at least one flashcard deck when using Deck Prompts.');
       return;
@@ -541,6 +545,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         const { assignmentId: newId } = await promptApi.createAssignment(
           assignmentName.trim() || 'ASL Express Assignment',
           {
+            moduleId: moduleId.trim(),
             assignmentGroupId: assignmentGroupId || undefined,
             newGroupName: assignmentGroupId === '__new__' ? createGroupName.trim() || undefined : undefined,
           }
@@ -561,7 +566,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
           prompts,
           accessCode,
           assignmentName: assignmentName.trim() || undefined,
-          moduleId: moduleId || undefined,
+          moduleId: moduleId.trim(),
           assignmentGroupId: assignmentGroupId || undefined,
           newGroupName: assignmentGroupId === '__new__' ? createGroupName.trim() || undefined : undefined,
           rubricId: rubricId || undefined,
@@ -711,12 +716,17 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
 
   const handleCreateNewAssignment = async () => {
     if (!teacher || !hasLti || creatingAssignment) return;
+    if (!moduleId.trim()) {
+      setError('Select a Canvas module. All assignments must be placed in a module.');
+      return;
+    }
     const name = createAssignName.trim() || 'ASL Express Assignment';
     setCreatingAssignment(true);
     setError(null);
     try {
       setLastFunction('POST /api/prompt/create-assignment');
       const { assignmentId: newId } = await promptApi.createAssignment(name, {
+        moduleId: moduleId.trim(),
         assignmentGroupId: assignmentGroupId || undefined,
         newGroupName: assignmentGroupId === '__new__' ? createGroupName.trim() || undefined : undefined,
       });
@@ -942,7 +952,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         value={moduleId}
         onChange={(e) => setModuleId(e.target.value)}
       >
-        <option value="">— None —</option>
+        <option value="">— Select a module (required) —</option>
         {modules.map((m) => (
           <option key={m.id} value={String(m.id)}>
             {m.name}
@@ -1103,6 +1113,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                       <div className="prompter-settings-field prompter-settings-field-mt-sm">
                         {assignmentGroupSelector}
                       </div>
+                      <div className="prompter-settings-field prompter-settings-field-mt-sm">{moduleSelector}</div>
                       <div className="prompter-settings-actions-row prompter-settings-actions-row-mt-md">
                         <button
                           type="button"
@@ -1144,25 +1155,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                         </p>
                       </div>
                     ) : (
-                      <div className="prompter-settings-section">
-                        <p className="prompter-hint">
-                          <strong>YouTube mode:</strong> students watch the clip segment you define (start/end times), then record their response in the time you set below.
-                        </p>
-                        <label className="prompter-settings-label" htmlFor="youtube-response-minutes">
-                          <strong>Recording time after clip (minutes)</strong>
-                        </label>
-                        <input
-                          id="youtube-response-minutes"
-                          type="number"
-                          min={1}
-                          max={60}
-                          step={0.5}
-                          value={minutes}
-                          onChange={(e) => setMinutes(Number(e.target.value) || 5)}
-                          className="prompter-settings-input prompter-settings-input-narrow"
-                        />
-                        <p className="prompter-hint">Timer for the student&apos;s camera recording once the YouTube segment finishes.</p>
-                      </div>
+                      <div className="prompter-settings-section" aria-hidden />
                     )}
                     <div className="prompter-settings-section prompter-settings-assignment-block">
                       <label className="prompter-settings-label"><strong>Assignment Settings:</strong></label>

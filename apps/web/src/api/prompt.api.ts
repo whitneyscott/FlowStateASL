@@ -551,11 +551,14 @@ export async function createModule(
 
 export async function createAssignment(
   name: string,
-  options?: { assignmentGroupId?: string; newGroupName?: string }
+  options: { moduleId: string; assignmentGroupId?: string; newGroupName?: string },
 ): Promise<{ assignmentId: string }> {
-  const body: { name: string; assignmentGroupId?: string; newGroupName?: string } = { name };
-  if (options?.assignmentGroupId != null) body.assignmentGroupId = options.assignmentGroupId;
-  if (options?.newGroupName != null) body.newGroupName = options.newGroupName;
+  const body: { name: string; assignmentGroupId?: string; newGroupName?: string; moduleId: string } = {
+    name,
+    moduleId: options.moduleId.trim(),
+  };
+  if (options.assignmentGroupId != null) body.assignmentGroupId = options.assignmentGroupId;
+  if (options.newGroupName != null) body.newGroupName = options.newGroupName;
   return fetchJsonWithOAuthRedirect<{ assignmentId: string }>(base + '/create-assignment', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

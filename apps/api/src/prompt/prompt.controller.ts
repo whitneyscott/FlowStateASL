@@ -77,6 +77,10 @@ export class PromptController {
   }
 
   private validatePutConfigDto(dto: PutPromptConfigDto): void {
+    const moduleId = (dto.moduleId ?? '').toString().trim();
+    if (!moduleId) {
+      throw new BadRequestException('Select a Canvas module. Assignments must be placed in a module.');
+    }
     if (dto.pointsPossible !== undefined) {
       const v = Number(dto.pointsPossible);
       if (!Number.isFinite(v) || !Number.isInteger(v) || v < 0) {
@@ -842,21 +846,27 @@ export class PromptController {
   async createAssignment(
     @Req() req: Request,
     @Res() res: Response,
-    @Body() body: { name?: string; assignmentGroupId?: string; newGroupName?: string },
+    @Body() body: { name?: string; assignmentGroupId?: string; newGroupName?: string; moduleId?: string },
   ) {
     const ctx = this.getCtx(req);
     const name = (body?.name ?? '').toString().trim() || 'ASL Express Assignment';
+    const moduleId = (body?.moduleId ?? '').toString().trim();
+    if (!moduleId) {
+      throw new BadRequestException('Select a Canvas module. Assignments must be placed in a module.');
+    }
     try {
       const { appendLtiLog } = await import('../common/last-error.store');
       appendLtiLog('prompt', 'create-assignment received', {
         name,
         assignmentGroupId: body?.assignmentGroupId ?? '(none)',
         newGroupName: body?.newGroupName ?? '(none)',
+        moduleId,
         rawBody: { name: body?.name, assignmentGroupId: body?.assignmentGroupId, newGroupName: body?.newGroupName },
       });
       const result = await this.prompt.createPromptManagerAssignment(ctx, name, {
         assignmentGroupId: body?.assignmentGroupId,
         newGroupName: body?.newGroupName,
+        moduleId,
       });
       appendLtiLog('prompt', 'create-assignment success', {
         name,

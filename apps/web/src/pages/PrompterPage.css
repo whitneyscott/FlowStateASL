@@ -1689,6 +1689,21 @@
   white-space: nowrap;
 }
 
+.prompter-viewer-timestamped-feedback-html,
+.prompter-viewer-rubric-feedback-html {
+  display: inline-block;
+  vertical-align: top;
+  margin-left: 0.35rem;
+  max-width: min(420px, 55vw);
+  text-align: left;
+}
+
+.prompter-viewer-feedback-richtext-hint {
+  font-size: 13px;
+  margin: 0 0 8px;
+  color: #456;
+}
+
 @media (max-width: 520px) {
   .prompter-viewer-text-left-split {
     grid-template-columns: 1fr;

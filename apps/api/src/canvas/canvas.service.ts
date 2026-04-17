@@ -1116,21 +1116,31 @@ export class CanvasService {
     }
   }
 
-  /** List course modules for module selector. */
+  /** List course modules for module selector (follows Canvas Link pagination until exhausted). */
   async listModules(
     courseId: string,
     domainOverride?: string,
     tokenOverride?: string | null,
   ): Promise<Array<{ id: number; name: string; position: number }>> {
     const base = this.getBaseUrl(domainOverride);
-    const url = `${base}/api/v1/courses/${courseId}/modules?per_page=50`;
-    const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Canvas list modules failed: ${res.status} ${text}`);
+    const out: Array<{ id: number; name: string; position: number }> = [];
+    let nextUrl: string | null = `${base}/api/v1/courses/${courseId}/modules?per_page=100`;
+    let pages = 0;
+    const maxPages = 40;
+    while (nextUrl && pages < maxPages) {
+      const res = await fetch(nextUrl, { headers: this.getAuthHeaders(tokenOverride) });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`Canvas list modules failed: ${res.status} ${text}`);
+      }
+      const data = (await res.json()) as Array<{ id: number; name: string; position: number }>;
+      if (Array.isArray(data) && data.length > 0) out.push(...data);
+      const linkHeader = res.headers.get('link') ?? '';
+      const nextMatch = linkHeader.match(/<([^>]+)>;\s*rel="next"/i);
+      nextUrl = nextMatch?.[1] ?? null;
+      pages += 1;
     }
-    const data = (await res.json()) as Array<{ id: number; name: string; position: number }>;
-    return Array.isArray(data) ? data : [];
+    return out;
   }
 
   /** Add an assignment to a module. Idempotent: no-op if assignment already in module. */
@@ -2159,6 +2169,7 @@ export class CanvasService {
     const body = {
       module: {
         name: name.trim() || 'New Module',
+        published: true,
         ...(options?.position != null && { position: options.position }),
       },
     };

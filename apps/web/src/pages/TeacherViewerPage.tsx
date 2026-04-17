@@ -11,6 +11,8 @@ import { SproutSourceCardModal } from '../components/SproutSourceCardModal';
 import { YoutubeStimulusShell } from '../components/YoutubeStimulusShell';
 import { YoutubeIframePlayer, type YoutubeIframePlayerHandle } from '../components/YoutubeIframePlayer';
 import { CaptionsAccessibilityPanel } from '../components/CaptionsAccessibilityPanel';
+import { TeacherFeedbackRichEditor } from '../components/TeacherFeedbackRichEditor';
+import { feedbackEditorIsEmpty, sanitizeTeacherFeedbackHtml } from '../utils/teacher-feedback-html';
 import './PrompterPage.css';
 
 interface FeedbackEntry {
@@ -33,6 +35,12 @@ function parseTimestampedFeedback(comments: Array<{ id: number; comment: string 
   }
   out.sort((a, b) => a.time - b.time);
   return out;
+}
+
+function FeedbackHtmlSnippet({ html }: { html: string }) {
+  const safe = sanitizeTeacherFeedbackHtml(html);
+  if (!safe) return <span className="prompter-viewer-feedback-empty-inline">—</span>;
+  return <span className="teacher-feedback-html-display" dangerouslySetInnerHTML={{ __html: safe }} />;
 }
 
 function appendViewerBridgeLog(message: string, extra?: Record<string, unknown>): void {
@@ -542,7 +550,9 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   const [resetStatus, setResetStatus] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [commentText, setCommentText] = useState('');
+  const commentEditorRef = useRef<HTMLDivElement | null>(null);
+  const feedbackEditModalEditorRef = useRef<HTMLDivElement | null>(null);
+  const [feedbackEditEntry, setFeedbackEditEntry] = useState<FeedbackEntry | null>(null);
   const [feedbackEntries, setFeedbackEntries] = useState<FeedbackEntry[]>([]);
   const [rubricDraft, setRubricDraft] = useState<Record<string, RubricCriterionDraft>>({});
   const rubricPromptEditorCtxRef = useRef<RubricPromptEditorContext | undefined>(undefined);
@@ -924,8 +934,9 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   };
 
   const handleAddComment = useCallback(async () => {
-    const text = commentText.trim();
-    if (!text || !current || !assignmentId || !videoRef.current) return;
+    const rawHtml = commentEditorRef.current?.innerHTML ?? '';
+    const html = sanitizeTeacherFeedbackHtml(rawHtml);
+    if (feedbackEditorIsEmpty(html) || !current || !assignmentId || !videoRef.current) return;
     const v = videoRef.current;
     const anchor = deckFeedbackAnchorRef.current;
     let timeSec = Math.floor(v.currentTime);
@@ -947,16 +958,19 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     setSaving(true);
     try {
       setLastFunction('POST /api/prompt/comment/add');
-      const res = await promptApi.addComment(current.userId, timeSec, text, currentAttempt, assignmentId);
+      const res = await promptApi.addComment(current.userId, timeSec, html, currentAttempt, assignmentId);
       setLastApiResult('POST /api/prompt/comment/add', 200, true);
-      setCommentText('');
-      const newEntry = { id: res?.commentId ?? 0, time: timeSec, text };
+      if (commentEditorRef.current) commentEditorRef.current.innerHTML = '';
+      const newEntry = { id: res?.commentId ?? 0, time: timeSec, text: html };
       setFeedbackEntries((prev) => {
         const next = [...prev, newEntry];
         next.sort((a, b) => a.time - b.time);
         return next;
       });
-      const newComment = { id: res?.commentId ?? 0, comment: `[${Math.floor(timeSec / 60)}:${timeSec % 60 < 10 ? '0' : ''}${timeSec % 60}] ${text}` };
+      const newComment = {
+        id: res?.commentId ?? 0,
+        comment: `[${Math.floor(timeSec / 60)}:${timeSec % 60 < 10 ? '0' : ''}${timeSec % 60}] ${html}`,
+      };
       setSubmissions((prev) =>
         prev.map((s, i) =>
           i === index
@@ -970,15 +984,15 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     } finally {
       setSaving(false);
     }
-  }, [commentText, current, assignmentId, currentAttempt, index, setLastFunction, setLastApiResult]);
+  }, [current, assignmentId, currentAttempt, index, setLastFunction, setLastApiResult]);
 
   const handleCommentKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
       const v = videoRef.current;
       if (v && !v.paused) v.pause();
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
-        handleAddComment();
+        void handleAddComment();
       }
     },
     [handleAddComment]
@@ -1000,35 +1014,55 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     }
   }, []);
 
-  const handleEditComment = useCallback(
-    async (entry: FeedbackEntry) => {
-      const newText = window.prompt('Edit comment:', entry.text);
-      if (newText == null || newText.trim() === '') return;
-      if (!current || !assignmentId) return;
-      try {
-        await promptApi.editComment(current.userId, String(entry.id), entry.time, newText.trim(), assignmentId);
-        setFeedbackEntries((prev) =>
-          prev.map((f) => (f.id === entry.id ? { ...f, text: newText.trim() } : f)).sort((a, b) => a.time - b.time)
-        );
-        const timeLabel = `[${Math.floor(entry.time / 60)}:${entry.time % 60 < 10 ? '0' : ''}${entry.time % 60}] `;
-        setSubmissions((prev) =>
-          prev.map((s, i) =>
-            i === index
-              ? {
-                  ...s,
-                  submissionComments: (s.submissionComments ?? []).map((c) =>
-                    c.id === entry.id ? { ...c, comment: timeLabel + newText.trim() } : c
-                  ),
-                }
-              : s
-          )
-        );
-      } catch {
-        setError('Failed to edit comment');
-      }
-    },
-    [current, assignmentId, index]
-  );
+  const handleEditComment = useCallback((entry: FeedbackEntry) => {
+    setFeedbackEditEntry(entry);
+  }, []);
+
+  const handleSaveFeedbackEdit = useCallback(async () => {
+    if (!feedbackEditEntry || !current || !assignmentId) return;
+    const rawHtml = feedbackEditModalEditorRef.current?.innerHTML ?? '';
+    const newHtml = sanitizeTeacherFeedbackHtml(rawHtml);
+    if (feedbackEditorIsEmpty(newHtml)) {
+      setError('Feedback cannot be empty.');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await promptApi.editComment(
+        current.userId,
+        String(feedbackEditEntry.id),
+        feedbackEditEntry.time,
+        newHtml,
+        assignmentId,
+      );
+      const timeLabel = `[${Math.floor(feedbackEditEntry.time / 60)}:${feedbackEditEntry.time % 60 < 10 ? '0' : ''}${feedbackEditEntry.time % 60}] `;
+      setFeedbackEntries((prev) =>
+        prev.map((f) => (f.id === feedbackEditEntry.id ? { ...f, text: newHtml } : f)).sort((a, b) => a.time - b.time),
+      );
+      setSubmissions((prev) =>
+        prev.map((s, i) =>
+          i === index
+            ? {
+                ...s,
+                submissionComments: (s.submissionComments ?? []).map((c) =>
+                  c.id === feedbackEditEntry.id ? { ...c, comment: timeLabel + newHtml } : c,
+                ),
+              }
+            : s,
+        ),
+      );
+      setFeedbackEditEntry(null);
+    } catch {
+      setError('Failed to edit comment');
+    } finally {
+      setSaving(false);
+    }
+  }, [feedbackEditEntry, current, assignmentId, index]);
+
+  const handleCancelFeedbackEdit = useCallback(() => {
+    setFeedbackEditEntry(null);
+  }, []);
 
   const handleDeleteComment = useCallback(
     async (entry: FeedbackEntry) => {
@@ -1596,8 +1630,11 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                                               : handleFeedbackClick(f.time)
                                           }
                                         >
-                                          {f.text || '—'}
+                                          {formatTime(f.time)}
                                         </button>
+                                        <div className="prompter-viewer-rubric-feedback-html">
+                                          <FeedbackHtmlSnippet html={f.text} />
+                                        </div>
                                         {teacher && (
                                           <div className="prompter-viewer-comment-actions">
                                             <button type="button" className="prompter-viewer-comment-action-btn" onClick={() => handleEditComment(f)}>
@@ -1727,8 +1764,11 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                                     className="prompter-viewer-feedback-seek-btn"
                                     onClick={() => handleFeedbackClick(f.time)}
                                   >
-                                    {f.text || '—'}
+                                    Seek
                                   </button>
+                                  <div className="prompter-viewer-timestamped-feedback-html">
+                                    <FeedbackHtmlSnippet html={f.text} />
+                                  </div>
                                   {teacher && (
                                     <div className="prompter-viewer-comment-actions">
                                       <button
@@ -2158,18 +2198,22 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                 <div className="prompter-viewer-feedback-at-playhead" aria-live="polite">
                   {activeFeedback.map((f) => (
                     <span key={f.id} className="prompter-viewer-feedback-at-playhead-item">
-                      <strong>{formatTime(f.time)}</strong>: {f.text}{' '}
+                      <strong>{formatTime(f.time)}</strong>:{' '}
+                      <FeedbackHtmlSnippet html={f.text} />{' '}
                     </span>
                   ))}
                 </div>
               )}
-              <div className="prompter-viewer-textarea-wrap">
-                <textarea
-                  id="comment"
-                  value={commentText}
-                  onChange={(e) => setCommentText(e.target.value)}
-                  onKeyDown={handleCommentKeyDown}
-                  placeholder="Type feedback and press Enter to add at current time..."
+              <p className="prompter-hint prompter-viewer-feedback-richtext-hint">
+                Rich text feedback is saved as HTML on the Canvas submission. Press <strong>Enter</strong> to post at the
+                current time; use <strong>Shift+Enter</strong> for a new line.
+              </p>
+              <div className="prompter-viewer-textarea-wrap" onKeyDown={handleCommentKeyDown}>
+                <TeacherFeedbackRichEditor
+                  key={`freeform-${current?.userId ?? 'none'}`}
+                  editorRef={commentEditorRef}
+                  initialHtml=""
+                  autoFocus={false}
                 />
               </div>
             </div>
@@ -2200,6 +2244,45 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
         sproutAccountId={sproutAccountIdForEmbed}
         videoId={sourceCardPreviewVideoId ?? ''}
       />
+      {feedbackEditEntry && (
+        <div
+          className="teacher-feedback-modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="feedback-edit-title"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) handleCancelFeedbackEdit();
+          }}
+        >
+          <div className="teacher-feedback-modal">
+            <h3 id="feedback-edit-title">Edit feedback at {formatTime(feedbackEditEntry.time)}</h3>
+            <TeacherFeedbackRichEditor
+              key={`edit-${feedbackEditEntry.id}`}
+              editorRef={feedbackEditModalEditorRef}
+              initialHtml={feedbackEditEntry.text}
+              autoFocus
+            />
+            <div className="teacher-feedback-modal-actions">
+              <button
+                type="button"
+                className="prompter-viewer-grade-btn"
+                onClick={handleCancelFeedbackEdit}
+                disabled={saving}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="prompter-viewer-grade-btn"
+                onClick={() => void handleSaveFeedbackEdit()}
+                disabled={saving}
+              >
+                {saving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

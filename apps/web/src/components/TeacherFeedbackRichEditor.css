@@ -1,0 +1,83 @@
+.teacher-feedback-richtext {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.teacher-feedback-richtext-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.teacher-feedback-richtext-toolbar-btn {
+  font-size: 12px;
+  padding: 4px 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #f8f8f8;
+  cursor: pointer;
+}
+
+.teacher-feedback-richtext-toolbar-btn:hover {
+  background: #eee;
+}
+
+.teacher-feedback-richtext-editor {
+  min-height: 120px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 10px 12px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #fff;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.teacher-feedback-richtext-editor:focus {
+  outline: 2px solid #0066cc;
+  outline-offset: 1px;
+}
+
+.teacher-feedback-html-display {
+  font-size: 14px;
+  line-height: 1.45;
+  text-align: left;
+}
+
+.teacher-feedback-html-display p {
+  margin: 0.35em 0;
+}
+
+.teacher-feedback-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 10050;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.teacher-feedback-modal {
+  background: #fff;
+  border-radius: 8px;
+  max-width: 560px;
+  width: 100%;
+  padding: 16px 20px 20px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+}
+
+.teacher-feedback-modal h3 {
+  margin: 0 0 12px;
+  font-size: 1.1rem;
+}
+
+.teacher-feedback-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 14px;
+}
