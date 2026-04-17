@@ -47,6 +47,59 @@ function appendViewerBridgeLog(message: string, extra?: Record<string, unknown>)
   appendBridgeLog('viewer', message, extra);
 }
 
+/** Sign-to-voice captions on the student’s Canvas submission video, not the assigned stimulus clip. */
+function SubmissionCaptionsTeacherBanner({
+  phase,
+  failureMessage,
+}: {
+  phase: promptApi.SubmissionCaptionsPhase;
+  failureMessage?: string;
+}) {
+  if (phase === 'off') return null;
+  if (phase === 'ready') {
+    return (
+      <div
+        className="prompter-viewer-submission-cc-banner prompter-viewer-submission-cc-banner--ready"
+        role="status"
+      >
+        <strong>Canvas submission captions</strong> (sign-to-voice on the student recording): ready. Use the
+        checkbox below the submission video to show them.
+      </div>
+    );
+  }
+  if (phase === 'failed') {
+    return (
+      <div
+        className="prompter-viewer-submission-cc-banner prompter-viewer-submission-cc-banner--failed"
+        role="alert"
+      >
+        <strong>Canvas submission captions</strong> (sign-to-voice on the student recording): failed.
+        {failureMessage ? (
+          <pre className="prompter-viewer-submission-cc-pre">{failureMessage}</pre>
+        ) : null}
+        <p className="prompter-viewer-submission-cc-hint">
+          Check Bridge debug (sign-to-voice), Deepgram API key, and Canvas file access if this persists.
+        </p>
+      </div>
+    );
+  }
+  const isPending = phase === 'pending';
+  return (
+    <div
+      className={`prompter-viewer-submission-cc-banner ${
+        isPending ? 'prompter-viewer-submission-cc-banner--pending' : 'prompter-viewer-submission-cc-banner--queued'
+      }`}
+      role="status"
+    >
+      <strong>Canvas submission captions</strong> (sign-to-voice on the student recording):{' '}
+      {isPending
+        ? 'still processing (transcribe and mux). This often takes one to several minutes.'
+        : 'waiting for Canvas to finish attaching the file, or for processing to start.'}{' '}
+      This page refreshes periodically while work is in progress.
+    </div>
+  );
+}
+
 /** Deck submissions: real boundaries from the student recorder (seconds from recording start). */
 interface DeckTimelineEntry {
   title: string;
@@ -540,6 +593,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
       allowStudentCaptions: boolean;
       subtitleMask: { enabled: boolean; heightPercent: number };
     };
+    signToVoiceRequired?: boolean;
   } | null>(null);
   const [mySubmission, setMySubmission] = useState<promptApi.PromptSubmission | null>(null);
   const [loading, setLoading] = useState(true);
@@ -605,10 +659,37 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     youtubeStimulusForGrading?.videoId,
   ]);
 
+  const submissionCaptionsReady = useMemo(() => {
+    const p = current?.submissionCaptions?.phase;
+    if (p === 'ready') return true;
+    return current?.captionsStatus === 'ready';
+  }, [current?.submissionCaptions?.phase, current?.captionsStatus]);
+
+  const submissionCaptionPhase = useMemo((): promptApi.SubmissionCaptionsPhase => {
+    const p = current?.submissionCaptions?.phase;
+    if (p) return p;
+    if (!assignment?.signToVoiceRequired) return 'off';
+    const cs = current?.captionsStatus;
+    if (cs === 'pending' || cs === 'ready' || cs === 'failed') return cs;
+    return 'queued';
+  }, [current?.submissionCaptions?.phase, current?.captionsStatus, assignment?.signToVoiceRequired]);
+
   const submissionCaptionsVttSrc = useMemo(() => {
-    if (!gradingMode || !assignmentId || !current?.userId || current.captionsStatus !== 'ready') return undefined;
+    if (!gradingMode || !assignmentId || !current?.userId || !submissionCaptionsReady) return undefined;
     return promptApi.submissionCaptionsVttUrl(current.userId, assignmentId);
-  }, [gradingMode, assignmentId, current?.userId, current?.captionsStatus]);
+  }, [gradingMode, assignmentId, current?.userId, submissionCaptionsReady]);
+
+  const shouldPollSubmissionCaptions = useMemo(() => {
+    if (!gradingMode || !submissions.length) return false;
+    return submissions.some((s) => {
+      const ph = s.submissionCaptions?.phase;
+      if (ph === 'queued' || ph === 'pending') return true;
+      if (!s.submissionCaptions && assignment?.signToVoiceRequired) {
+        return s.captionsStatus === 'pending';
+      }
+      return false;
+    });
+  }, [gradingMode, submissions, assignment?.signToVoiceRequired]);
 
   useEffect(() => {
     setTeacherStimulusCaptions(false);
@@ -707,6 +788,18 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
       setLoading(false);
     }
   }, [teacher, assignmentId, setLastFunction, setLastApiResult, setLastApiError]);
+
+  const loadTeacherRef = useRef(loadTeacher);
+  loadTeacherRef.current = loadTeacher;
+
+  useEffect(() => {
+    if (!shouldPollSubmissionCaptions) return;
+    const id = window.setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      void loadTeacherRef.current();
+    }, 20000);
+    return () => window.clearInterval(id);
+  }, [shouldPollSubmissionCaptions]);
 
   const loadStudent = useCallback(async () => {
     if (!assignmentId || !context) return;
@@ -1917,13 +2010,13 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
               <div className="prompter-viewer-youtube-dual">
                 <div className="prompter-viewer-youtube-dual-cols">
                   <div className="prompter-viewer-youtube-dual-col">
-                    <h2 className="prompter-viewer-section-heading">Assigned stimulus (YouTube)</h2>
+                    <h2 className="prompter-viewer-section-heading">Assigned stimulus</h2>
                     {youtubeStimulusForGrading.label && (
                       <p className="prompter-viewer-media-stimulus-label">{youtubeStimulusForGrading.label}</p>
                     )}
                     {youtubeStimulusRuntimeError ? (
                       <p className="prompter-error-message">
-                        Stimulus playback unavailable (YouTube API required): {youtubeStimulusRuntimeError}
+                        Stimulus playback unavailable: {youtubeStimulusRuntimeError}
                       </p>
                     ) : (
                       <div className="prompter-viewer-youtube-dual-frame">
@@ -1970,6 +2063,12 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                   </div>
                   <div className="prompter-viewer-youtube-dual-col">
                     <h2 className="prompter-viewer-section-heading">Submission</h2>
+                    {gradingMode && assignment?.signToVoiceRequired && current?.videoUrl ? (
+                      <SubmissionCaptionsTeacherBanner
+                        phase={submissionCaptionPhase}
+                        failureMessage={current?.submissionCaptions?.message}
+                      />
+                    ) : null}
                     <GradingVideoPlayer
                       hideControls
                       src={current.videoUrl}
@@ -1996,13 +2095,13 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
             <>
               {youtubeStimulusForGrading && (
                 <div className="prompter-viewer-center-row prompter-viewer-center-row--media-stimulus">
-                  <h2 className="prompter-viewer-section-heading">Assigned stimulus (YouTube)</h2>
+                  <h2 className="prompter-viewer-section-heading">Assigned stimulus</h2>
                   {youtubeStimulusForGrading.label && (
                     <p className="prompter-viewer-media-stimulus-label">{youtubeStimulusForGrading.label}</p>
                   )}
                   {youtubeStimulusRuntimeError ? (
                     <p className="prompter-error-message">
-                      Stimulus playback unavailable (YouTube API required): {youtubeStimulusRuntimeError}
+                      Stimulus playback unavailable: {youtubeStimulusRuntimeError}
                     </p>
                   ) : (
                     <div className="prompter-viewer-media-stimulus-frame">
@@ -2053,14 +2152,22 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                 {noSubmissionsInGradingMode ? (
                   <p className="prompter-viewer-no-video">No submissions for this assignment.</p>
                 ) : current?.videoUrl ? (
-                  <GradingVideoPlayer
-                    src={current.videoUrl}
-                    videoKey={current.userId ?? ''}
-                    videoRef={videoRef}
-                    videoDurationSeconds={current.videoDurationSeconds}
-                    durationSource={current.durationSource}
-                    captionsVttSrc={submissionCaptionsVttSrc}
-                  />
+                  <>
+                    {gradingMode && assignment?.signToVoiceRequired ? (
+                      <SubmissionCaptionsTeacherBanner
+                        phase={submissionCaptionPhase}
+                        failureMessage={current?.submissionCaptions?.message}
+                      />
+                    ) : null}
+                    <GradingVideoPlayer
+                      src={current.videoUrl}
+                      videoKey={current.userId ?? ''}
+                      videoRef={videoRef}
+                      videoDurationSeconds={current.videoDurationSeconds}
+                      durationSource={current.durationSource}
+                      captionsVttSrc={submissionCaptionsVttSrc}
+                    />
+                  </>
                 ) : hasSubmissionNoVideo ? (
                   <div className="prompter-viewer-processing">
                     <p>Your submission is being processed. Video will appear shortly. Refresh the page to check.</p>

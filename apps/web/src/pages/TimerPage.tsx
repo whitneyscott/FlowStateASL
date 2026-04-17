@@ -1311,7 +1311,7 @@ export default function TimerPage({ context }: TimerPageProps) {
             <>
               <h2 className="prompter-youtube-stimulus-heading">Assignment clip</h2>
               <p className="prompter-error-message prompter-error-message-mt">
-                Stimulus playback cannot load (YouTube API required): {youtubeStimulusError}
+                Stimulus playback cannot load: {youtubeStimulusError}
               </p>
             </>
           )}

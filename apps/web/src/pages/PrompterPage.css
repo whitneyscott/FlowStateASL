@@ -2721,3 +2721,54 @@
     flex-direction: column;
   }
 }
+
+/* Teacher grading: sign-to-voice (student WebM) caption pipeline status */
+.prompter-viewer-submission-cc-banner {
+  text-align: left;
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid #c5d4e3;
+  background: #f0f6fc;
+  color: #1a2b3d;
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
+.prompter-viewer-submission-cc-banner--queued {
+  border-color: #c9c29a;
+  background: #fffbeb;
+}
+
+.prompter-viewer-submission-cc-banner--pending {
+  border-color: #8ab4d9;
+  background: #e8f2fb;
+}
+
+.prompter-viewer-submission-cc-banner--ready {
+  border-color: #8fd99a;
+  background: #eef9f0;
+}
+
+.prompter-viewer-submission-cc-banner--failed {
+  border-color: #e0a4a0;
+  background: #fdf2f2;
+}
+
+.prompter-viewer-submission-cc-pre {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  font-size: 0.82rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: 4px;
+  max-height: 8rem;
+  overflow: auto;
+}
+
+.prompter-viewer-submission-cc-hint {
+  margin: 8px 0 0;
+  font-size: 0.85rem;
+  color: #555;
+}

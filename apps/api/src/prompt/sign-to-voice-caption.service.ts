@@ -12,7 +12,31 @@ import {
   extractAudioWavFromWebm,
   muxWebVttIntoWebm,
 } from './ffmpeg-captions.util';
-import { PromptSubmissionCaptionsEntity, type PromptCaptionsStatus } from './entities/prompt-submission-captions.entity';
+import {
+  PromptSubmissionCaptionsEntity,
+  type PromptCaptionsStatus,
+} from './entities/prompt-submission-captions.entity';
+
+/** First Canvas attachment id with a direct HTTP(S) download URL (for deep-link ingest polling). */
+export function pickFirstCanvasVideoFileIdFromSubmission(
+  sub: NonNullable<Awaited<ReturnType<CanvasService['getSubmissionFull']>>>,
+): string | undefined {
+  const collect: Array<{ id?: number; url?: string; download_url?: string }> = [];
+  if (sub.attachment) collect.push(sub.attachment);
+  if (Array.isArray(sub.attachments)) collect.push(...sub.attachments);
+  for (const a of collect) {
+    const u = (a?.url ?? a?.download_url ?? '').trim();
+    if (
+      a?.id != null &&
+      u &&
+      (u.startsWith('http://') || u.startsWith('https://')) &&
+      !u.includes('external_tools/retrieve')
+    ) {
+      return String(a.id);
+    }
+  }
+  return undefined;
+}
 
 function pickVideoDownloadUrlForFileId(
   sub: NonNullable<Awaited<ReturnType<CanvasService['getSubmissionFull']>>>,
@@ -74,6 +98,142 @@ export class SignToVoiceCaptionService {
       out.set(r.userId, r.captionsStatus);
     }
     return out;
+  }
+
+  async getCaptionDetailsForUsers(
+    courseId: string,
+    assignmentId: string,
+    userIds: string[],
+  ): Promise<Map<string, { captionsStatus: PromptCaptionsStatus; errorMessage: string | null; updatedAt: Date }>> {
+    const out = new Map<string, { captionsStatus: PromptCaptionsStatus; errorMessage: string | null; updatedAt: Date }>();
+    if (!userIds.length) return out;
+    const rows = await this.repo.find({
+      where: { courseId, assignmentId, userId: In(userIds) },
+    });
+    for (const r of rows) {
+      out.set(r.userId, {
+        captionsStatus: r.captionsStatus,
+        errorMessage: r.errorMessage,
+        updatedAt: r.updatedAt,
+      });
+    }
+    return out;
+  }
+
+  /**
+   * After Deep Link return, Canvas ingests the file asynchronously. Poll until a video attachment id exists, then run the same caption pipeline as upload-video.
+   */
+  pollDeepLinkThenScheduleCaptions(args: {
+    signToVoiceRequired: boolean;
+    courseId: string;
+    assignmentId: string;
+    studentUserId: string;
+    filename: string;
+    domainOverride: string | undefined;
+    canvasToken: string;
+  }): void {
+    void this.runDeepLinkCaptionPoll(args);
+  }
+
+  private async runDeepLinkCaptionPoll(args: {
+    signToVoiceRequired: boolean;
+    courseId: string;
+    assignmentId: string;
+    studentUserId: string;
+    filename: string;
+    domainOverride: string | undefined;
+    canvasToken: string;
+  }): Promise<void> {
+    const { courseId, assignmentId, studentUserId, filename, domainOverride, canvasToken } = args;
+    if (!(canvasToken ?? '').trim()) {
+      appendLtiLog('sign-to-voice', 'deep-link poll: SKIP (empty canvas token)', {
+        assignmentId,
+        userId: studentUserId,
+      });
+      return;
+    }
+    if (!args.signToVoiceRequired) {
+      appendLtiLog('sign-to-voice', 'deep-link poll: SKIPPED (assignment not configured for sign-to-voice)', {
+        assignmentId,
+        userId: studentUserId,
+      });
+      return;
+    }
+    const existing = await this.repo.findOne({ where: { courseId, assignmentId, userId: studentUserId } });
+    if (existing?.captionsStatus === 'pending' || existing?.captionsStatus === 'ready') {
+      appendLtiLog('sign-to-voice', 'deep-link poll: SKIP (caption row already in progress or done)', {
+        assignmentId,
+        userId: studentUserId,
+        status: existing.captionsStatus,
+      });
+      return;
+    }
+    if (existing?.captionsStatus === 'failed') {
+      appendLtiLog('sign-to-voice', 'deep-link poll: SKIP (existing failed row; no auto-retry)', {
+        assignmentId,
+        userId: studentUserId,
+      });
+      return;
+    }
+
+    const POLL_INTERVAL_MS = 3000;
+    const POLL_MAX_ATTEMPTS = 50;
+    appendLtiLog('sign-to-voice', 'deep-link poll: start (waiting for Canvas attachment)', {
+      assignmentId,
+      userId: studentUserId,
+      maxAttempts: POLL_MAX_ATTEMPTS,
+      intervalMs: POLL_INTERVAL_MS,
+    });
+
+    for (let attempt = 1; attempt <= POLL_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        const sub = await this.canvas.getSubmissionFull(
+          courseId,
+          assignmentId,
+          studentUserId,
+          domainOverride,
+          canvasToken,
+          { tag: `deep-link-caption-poll-${attempt}` },
+        );
+        const fileId = sub ? pickFirstCanvasVideoFileIdFromSubmission(sub) : undefined;
+        if (fileId) {
+          appendLtiLog('sign-to-voice', 'deep-link poll: Canvas file visible, scheduling pipeline', {
+            assignmentId,
+            userId: studentUserId,
+            fileId,
+            attempt,
+          });
+          this.scheduleAfterSuccessfulUpload({
+            signToVoiceRequired: true,
+            courseId,
+            assignmentId,
+            studentUserId,
+            initialCanvasFileId: fileId,
+            filename,
+            domainOverride,
+            canvasToken,
+          });
+          return;
+        }
+      } catch (e) {
+        appendLtiLog('sign-to-voice', 'deep-link poll: attempt error (non-fatal)', {
+          assignmentId,
+          userId: studentUserId,
+          attempt,
+          error: String(e),
+        });
+      }
+      if (attempt % 5 === 0) {
+        appendLtiLog('sign-to-voice', 'deep-link poll: still waiting', { assignmentId, userId: studentUserId, attempt });
+      }
+      if (attempt < POLL_MAX_ATTEMPTS) {
+        await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+      }
+    }
+
+    const msg = 'deep_link_canvas_file_not_visible_after_timeout';
+    appendLtiLog('sign-to-voice', 'deep-link poll: TIMEOUT', { assignmentId, userId: studentUserId, message: msg });
+    await this.markFailed(courseId, assignmentId, studentUserId, msg);
   }
 
   async getVttIfReady(

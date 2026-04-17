@@ -145,7 +145,8 @@ export function GradingVideoPlayer({
       {vttBlobUrl ? (
         <div className="prompter-viewer-youtube-dual-toolbar">
           <label className="prompter-viewer-cc-toggle">
-            <input type="checkbox" checked={ccOn} onChange={(e) => setCcOn(e.target.checked)} /> Show captions (submission)
+            <input type="checkbox" checked={ccOn} onChange={(e) => setCcOn(e.target.checked)} />{' '}
+            Show captions (Canvas submission video)
           </label>
         </div>
       ) : null}

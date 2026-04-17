@@ -22,7 +22,10 @@ import { resolveCanvasApiUserId } from '../common/utils/canvas-api-user.util';
 import { getSproutAccountId } from '../common/utils/sprout-account-id.util';
 import type { PromptConfigJson, PutPromptConfigDto } from './dto/prompt-config.dto';
 import { SignToVoiceCaptionService } from './sign-to-voice-caption.service';
-import type { PromptCaptionsStatus } from './entities/prompt-submission-captions.entity';
+import type {
+  PromptCaptionsStatus,
+  SubmissionCaptionsDto,
+} from './entities/prompt-submission-captions.entity';
 import { normalizeYoutubeInputToVideoId } from './youtube-video-id.util';
 import { normalizeCanvasRubricAssessment } from './canvas-rubric-assessment.util';
 import {
@@ -3033,6 +3036,30 @@ export class PromptService {
       contentItemTitlePassed: contentItemTitle,
     });
 
+    if (canvasToken.trim()) {
+      const signToVoiceRequired = await this.resolveSignToVoiceRequired(
+        ctx.courseId,
+        ctx.assignmentId,
+        domainOverride,
+        canvasToken,
+      );
+      const safeFilename = (filename ?? '').trim() || `asl_submission_${Date.now()}.webm`;
+      this.signToVoiceCaptions.pollDeepLinkThenScheduleCaptions({
+        signToVoiceRequired,
+        courseId: ctx.courseId,
+        assignmentId: ctx.assignmentId,
+        studentUserId: submitUserId,
+        filename: safeFilename,
+        domainOverride,
+        canvasToken,
+      });
+    } else {
+      appendLtiLog('sign-to-voice', 'deep-link poll: SKIP (no Canvas token for polling)', {
+        assignmentId: ctx.assignmentId,
+        userId: submitUserId,
+      });
+    }
+
     if (process.env.NODE_ENV !== 'production') {
       return {
         html,
@@ -3079,6 +3106,7 @@ export class PromptService {
       durationSource: 'submission' | 'prompts' | 'unknown';
       rubricAssessment?: Record<string, unknown>;
       captionsStatus?: PromptCaptionsStatus;
+      submissionCaptions: SubmissionCaptionsDto;
     }>
   > {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
@@ -3195,15 +3223,50 @@ export class PromptService {
         durationSource: row.durationSource,
       });
     }
-    const capMap = await this.signToVoiceCaptions.getStatusesForUsers(
+    const userIds = rowsWithPrompts.map((r) => r.userId);
+    const signToVoiceRequired = await this.resolveSignToVoiceRequired(
       ctx.courseId,
       assignmentId,
-      rowsWithPrompts.map((r) => r.userId),
+      domainOverride,
+      token,
     );
+    const capDetails = await this.signToVoiceCaptions.getCaptionDetailsForUsers(ctx.courseId, assignmentId, userIds);
     return rowsWithPrompts.map((r) => {
-      const st = capMap.get(r.userId);
-      return st ? { ...r, captionsStatus: st } : r;
+      const detail = capDetails.get(r.userId);
+      const submissionCaptions = this.buildSubmissionCaptionsDto(signToVoiceRequired, detail);
+      const captionsStatus = detail?.captionsStatus;
+      return {
+        ...r,
+        submissionCaptions,
+        ...(captionsStatus ? { captionsStatus } : {}),
+      };
     });
+  }
+
+  private buildSubmissionCaptionsDto(
+    signToVoiceRequired: boolean,
+    detail:
+      | { captionsStatus: PromptCaptionsStatus; errorMessage: string | null; updatedAt: Date }
+      | undefined,
+  ): SubmissionCaptionsDto {
+    if (!signToVoiceRequired) {
+      return { phase: 'off' };
+    }
+    if (!detail) {
+      return { phase: 'queued' };
+    }
+    const updatedAt = detail.updatedAt instanceof Date ? detail.updatedAt.toISOString() : undefined;
+    if (detail.captionsStatus === 'pending') {
+      return { phase: 'pending', updatedAt };
+    }
+    if (detail.captionsStatus === 'ready') {
+      return { phase: 'ready', updatedAt };
+    }
+    if (detail.captionsStatus === 'failed') {
+      const raw = (detail.errorMessage ?? '').trim() || 'Caption pipeline failed.';
+      return { phase: 'failed', message: raw.slice(0, 500), updatedAt };
+    }
+    return { phase: 'queued', updatedAt };
   }
 
   /** Teacher grading: WebVTT for a student when captions pipeline finished (`captionsStatus === 'ready'`). */
