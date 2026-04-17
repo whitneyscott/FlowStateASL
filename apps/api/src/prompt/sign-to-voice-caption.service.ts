@@ -132,7 +132,14 @@ export class SignToVoiceCaptionService {
     domainOverride: string | undefined;
     canvasToken: string;
   }): void {
-    void this.runDeepLinkCaptionPoll(args);
+    void this.runDeepLinkCaptionPoll(args).catch((err: unknown) => {
+      appendLtiLog('sign-to-voice', 'deep-link poll: fatal outer rejection', {
+        assignmentId: args.assignmentId,
+        userId: args.studentUserId,
+        error: String(err),
+      });
+      console.error('[sign-to-voice] deep-link poll rejected', err);
+    });
   }
 
   private async runDeepLinkCaptionPoll(args: {
@@ -275,20 +282,50 @@ export class SignToVoiceCaptionService {
         assignmentId: args.assignmentId,
         userId: args.studentUserId,
       });
-      void this.markFailed(args.courseId, args.assignmentId, args.studentUserId, 'deepgram_api_key_missing');
+      void this.markFailed(args.courseId, args.assignmentId, args.studentUserId, 'deepgram_api_key_missing').catch(
+        (err: unknown) => {
+          console.error('[sign-to-voice] markFailed (deepgram_api_key_missing) rejected', err);
+        },
+      );
       return;
     }
-    void (async () => {
-      await this.acquireCaptionPipelineSlot();
+    const run = async () => {
+      try {
+        await this.acquireCaptionPipelineSlot();
+      } catch (e) {
+        appendLtiLog('sign-to-voice', 'pipeline: acquireCaptionPipelineSlot failed', {
+          error: String(e),
+          userId: args.studentUserId,
+          assignmentId: args.assignmentId,
+        });
+        console.error('[sign-to-voice] acquireCaptionPipelineSlot failed', e);
+        return;
+      }
       try {
         await this.runPipeline({ ...args, deepgramApiKey: apiKey });
       } catch (e) {
         appendLtiLog('sign-to-voice', 'pipeline unhandled', { error: String(e), userId: args.studentUserId });
-        await this.markFailed(args.courseId, args.assignmentId, args.studentUserId, String(e));
+        try {
+          await this.markFailed(args.courseId, args.assignmentId, args.studentUserId, String(e));
+        } catch (markErr) {
+          appendLtiLog('sign-to-voice', 'pipeline: markFailed failed after pipeline error', {
+            error: String(markErr),
+            userId: args.studentUserId,
+          });
+          console.error('[sign-to-voice] markFailed failed after pipeline error', markErr);
+        }
       } finally {
         this.releaseCaptionPipelineSlot();
       }
-    })();
+    };
+    void run().catch((err: unknown) => {
+      appendLtiLog('sign-to-voice', 'pipeline: fatal outer rejection', {
+        error: String(err),
+        userId: args.studentUserId,
+        assignmentId: args.assignmentId,
+      });
+      console.error('[sign-to-voice] pipeline run() rejected', err);
+    });
   }
 
   private async markFailed(courseId: string, assignmentId: string, userId: string, message: string): Promise<void> {
@@ -306,6 +343,10 @@ export class SignToVoiceCaptionService {
     );
   }
 
+  /**
+   * Async caption pipeline. The pending `repo.upsert` sits before the main `try`; if it throws, `runPipeline`
+   * rejects and `scheduleAfterSuccessfulUpload`’s per-job catch runs `markFailed` (same category as other early failures).
+   */
   private async runPipeline(args: {
     courseId: string;
     assignmentId: string;

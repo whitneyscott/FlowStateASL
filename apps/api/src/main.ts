@@ -6,6 +6,26 @@ import { join } from 'path';
 
 // Load .env from workspace root before any other code (fixes LTI_PRIVATE_KEY etc.)
 loadDotenv({ path: resolve(process.cwd(), '.env') });
+
+/** Opt-in: log fatal process events (set ENABLE_PROCESS_UNHANDLED_LOGGERS=1 during incident triage). */
+const enableUnhandledLoggers =
+  process.env.ENABLE_PROCESS_UNHANDLED_LOGGERS === '1' ||
+  process.env.ENABLE_PROCESS_UNHANDLED_LOGGERS === 'true';
+if (enableUnhandledLoggers) {
+  process.on('uncaughtException', (err, origin) => {
+    console.error('[process] uncaughtException', {
+      origin: String(origin),
+      message: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+  });
+  process.on('unhandledRejection', (reason) => {
+    const message = reason instanceof Error ? reason.message : String(reason);
+    const stack = reason instanceof Error ? reason.stack : undefined;
+    console.error('[process] unhandledRejection', { message, stack });
+  });
+}
+
 import { NestFactory } from '@nestjs/core';
 import { ExpressAdapter } from '@nestjs/platform-express';
 import { AppModule } from './app.module';

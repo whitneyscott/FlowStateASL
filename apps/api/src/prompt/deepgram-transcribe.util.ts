@@ -112,7 +112,13 @@ export async function transcribeWavFileWithDeepgram(wavPath: string, apiKey: str
   const key = apiKey.trim();
   if (!key) throw new Error('missing_deepgram_api_key');
 
-  const client = new DeepgramClient({ apiKey: key });
+  let client: DeepgramClient;
+  try {
+    client = new DeepgramClient({ apiKey: key });
+  } catch (e) {
+    console.error('[deepgram] DeepgramClient construction threw (sync)', e);
+    throw e;
+  }
   try {
     const response = await client.listen.v1.media.transcribeFile(createReadStream(wavPath), {
       model: 'nova-2',
