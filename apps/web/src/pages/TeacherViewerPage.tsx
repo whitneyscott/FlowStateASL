@@ -1147,6 +1147,9 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     const vid = activeDeckSproutVideoId;
     if (!vid || !sproutAccountIdForEmbed) return;
     videoRef.current?.pause();
+    const src = `https://videos.sproutvideo.com/embed/${encodeURIComponent(sproutAccountIdForEmbed.trim())}/${encodeURIComponent(vid)}`;
+    console.info('[TeacherViewer] Sprout source (toolbar)', { videoId: vid, sproutAccountId: sproutAccountIdForEmbed.trim(), embedSrc: src });
+    appendViewerBridgeLog('Sprout source card (toolbar)', { videoId: vid, embedSrc: src });
     setSourceCardPreviewVideoId(vid);
   }, [activeDeckSproutVideoId, sproutAccountIdForEmbed]);
 
@@ -1572,6 +1575,23 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                                       const vid = (mappedDeckPrompt.videoId ?? '').trim();
                                       if (vid) {
                                         videoRef.current?.pause();
+                                        const acct = sproutAccountIdForEmbed.trim();
+                                        const src = `https://videos.sproutvideo.com/embed/${encodeURIComponent(acct)}/${encodeURIComponent(vid)}`;
+                                        console.info('[TeacherViewer] Sprout source (incorrect rubric row)', {
+                                          videoId: vid,
+                                          rubricCriterionId: critId,
+                                          mappedDeckIndex: mappedDeckIdx,
+                                          deckStartSec: mappedDeckPrompt.startSec,
+                                          sproutAccountId: acct,
+                                          embedSrc: src,
+                                        });
+                                        appendViewerBridgeLog('Sprout source card (incorrect rubric row)', {
+                                          videoId: vid,
+                                          rubricCriterionId: critId,
+                                          mappedDeckIndex: mappedDeckIdx,
+                                          deckStartSec: mappedDeckPrompt.startSec,
+                                          embedSrc: src,
+                                        });
                                         setSourceCardPreviewVideoId(vid);
                                       }
                                     }}

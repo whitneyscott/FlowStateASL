@@ -2018,7 +2018,13 @@ export class PromptService {
       duration: this.deckCardTotalSeconds(resolveVideoSeconds(s)),
     }));
 
-    // appendLtiLog('prompt-decks', 'buildDeckPromptList result', { ... });
+    const promptsMissingVideoId = prompts.filter((p) => !(p.videoId ?? '').trim()).length;
+    if (promptsMissingVideoId > 0) {
+      appendLtiLog('prompt-decks', 'buildDeckPromptList: prompts without Sprout videoId', {
+        missingCount: promptsMissingVideoId,
+        total: prompts.length,
+      });
+    }
 
     return { prompts, warning };
   }
@@ -2095,151 +2101,30 @@ export class PromptService {
   }
 
   /**
-   * Fill missing Sprout `videoId` on deck timeline rows using teacher config + Sprout playlist data.
-   * Server-side so grading/viewer does not depend on the student client calling flashcard APIs.
+   * Normalize deck timeline rows for persistence. Sprout **video** ids must already be on each row
+   * (from `buildDeckPromptList` / client session); we do not infer ids from deck titles or playlist ids.
    */
   private async enrichDeckTimelineVideoIds(
     ctx: LtiContext,
     rows: Array<{ title: string; startSec: number; videoId?: string }> | undefined,
   ): Promise<Array<{ title: string; startSec: number; videoId?: string }> | undefined> {
     if (!rows?.length) return rows;
-    if (rows.every((r) => (r.videoId ?? '').trim().length > 0)) return rows;
-
-    let cfg: PromptConfigJson | null;
-    try {
-      cfg = await this.getConfig(ctx);
-    } catch (e) {
-      appendLtiLog('prompt', 'enrichDeckTimelineVideoIds: getConfig failed', { error: String(e) });
-      return rows;
-    }
-
-    /**
-     * Learners often use Canvas OAuth (`ctx.canvasAccessToken`). `getConfig` then reads the Prompt Manager
-     * blob with that token and may get no blob + assignment hydration only → missing `videoPromptConfig`.
-     * Deck enrichment must still see teacher `selectedDecks` / banks; use per-course stored teacher token.
-     */
-    let vpc = cfg?.videoPromptConfig;
-    const vpcHasDecksOrBanks = (v: typeof vpc): boolean =>
-      !!v &&
-      ((Array.isArray(v.selectedDecks) && v.selectedDecks.length > 0) ||
-        (Array.isArray(v.storedPromptBanks) && v.storedPromptBanks.length > 0));
-
-    if (!vpcHasDecksOrBanks(vpc)) {
-      const teacherTok = await this.courseSettings.getCourseStoredCanvasToken(ctx.courseId);
-      if (teacherTok?.trim()) {
-        const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
-        try {
-          const aid = await this.getPrompterAssignmentId(ctx);
-          const blob = await this.readPromptManagerSettingsBlob(ctx.courseId, domainOverride, teacherTok);
-          const sub = blob?.configs?.[aid];
-          if (sub?.videoPromptConfig && vpcHasDecksOrBanks(sub.videoPromptConfig)) {
-            vpc = sub.videoPromptConfig;
-            // #region agent log
-            appendLtiLog('agent-debug', 'enrichDeckTimelineVideoIds: videoPromptConfig from teacher blob (Bridge)', {
-              hypothesisId: 'H3-fallback',
-              assignmentId: aid,
-            });
-            // #endregion
-          }
-        } catch (e) {
-          appendLtiLog('prompt', 'enrichDeckTimelineVideoIds: teacher-token settings read failed', {
-            error: String(e),
-          });
-        }
-      }
-    }
-
-    if (!vpcHasDecksOrBanks(vpc)) {
-      // #region agent log
-      appendLtiLog('agent-debug', 'enrichDeckTimelineVideoIds: no videoPromptConfig after getConfig+fallback (Bridge)', {
-        hypothesisId: 'H3',
-        cfgNull: cfg == null,
-        hasCfg: !!cfg,
-        hadVpcFromGetConfig: !!cfg?.videoPromptConfig,
-      });
-      // #endregion
-      return rows;
-    }
-
-    const deckCfg = vpc!;
-
-    const titleToVideoId = new Map<string, string>();
-    const norm = (t: string) => t.toLowerCase().trim();
-
-    const decks = Array.isArray(deckCfg.selectedDecks) ? deckCfg.selectedDecks : [];
-    for (const d of decks) {
-      const deckId = String(d?.id ?? '').trim();
-      if (!deckId) continue;
-      try {
-        const cards = await this.getDeckCardsWithCache(deckId);
-        for (const c of cards) {
-          const title = (c.title ?? '').trim();
-          const vid = String(c.id ?? '').trim();
-          const key = norm(title);
-          if (!key || !vid) continue;
-          if (!titleToVideoId.has(key)) titleToVideoId.set(key, vid);
-        }
-      } catch (e) {
-        appendLtiLog('prompt', 'enrichDeckTimelineVideoIds: getDeckCardsWithCache failed', {
-          deckId,
-          error: String(e),
-        });
-      }
-    }
-
-    const banks = deckCfg.storedPromptBanks ?? [];
-    for (const bank of banks) {
-      if (!Array.isArray(bank)) continue;
-      for (const card of bank) {
-        const title = String((card as { title?: unknown }).title ?? '').trim();
-        const vid = String((card as { videoId?: unknown }).videoId ?? '').trim();
-        const key = norm(title);
-        if (!key || !vid) continue;
-        if (!titleToVideoId.has(key)) titleToVideoId.set(key, vid);
-      }
-    }
-
-    if (titleToVideoId.size === 0) {
-      // #region agent log
-      appendLtiLog('agent-debug', 'enrichDeckTimelineVideoIds: title map empty after decks+banks (Bridge)', {
-        hypothesisId: 'H3',
+    const missing = rows.filter((r) => !(r.videoId ?? '').trim());
+    if (missing.length > 0) {
+      appendLtiLog('prompt', 'deckTimeline: missing Sprout videoId on row(s) — source card embed needs id from build-deck / recording', {
+        courseId: ctx.courseId,
+        missingCount: missing.length,
         rowCount: rows.length,
-        selectedDeckCount: decks.length,
-        bankOuterCount: banks.length,
-        sampleRowTitles: rows.slice(0, 3).map((r) => r.title?.slice(0, 40)),
-      });
-      // #endregion
-      return rows;
-    }
-
-    let filled = 0;
-    const out = rows.map((r) => {
-      const existing = (r.videoId ?? '').trim();
-      if (existing) return r;
-      const vid = titleToVideoId.get(norm(r.title));
-      if (!vid) return r;
-      filled++;
-      return { ...r, videoId: vid };
-    });
-    if (filled > 0) {
-      appendLtiLog('prompt', 'enrichDeckTimelineVideoIds: filled missing videoIds', {
-        filled,
-        rowCount: rows.length,
+        sample: missing.slice(0, 6).map((r) => ({
+          startSec: r.startSec,
+          titleHead: String(r.title ?? '').slice(0, 48),
+        })),
       });
     }
-    // #region agent log
-    appendLtiLog('agent-debug', 'enrichDeckTimelineVideoIds: enrich pass complete (Bridge)', {
-      hypothesisId: 'H4',
-      titleMapSize: titleToVideoId.size,
-      filled,
-      rowCount: rows.length,
-      unmatchedAfter: out.filter((r) => !(r.videoId ?? '').trim()).length,
-    });
-    // #endregion
-    return out.map((r) => ({
+    return rows.map((r) => ({
       title: r.title,
       startSec: Math.round(r.startSec * 1000) / 1000,
-      ...(r.videoId ? { videoId: r.videoId } : {}),
+      ...(r.videoId?.trim() ? { videoId: r.videoId.trim() } : {}),
     }));
   }
 

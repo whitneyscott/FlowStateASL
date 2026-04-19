@@ -5,7 +5,6 @@ import { useDebug } from '../contexts/DebugContext';
 import * as promptApi from '../api/prompt.api';
 import { ManualTokenModal } from '../components/ManualTokenModal';
 import { resolveLtiContextValue } from '../utils/lti-context';
-import { ltiTokenHeaders } from '../api/lti-token';
 import { appendBridgeLog } from '../utils/bridge-log';
 import { nextDeckIndexAfterAdvance } from '../utils/deck-advance';
 import { YoutubeStimulusShell } from '../components/YoutubeStimulusShell';
@@ -98,8 +97,6 @@ function toMb(sizeBytes: number): string {
   return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-type FlashcardPlaylistItem = { id?: string; title?: string };
-
 /** Bridge / LTI log: compact summary of deck prompts for tracing videoId through the pipeline. */
 const DECK_LIVE_BUILD_BRIDGE_SAMPLE = 8;
 function summaryDeckPromptsForLiveBuildBridge(
@@ -124,54 +121,6 @@ function summaryDeckPromptsForLiveBuildBridge(
       duration: p.duration,
     })),
   };
-}
-
-/** When live build-deck-prompts fails, fallback prompts may lack Sprout video ids. Hydrate from playlist cache (same source as Flashcards). */
-async function hydrateDeckPromptVideoIds(
-  prompts: DeckPromptItem[],
-  selectedDecks: Array<{ id: string }>,
-): Promise<DeckPromptItem[]> {
-  if (!prompts.length || !selectedDecks.length) return prompts;
-  const needsId = prompts.some((p) => !(p.videoId ?? '').trim());
-  if (!needsId) return prompts;
-
-  const titleToIds = new Map<string, string[]>();
-  const norm = (t: string) => t.toLowerCase().trim();
-
-  await Promise.all(
-    selectedDecks.map(async (d) => {
-      const id = (d.id ?? '').trim();
-      if (!id) return;
-      try {
-        const res = await fetch(`/api/flashcard/items?playlist_id=${encodeURIComponent(id)}`, {
-          credentials: 'include',
-          headers: ltiTokenHeaders(),
-        });
-        const data = (await res.json().catch(() => [])) as unknown;
-        const list = Array.isArray(data) ? (data as FlashcardPlaylistItem[]) : [];
-        for (const it of list) {
-          const vid = String(it.id ?? '').trim();
-          const title = String(it.title ?? '').trim();
-          if (!vid || !title) continue;
-          const key = norm(title);
-          const arr = titleToIds.get(key) ?? [];
-          arr.push(vid);
-          titleToIds.set(key, arr);
-        }
-      } catch {
-        // best-effort only
-      }
-    }),
-  );
-
-  return prompts.map((p) => {
-    const existing = (p.videoId ?? '').trim();
-    if (existing) return p;
-    const ids = titleToIds.get(norm(p.title));
-    const first = ids?.[0]?.trim();
-    if (!first) return p;
-    return { ...p, videoId: first };
-  });
 }
 
 /** Cap wait for metadata; fail open so submission never blocks on duration. */
@@ -636,7 +585,6 @@ export default function TimerPage({ context }: TimerPageProps) {
       setConfig(data ?? null);
       const targetAssignmentId =
         (data?.resolvedAssignmentId?.trim() ?? '') || ltiOrUrlAssignmentId || null;
-      const selectedDecksForHydration = data?.videoPromptConfig?.selectedDecks ?? [];
 
       const isDeckAssignment =
         data?.promptMode === 'decks' &&
@@ -665,33 +613,27 @@ export default function TimerPage({ context }: TimerPageProps) {
           const livePrompts = Array.isArray(result.prompts) ? result.prompts : [];
           if (livePrompts.length > 0) {
             setLastApiResult('POST /api/prompt/build-deck-prompts', 200, true);
-            const preSummary = summaryDeckPromptsForLiveBuildBridge('pre-hydrate', livePrompts);
-            appendBridgeLog(
-              'deck-live-build',
-              'OK: live build — prompts from API before hydrateDeckPromptVideoIds',
-              {
-                outcome: 'success',
-                assignmentId: targetAssignmentId ?? '(none)',
-                warning: result.warning ?? null,
-                ...preSummary,
-              },
-            );
-            const hydrated = await hydrateDeckPromptVideoIds(livePrompts, selectedDecksForHydration);
-            const postSummary = summaryDeckPromptsForLiveBuildBridge('post-hydrate', hydrated);
-            appendBridgeLog(
-              'deck-live-build',
-              'OK: live build — prompts after hydrateDeckPromptVideoIds (used for recording + submit)',
-              {
-                outcome: 'success',
-                assignmentId: targetAssignmentId ?? '(none)',
-                videoIdsAddedByHydrate:
-                  postSummary.withVideoIdCount - preSummary.withVideoIdCount,
-                preHydrate: { withVideoIdCount: preSummary.withVideoIdCount, count: preSummary.count },
-                postHydrate: { withVideoIdCount: postSummary.withVideoIdCount, count: postSummary.count },
-                sampleAfterHydrate: postSummary.sample,
-              },
-            );
-            setDeckPrompts(hydrated);
+            const summary = summaryDeckPromptsForLiveBuildBridge('post-build-deck-prompts', livePrompts);
+            appendBridgeLog('deck-live-build', 'OK: live build — prompts from build-deck-prompts (Sprout videoId per card)', {
+              outcome: 'success',
+              assignmentId: targetAssignmentId ?? '(none)',
+              warning: result.warning ?? null,
+              ...summary,
+            });
+            const missingVid = livePrompts.filter((p) => !(p.videoId ?? '').trim());
+            if (missingVid.length > 0) {
+              appendBridgeLog('deck-live-build', 'ALERT: prompts missing videoId after build-deck-prompts', {
+                outcome: 'warn',
+                missingCount: missingVid.length,
+                total: livePrompts.length,
+                sampleTitles: missingVid.slice(0, 5).map((p) => String(p.title ?? '').slice(0, 80)),
+              });
+              console.warn('[TimerPage] build-deck-prompts returned rows without Sprout videoId', {
+                missingCount: missingVid.length,
+                total: livePrompts.length,
+              });
+            }
+            setDeckPrompts(livePrompts);
             setDeckLiveBuildError(null);
           } else {
             throw new Error(result.warning || 'live build returned zero prompts');

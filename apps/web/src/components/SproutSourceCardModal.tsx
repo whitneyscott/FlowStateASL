@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef } from 'react';
+import { appendBridgeLog } from '../utils/bridge-log';
 import './SproutSourceCardModal.css';
 
 export interface SproutSourceCardModalProps {
@@ -33,6 +34,19 @@ export function SproutSourceCardModal({
     if (!isOpen) return;
     closeBtnRef.current?.focus();
   }, [isOpen, videoId]);
+
+  useEffect(() => {
+    if (!isOpen || !videoId.trim() || !sproutAccountId.trim()) return;
+    const account = sproutAccountId.trim();
+    const vid = videoId.trim();
+    const src = `https://videos.sproutvideo.com/embed/${encodeURIComponent(account)}/${encodeURIComponent(vid)}`;
+    console.info('[SproutSourceCard] open embed', { sproutAccountId: account, videoId: vid, embedSrc: src });
+    appendBridgeLog('sprout-source-card', 'Sprout source modal open', {
+      sproutAccountIdLen: account.length,
+      videoId: vid,
+      embedSrc: src,
+    });
+  }, [isOpen, videoId, sproutAccountId]);
 
   if (!isOpen || !videoId.trim() || !sproutAccountId.trim()) {
     return null;
