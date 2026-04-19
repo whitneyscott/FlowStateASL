@@ -297,6 +297,43 @@ export class SignToVoiceCaptionService {
         vttCueLines: (vtt.match(/\n\n/g) ?? []).length,
       });
 
+      const attachmentGet = await this.canvas.getMediaAttachment(
+        initialCanvasFileId,
+        domainOverride,
+        canvasToken,
+      );
+      let mediaObjectId: unknown;
+      let contentType: unknown;
+      try {
+        const parsed = JSON.parse(attachmentGet.raw) as Record<string, unknown>;
+        mediaObjectId = parsed.media_object_id;
+        if (mediaObjectId == null && parsed.media_object && typeof parsed.media_object === 'object') {
+          mediaObjectId = (parsed.media_object as { id?: unknown }).id;
+        }
+        contentType = parsed.content_type ?? parsed['content-type'];
+      } catch {
+        /* non-JSON body */
+      }
+      appendLtiLog('sign-to-voice', 'media_attachment GET before media_tracks PUT', {
+        attachmentId: initialCanvasFileId,
+        httpStatus: attachmentGet.status,
+        ok: attachmentGet.ok,
+        media_object_id: mediaObjectId,
+        content_type: contentType,
+        fullResponse: attachmentGet.raw,
+      });
+
+      const putUrlInfo = this.canvas.buildMediaAttachmentMediaTracksPutUrl(
+        initialCanvasFileId,
+        domainOverride,
+        studentUserId,
+      );
+      appendLtiLog('sign-to-voice', 'media_tracks PUT URL (next request)', {
+        putUrl: putUrlInfo.url,
+        as_user_id_present: putUrlInfo.asUserIdPresent,
+        as_user_id_value: putUrlInfo.asUserIdValue ?? null,
+      });
+
       await this.canvas.putMediaAttachmentMediaTracks(
         initialCanvasFileId,
         [{ locale: 'en', kind: 'subtitles', content: vtt }],
