@@ -67,7 +67,8 @@ async function main(): Promise<void> {
       return;
     }
     try {
-      const tagRaw = await ffprobeWebmPromptDataJson(muxed.outputPath, 25_000);
+      const probe = await ffprobeWebmPromptDataJson(muxed.outputPath, 25_000);
+      const tagRaw = probe?.promptDataTag ?? null;
       if (!tagRaw) throw new Error('no PROMPT_DATA from ffprobe');
       const fromFile = decodePromptDataFromFfmpegMetadataTag(tagRaw, 512_000);
       if (!fromFile.ok) throw new Error(fromFile.error);

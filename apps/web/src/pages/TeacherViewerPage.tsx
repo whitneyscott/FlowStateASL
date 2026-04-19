@@ -47,6 +47,12 @@ function appendViewerBridgeLog(message: string, extra?: Record<string, unknown>)
   appendBridgeLog('viewer', message, extra);
 }
 
+/** Populated after getSubmissions (background warm, concurrency-limited). */
+type PrefetchedGradingMedia = Pick<
+  promptApi.PromptSubmission,
+  'captionsVtt' | 'promptHtml' | 'videoDurationSeconds' | 'durationSource'
+>;
+
 /** Deck submissions: real boundaries from the student recorder (seconds from recording start). */
 interface DeckTimelineEntry {
   title: string;
@@ -526,6 +532,9 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   const assignmentId = (ctxAssignmentId || assignmentIdFromUrl.trim()) || null;
 
   const [submissions, setSubmissions] = useState<promptApi.PromptSubmission[]>([]);
+  const [gradingPrefetchByUserId, setGradingPrefetchByUserId] = useState<Map<string, PrefetchedGradingMedia>>(
+    () => new Map(),
+  );
   const [submissionCount, setSubmissionCount] = useState<number | null>(null);
   const [assignment, setAssignment] = useState<{
     name?: string;
@@ -584,6 +593,47 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   /* Teachers with assignmentId are treated as grading mode even without grading=1 (e.g. Config "Open for Grading" or direct link). */
   const gradingMode = teacher && (gradingFromUrl || !!assignmentId);
   const current = gradingMode ? submissions[index] : mySubmission;
+
+  useEffect(() => {
+    if (!gradingMode || submissions.length === 0) {
+      setGradingPrefetchByUserId(new Map());
+      return;
+    }
+    let cancelled = false;
+    const concurrency = 4;
+    const queue = submissions.slice();
+    const worker = async () => {
+      while (!cancelled) {
+        const row = queue.shift();
+        if (!row) break;
+        const entry: PrefetchedGradingMedia = {
+          captionsVtt: row.captionsVtt,
+          promptHtml: row.promptHtml,
+          videoDurationSeconds: row.videoDurationSeconds ?? null,
+          durationSource: row.durationSource,
+        };
+        if (!cancelled) {
+          setGradingPrefetchByUserId((prev) => {
+            const next = new Map(prev);
+            next.set(row.userId, entry);
+            return next;
+          });
+        }
+        await new Promise<void>((r) => queueMicrotask(r));
+      }
+    };
+    void Promise.all(Array.from({ length: concurrency }, () => worker()));
+    return () => {
+      cancelled = true;
+    };
+  }, [gradingMode, submissions]);
+
+  const submissionCaptionsVtt = useMemo(() => {
+    if (!gradingMode || !current?.userId) return undefined;
+    const pf = gradingPrefetchByUserId.get(current.userId);
+    return pf?.captionsVtt ?? current.captionsVtt;
+  }, [gradingMode, current?.userId, current?.captionsVtt, gradingPrefetchByUserId]);
+
   const youtubeStimulusForGrading = useMemo(
     () => parseYoutubeMediaStimulusFromComments(current?.submissionComments),
     [current?.submissionComments],
@@ -1993,6 +2043,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                       videoRef={videoRef}
                       videoDurationSeconds={current.videoDurationSeconds}
                       durationSource={current.durationSource}
+                      captionsVtt={submissionCaptionsVtt}
                     />
                   </div>
                 </div>
@@ -2075,6 +2126,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                       videoRef={videoRef}
                       videoDurationSeconds={current.videoDurationSeconds}
                       durationSource={current.durationSource}
+                      captionsVtt={submissionCaptionsVtt}
                     />
                   </>
                 ) : hasSubmissionNoVideo ? (

@@ -1,4 +1,4 @@
-import { useMemo, type Ref, type RefObject } from 'react';
+import { useEffect, useMemo, useState, type Ref, type RefObject } from 'react';
 import { GradingPlaybackBar, type GradingDurationSource } from './GradingPlaybackBar';
 import type { YoutubeIframePlayerHandle } from './YoutubeIframePlayer';
 
@@ -17,6 +17,8 @@ export interface GradingVideoPlayerProps {
     clipStartSec: number;
     clipEndSec: number;
   };
+  /** Optional WebVTT for embedded submission captions (`<track kind="subtitles">`). */
+  captionsVtt?: string;
 }
 
 /**
@@ -31,7 +33,23 @@ export function GradingVideoPlayer({
   durationSource,
   hideControls = false,
   youtubeSync,
+  captionsVtt,
 }: GradingVideoPlayerProps) {
+  const [vttObjectUrl, setVttObjectUrl] = useState<string | null>(null);
+  useEffect(() => {
+    const raw = (captionsVtt ?? '').trim();
+    if (!raw) {
+      setVttObjectUrl(null);
+      return;
+    }
+    const blob = new Blob([raw], { type: 'text/vtt;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    setVttObjectUrl(url);
+    return () => {
+      URL.revokeObjectURL(url);
+    };
+  }, [captionsVtt]);
+
   const bar = useMemo(
     () => (
       <GradingPlaybackBar
@@ -55,7 +73,11 @@ export function GradingVideoPlayer({
           playsInline
           preload="metadata"
           className="prompter-viewer-video-element"
-        />
+        >
+          {vttObjectUrl ? (
+            <track kind="subtitles" src={vttObjectUrl} srcLang="en" label="Transcript" default />
+          ) : null}
+        </video>
       </div>
       {!hideControls ? bar : null}
     </div>

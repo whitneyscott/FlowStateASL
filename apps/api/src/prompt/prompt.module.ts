@@ -9,7 +9,6 @@ import { CourseSettingsModule } from '../course-settings/course-settings.module'
 import { LtiModule } from '../lti/lti.module';
 import { SproutVideoModule } from '../sproutvideo/sproutvideo.module';
 import { SproutPlaylistVideoEntity } from '../sproutvideo/entities/sprout-playlist-video.entity';
-import { SignToVoiceCaptionService } from './sign-to-voice-caption.service';
 @Module({
   imports: [
     DataModule,
@@ -20,7 +19,7 @@ import { SignToVoiceCaptionService } from './sign-to-voice-caption.service';
     TypeOrmModule.forFeature([SproutPlaylistVideoEntity]),
   ],
   controllers: [PromptController],
-  providers: [PromptService, UploadResilienceService, SignToVoiceCaptionService],
+  providers: [PromptService, UploadResilienceService],
   exports: [PromptService],
 })
 export class PromptModule {}

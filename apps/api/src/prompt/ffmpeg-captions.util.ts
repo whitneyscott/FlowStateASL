@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { resolveFfmpegPathForCaptions } from './ffmpeg-binary.util';
 
 const DEFAULT_TIMEOUT_MS = Math.min(
@@ -102,4 +102,91 @@ export async function downloadToTempWebm(
     throw new Error(`download_${dl.error}`);
   }
   return { path: dl.path, cleanup: dl.cleanup };
+}
+
+export type WebmVttMuxOk = { ok: true; outputPath: string; size: number };
+export type WebmVttMuxFail = { ok: false; error: string };
+export type WebmVttMuxResult = WebmVttMuxOk | WebmVttMuxFail;
+
+/**
+ * Remux WebM to add a WebVTT subtitle track from `vttContent` (stream copy where possible).
+ * Fail-open callers keep the original file when `ok` is false.
+ */
+export async function muxWebmWithWebVttContent(options: {
+  inputWebmPath: string;
+  vttContent: string;
+  timeoutMs?: number;
+}): Promise<WebmVttMuxResult> {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const vtt = (options.vttContent ?? '').trim();
+  if (!vtt) return { ok: false, error: 'empty_vtt' };
+  if (vtt.length > 1_500_000) return { ok: false, error: 'vtt_too_large' };
+  const dir = mkdtempSync(join(tmpdir(), 'fsasl-webm-vttmux-'));
+  const vttPath = join(dir, 'captions.vtt');
+  const outPath = join(dir, 'out.webm');
+  try {
+    writeFileSync(vttPath, vtt, 'utf8');
+  } catch (e) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+    return { ok: false, error: `write_vtt_failed: ${e instanceof Error ? e.message : String(e)}` };
+  }
+  const { code, stderr } = await runFfmpeg(
+    [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-y',
+      '-i',
+      options.inputWebmPath,
+      '-i',
+      vttPath,
+      '-map',
+      '0',
+      '-map',
+      '1',
+      '-c',
+      'copy',
+      '-c:s',
+      'webvtt',
+      outPath,
+    ],
+    timeoutMs,
+  );
+  if (code !== 0) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+    return { ok: false, error: `ffmpeg_exit_${code ?? 'null'}: ${stderr.slice(0, 800)}` };
+  }
+  try {
+    const st = statSync(outPath);
+    if (!st.isFile() || st.size <= 0) {
+      rmSync(dir, { recursive: true, force: true });
+      return { ok: false, error: 'mux_output_missing_or_empty' };
+    }
+    return { ok: true, outputPath: outPath, size: st.size };
+  } catch (e) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+    return { ok: false, error: `stat_failed: ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
+/** Remove temp directory containing muxed WebM+VTT output (parent of `outputPath`). */
+export function cleanupWebmVttMuxOutputPath(outputPath: string): void {
+  try {
+    const dir = dirname(outputPath);
+    rmSync(dir, { recursive: true, force: true });
+  } catch {
+    /* ignore */
+  }
 }

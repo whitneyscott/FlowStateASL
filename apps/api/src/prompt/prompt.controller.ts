@@ -518,8 +518,8 @@ export class PromptController {
   /**
    * Deep Linking (homework_submission): accept video, return HTML form that auto-posts
    * LtiDeepLinkingResponse to Canvas deep_link_return_url so Canvas attaches the file.
-   * Note: WebM `PROMPT_DATA` mux runs only on `POST upload-video` today; deep link returns JWT content items
-   * without remux (see `webm-prompt` scope log in `PromptService.submitDeepLink`).
+   * WebM `PROMPT_DATA` mux runs on `POST upload-video` when prompt snapshot fields are present; both upload-video
+   * and deep link run shared sign-to-voice pre-upload caption mux when configured (fail-open).
    */
   @Post('submit-deep-link')
   @UseInterceptors(FileInterceptor('video'))

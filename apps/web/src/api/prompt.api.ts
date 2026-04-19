@@ -396,6 +396,8 @@ export interface PromptSubmission {
   durationSource?: 'submission' | 'prompts' | 'unknown';
   /** Canvas assignment allowed_attempts when returned with my-submission (-1 = unlimited). */
   allowedAttempts?: number;
+  /** Embedded sign-to-voice WebVTT from submission WebM (grading). */
+  captionsVtt?: string;
 }
 
 export async function getSubmissionCount(assignmentId?: string | null): Promise<number> {

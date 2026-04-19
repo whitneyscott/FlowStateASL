@@ -1,4 +1,5 @@
 import { BadRequestException, ForbiddenException, Inject, Injectable } from '@nestjs/common';
+import { readFileSync, statSync } from 'node:fs';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { ASSESSMENT_REPOSITORY, PROMPT_DATA_REPOSITORY } from '../data/tokens';
@@ -21,7 +22,8 @@ import {
 import { resolveCanvasApiUserId } from '../common/utils/canvas-api-user.util';
 import { getSproutAccountId } from '../common/utils/sprout-account-id.util';
 import type { PromptConfigJson, PutPromptConfigDto } from './dto/prompt-config.dto';
-import { SignToVoiceCaptionService } from './sign-to-voice-caption.service';
+import { cleanupWebmVttMuxOutputPath } from './ffmpeg-captions.util';
+import { tryPreuploadSignToVoiceCaptionsMux } from './sign-to-voice-preupload.util';
 import { normalizeYoutubeInputToVideoId } from './youtube-video-id.util';
 import { normalizeCanvasRubricAssessment } from './canvas-rubric-assessment.util';
 import {
@@ -34,6 +36,7 @@ import {
   DEFAULT_WEBM_MUX_TIMEOUT_MS,
   DEFAULT_WEBM_PROBE_DOWNLOAD_MAX_BYTES,
   downloadAuthenticatedVideoToTempFile,
+  extractFirstSubtitleWebVttFromWebm,
   ffprobeWebmPromptDataJson,
   muxWebmWithPromptDataTag,
   writeBufferToTempWebmFile,
@@ -192,7 +195,6 @@ export class PromptService {
     private readonly sproutVideo: SproutVideoService,
     @InjectRepository(SproutPlaylistVideoEntity)
     private readonly sproutPlaylistVideoRepo: Repository<SproutPlaylistVideoEntity>,
-    private readonly signToVoiceCaptions: SignToVoiceCaptionService,
   ) {}
 
   /**
@@ -2372,18 +2374,21 @@ export class PromptService {
     videoDurationSeconds: number | null;
     durationSource: 'submission' | 'prompts' | 'unknown';
     metadataPromptResolution: 'webm_metadata' | 'assignment_fallback';
+    captionsVtt?: string;
   }> {
     const derived = this.computeAssignmentFallbackPromptRow(args.body, args.promptsFallbackDuration);
-    const fallback = (): {
+    const fallback = (captionsVtt?: string): {
       promptHtml?: string;
       videoDurationSeconds: number | null;
       durationSource: 'submission' | 'prompts' | 'unknown';
       metadataPromptResolution: 'assignment_fallback';
+      captionsVtt?: string;
     } => ({
       promptHtml: derived.promptHtml,
       videoDurationSeconds: derived.videoDurationSeconds,
       durationSource: derived.durationSource,
       metadataPromptResolution: 'assignment_fallback',
+      ...(captionsVtt ? { captionsVtt } : {}),
     });
 
     const url = (args.canvasVideoUrl ?? '').trim();
@@ -2427,11 +2432,39 @@ export class PromptService {
       return fallback();
     }
     try {
-      const tagRaw = await ffprobeWebmPromptDataJson(dl.path);
+      const probe = await ffprobeWebmPromptDataJson(dl.path);
+      if (!probe) {
+        appendLtiLog('webm-prompt', 'read: FAIL (ffprobe)', { userId: args.userId });
+        appendLtiLog('webm-prompt', 'PROMPT_SOURCE: assignment_fallback', { userId: args.userId });
+        return fallback();
+      }
+
+      let captionsVtt: string | undefined;
+      if (probe.hasSubtitleStream) {
+        try {
+          const vtt = await extractFirstSubtitleWebVttFromWebm(dl.path);
+          if (vtt) {
+            captionsVtt = vtt;
+            appendLtiLog('webm-prompt', 'read: subtitle WebVTT extracted OK', {
+              userId: args.userId,
+              vttChars: vtt.length,
+            });
+          } else {
+            appendLtiLog('webm-prompt', 'read: subtitle extract empty (open)', { userId: args.userId });
+          }
+        } catch (e) {
+          appendLtiLog('webm-prompt', 'read: subtitle extract FAIL (open)', {
+            userId: args.userId,
+            error: String(e),
+          });
+        }
+      }
+
+      const tagRaw = probe.promptDataTag;
       if (!tagRaw) {
         appendLtiLog('webm-prompt', 'read: FAIL (missing_PROMPT_DATA_tag)', { userId: args.userId });
         appendLtiLog('webm-prompt', 'PROMPT_SOURCE: assignment_fallback', { userId: args.userId });
-        return fallback();
+        return fallback(captionsVtt);
       }
       const decoded = decodePromptDataFromFfmpegMetadataTag(tagRaw, PromptService.PROMPT_DATA_DECODE_MAX_UTF8);
       if (!decoded.ok) {
@@ -2440,7 +2473,7 @@ export class PromptService {
           error: decoded.error,
         });
         appendLtiLog('webm-prompt', 'PROMPT_SOURCE: assignment_fallback', { userId: args.userId });
-        return fallback();
+        return fallback(captionsVtt);
       }
       if (String(decoded.obj.fsaslKind ?? '') !== FSASL_PROMPT_UPLOAD_KIND) {
         appendLtiLog('webm-prompt', 'read: FAIL (unexpected_fsaslKind)', {
@@ -2448,7 +2481,7 @@ export class PromptService {
           kind: String(decoded.obj.fsaslKind ?? ''),
         });
         appendLtiLog('webm-prompt', 'PROMPT_SOURCE: assignment_fallback', { userId: args.userId });
-        return fallback();
+        return fallback(captionsVtt);
       }
       const fromTag = this.promptHtmlAndDurationFromUploadRecord(decoded.obj);
       const hasPromptHtml = !!(fromTag.promptHtml ?? '').trim();
@@ -2456,7 +2489,7 @@ export class PromptService {
       if (!hasPromptHtml && !hasDuration) {
         appendLtiLog('webm-prompt', 'read: FAIL (empty_prompt_fields)', { userId: args.userId });
         appendLtiLog('webm-prompt', 'PROMPT_SOURCE: assignment_fallback', { userId: args.userId });
-        return fallback();
+        return fallback(captionsVtt);
       }
 
       appendLtiLog('webm-prompt', 'read: OK', {
@@ -2474,6 +2507,7 @@ export class PromptService {
           : derived.videoDurationSeconds,
         durationSource: hasDuration ? 'submission' : derived.durationSource,
         metadataPromptResolution: 'webm_metadata',
+        ...(captionsVtt ? { captionsVtt } : {}),
       };
     } finally {
       dl.cleanup();
@@ -2691,6 +2725,57 @@ export class PromptService {
       });
     }
 
+    let signToVoiceMuxOutputPath: string | null = null;
+    {
+      let captionMaterializedCleanup: (() => void) | null = null;
+      try {
+        let pathForSignToVoice: string | null =
+          typeof uploadInput === 'object' && uploadInput && 'filePath' in uploadInput ? uploadInput.filePath : null;
+        if (!pathForSignToVoice && video.buffer) {
+          const mat = writeBufferToTempWebmFile(video.buffer);
+          pathForSignToVoice = mat.path;
+          captionMaterializedCleanup = mat.cleanup;
+        }
+        if (pathForSignToVoice) {
+          let sizeForCap = uploadSize;
+          try {
+            sizeForCap = statSync(pathForSignToVoice).size;
+          } catch {
+            /* keep uploadSize */
+          }
+          let signToVoiceRequired = false;
+          let deepgramKey = '';
+          try {
+            signToVoiceRequired = await this.resolveSignToVoiceRequired(
+              ctx.courseId,
+              assignmentId,
+              domainOverride,
+              token,
+            );
+            deepgramKey = (this.config.get<string>('DEEPGRAM_API_KEY') ?? process.env.DEEPGRAM_API_KEY ?? '').trim();
+          } catch (e) {
+            appendLtiLog('sign-to-voice', 'preupload: resolve/config failed (using_original)', {
+              error: String(e),
+            });
+          }
+          const cap = await tryPreuploadSignToVoiceCaptionsMux({
+            webmPath: pathForSignToVoice,
+            originalSize: sizeForCap,
+            signToVoiceRequired,
+            deepgramApiKey: deepgramKey,
+          });
+          if (cap.muxOutputPathForCleanup) {
+            signToVoiceMuxOutputPath = cap.muxOutputPathForCleanup;
+            uploadSize = cap.nextSize;
+            uploadInput = { filePath: cap.nextPath, size: cap.nextSize };
+            appendLtiLog('sign-to-voice', 'preupload: using muxed WebM for upload', { uploadBytes: uploadSize });
+          }
+        }
+      } finally {
+        captionMaterializedCleanup?.();
+      }
+    }
+
     appendLtiLog('prompt-upload', 'uploadVideo: initiateSubmissionFileUploadForUser', {
       assignmentId,
       studentUserId,
@@ -2731,6 +2816,7 @@ export class PromptService {
         token,
       );
     } finally {
+      if (signToVoiceMuxOutputPath) cleanupWebmVttMuxOutputPath(signToVoiceMuxOutputPath);
       if (muxOutputPath) cleanupMuxOutputPath(muxOutputPath);
     }
 
@@ -2833,28 +2919,6 @@ export class PromptService {
       );
     }
     appendLtiLog('prompt-upload', 'uploadVideo DONE', { fileId, assignmentId, studentUserId, ...verify });
-    void (async () => {
-      try {
-        const signToVoiceRequired = await this.resolveSignToVoiceRequired(
-          ctx.courseId,
-          assignmentId,
-          domainOverride,
-          token,
-        );
-        this.signToVoiceCaptions.scheduleAfterSuccessfulUpload({
-          signToVoiceRequired,
-          courseId: ctx.courseId,
-          assignmentId,
-          studentUserId,
-          initialCanvasFileId: fileId,
-          filename,
-          domainOverride,
-          canvasToken: token,
-        });
-      } catch (e) {
-        appendLtiLog('sign-to-voice', 'scheduleAfterSuccessfulUpload: resolve failed', { error: String(e) });
-      }
-    })();
     return {
       fileId,
       courseId: ctx.courseId,
@@ -2885,11 +2949,9 @@ export class PromptService {
       messageType: ctx.messageType,
       hasDeepLinkReturnUrl: !!ctx.deepLinkReturnUrl,
     });
-    appendLtiLog(
-      'webm-prompt',
-      'scope: submitDeepLink bypasses uploadVideo (no_PROMPT_DATA_mux until wired to shared mux)',
-      { bytes: buffer.length },
-    );
+    appendLtiLog('webm-prompt', 'scope: submitDeepLink uses shared sign-to-voice preupload (no_PROMPT_DATA_mux)', {
+      bytes: buffer.length,
+    });
     if (ctx.messageType !== 'LtiDeepLinkingRequest' || !ctx.deepLinkReturnUrl) {
       appendLtiLog('prompt-deeplink', 'submitDeepLink FAIL: missing context');
       throw new Error('Deep Linking context required (messageType LtiDeepLinkingRequest and deepLinkReturnUrl)');
@@ -2900,7 +2962,45 @@ export class PromptService {
       (await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken)) ?? '';
     const submitUserId = await this.resolveCanvasUserIdForRestApi(ctx, canvasToken, domainOverride);
 
-    const token = this.deepLinkFileStore.set(buffer, contentType);
+    let uploadBuffer = buffer;
+    const tmp = writeBufferToTempWebmFile(buffer);
+    try {
+      let signToVoiceRequired = false;
+      let deepgramKey = '';
+      try {
+        signToVoiceRequired = await this.resolveSignToVoiceRequired(
+          ctx.courseId,
+          ctx.assignmentId,
+          domainOverride,
+          canvasToken,
+        );
+        deepgramKey = (this.config.get<string>('DEEPGRAM_API_KEY') ?? process.env.DEEPGRAM_API_KEY ?? '').trim();
+      } catch (e) {
+        appendLtiLog('sign-to-voice', 'preupload (deeplink): resolve/config failed (using_original)', {
+          error: String(e),
+        });
+      }
+      const cap = await tryPreuploadSignToVoiceCaptionsMux({
+        webmPath: tmp.path,
+        originalSize: buffer.length,
+        signToVoiceRequired,
+        deepgramApiKey: deepgramKey,
+      });
+      if (cap.muxOutputPathForCleanup) {
+        try {
+          uploadBuffer = readFileSync(cap.nextPath);
+          appendLtiLog('sign-to-voice', 'preupload (deeplink): using muxed WebM bytes', {
+            bytes: uploadBuffer.length,
+          });
+        } finally {
+          cleanupWebmVttMuxOutputPath(cap.muxOutputPathForCleanup);
+        }
+      }
+    } finally {
+      tmp.cleanup();
+    }
+
+    const token = this.deepLinkFileStore.set(uploadBuffer, contentType);
     this.deepLinkFileStore.registerSubmissionToken(ctx.courseId, ctx.assignmentId, submitUserId, token);
     const contentItemTitle = 'ASL Express Video Submission';
     appendLtiLog('prompt-deeplink', 'DeepLink content item title set', {
@@ -2916,30 +3016,6 @@ export class PromptService {
       tokenPreview: token.slice(0, 8) + '...',
       contentItemTitlePassed: contentItemTitle,
     });
-
-    if (canvasToken.trim()) {
-      const signToVoiceRequired = await this.resolveSignToVoiceRequired(
-        ctx.courseId,
-        ctx.assignmentId,
-        domainOverride,
-        canvasToken,
-      );
-      const safeFilename = (filename ?? '').trim() || `asl_submission_${Date.now()}.webm`;
-      this.signToVoiceCaptions.pollDeepLinkThenScheduleCaptions({
-        signToVoiceRequired,
-        courseId: ctx.courseId,
-        assignmentId: ctx.assignmentId,
-        studentUserId: submitUserId,
-        filename: safeFilename,
-        domainOverride,
-        canvasToken,
-      });
-    } else {
-      appendLtiLog('sign-to-voice', 'deep-link poll: SKIP (no Canvas token for polling)', {
-        assignmentId: ctx.assignmentId,
-        userId: submitUserId,
-      });
-    }
 
     if (process.env.NODE_ENV !== 'production') {
       return {
@@ -2986,6 +3062,7 @@ export class PromptService {
       videoDurationSeconds: number | null;
       durationSource: 'submission' | 'prompts' | 'unknown';
       rubricAssessment?: Record<string, unknown>;
+      captionsVtt?: string;
     }>
   > {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
@@ -3092,6 +3169,7 @@ export class PromptService {
           promptHtml: resolved.promptHtml,
           videoDurationSeconds: resolved.videoDurationSeconds,
           durationSource: resolved.durationSource,
+          ...(resolved.captionsVtt ? { captionsVtt: resolved.captionsVtt } : {}),
         };
       }),
     );
@@ -3261,6 +3339,7 @@ export class PromptService {
     durationSource: 'submission' | 'prompts' | 'unknown';
     /** From Canvas assignment `allowed_attempts` (-1 = unlimited). */
     allowedAttempts?: number;
+    captionsVtt?: string;
   } | null> {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
     if (!token) return null;
@@ -3346,6 +3425,7 @@ export class PromptService {
       videoDurationSeconds: resolved.videoDurationSeconds,
       durationSource: resolved.durationSource,
       ...(allowedAttempts !== undefined ? { allowedAttempts } : {}),
+      ...(resolved.captionsVtt ? { captionsVtt: resolved.captionsVtt } : {}),
     };
   }
 

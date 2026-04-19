@@ -1,6 +1,6 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-/** Sign-to-voice now uses Canvas media_tracks only; captions are no longer stored in app DB. */
+/** Legacy captions table removed; sign-to-voice captions are muxed into the WebM before upload. */
 export class DropPromptSubmissionCaptions1742100000000 implements MigrationInterface {
   name = 'DropPromptSubmissionCaptions1742100000000';
 

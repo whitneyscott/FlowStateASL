@@ -119,8 +119,25 @@ export function cleanupMuxOutputPath(outputPath: string): void {
   }
 }
 
-/** Returns raw `format.tags.PROMPT_DATA` (base64 of compact JSON). */
-export async function ffprobeWebmPromptDataJson(filePath: string, timeoutMs = 20_000): Promise<string | null> {
+const WEBM_VTT_EXTRACT_MAX_BYTES = Math.min(
+  Math.max(Number(process.env.WEBM_VTT_EXTRACT_MAX_BYTES ?? 2_000_000) || 2_000_000, 64_000),
+  8_000_000,
+);
+
+export type FfprobeWebmPromptDataProbe = {
+  /** Raw `format.tags.PROMPT_DATA` (base64 of compact JSON), if present. */
+  promptDataTag: string | null;
+  /** True if any stream has `codec_type` === `subtitle`. */
+  hasSubtitleStream: boolean;
+};
+
+/**
+ * One ffprobe subprocess: `-show_format -show_streams` JSON. Used for PROMPT_DATA tag + subtitle detection.
+ */
+export async function ffprobeWebmPromptDataJson(
+  filePath: string,
+  timeoutMs = 20_000,
+): Promise<FfprobeWebmPromptDataProbe | null> {
   const args = [
     '-hide_banner',
     '-loglevel',
@@ -128,6 +145,7 @@ export async function ffprobeWebmPromptDataJson(filePath: string, timeoutMs = 20
     '-print_format',
     'json',
     '-show_format',
+    '-show_streams',
     filePath,
   ];
   const child = spawn(FFPROBE_BIN, args, { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -152,21 +170,89 @@ export async function ffprobeWebmPromptDataJson(filePath: string, timeoutMs = 20
   });
   if (code !== 0) return null;
   try {
-    const j = JSON.parse(out) as { format?: { tags?: Record<string, string> } };
+    const j = JSON.parse(out) as {
+      format?: { tags?: Record<string, string> };
+      streams?: Array<{ codec_type?: string }>;
+    };
     const tags = j?.format?.tags;
-    if (!tags || typeof tags !== 'object') return null;
-    let v: string | undefined;
-    for (const [k, val] of Object.entries(tags)) {
-      if (k.toUpperCase() === 'PROMPT_DATA' && typeof val === 'string') {
-        v = val;
-        break;
+    let promptDataTag: string | null = null;
+    if (tags && typeof tags === 'object') {
+      let v: string | undefined;
+      for (const [k, val] of Object.entries(tags)) {
+        if (k.toUpperCase() === 'PROMPT_DATA' && typeof val === 'string') {
+          v = val;
+          break;
+        }
       }
+      const s = (v ?? '').trim();
+      promptDataTag = s || null;
     }
-    const s = (v ?? '').trim();
-    return s || null;
+    const streams = j?.streams;
+    const hasSubtitleStream = Array.isArray(streams)
+      ? streams.some((s) => String(s?.codec_type ?? '').toLowerCase() === 'subtitle')
+      : false;
+    return { promptDataTag, hasSubtitleStream };
   } catch {
     return null;
   }
+}
+
+/**
+ * Extract first subtitle stream as WebVTT text via ffmpeg (stdout). Fail-open: returns null on error / missing stream.
+ */
+export async function extractFirstSubtitleWebVttFromWebm(
+  filePath: string,
+  timeoutMs = 25_000,
+): Promise<string | null> {
+  const args = [
+    '-hide_banner',
+    '-loglevel',
+    'error',
+    '-i',
+    filePath,
+    '-map',
+    '0:s:0',
+    '-c',
+    'copy',
+    '-f',
+    'webvtt',
+    'pipe:1',
+  ];
+  const child = spawn(FFMPEG_BIN, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  const chunks: Buffer[] = [];
+  let total = 0;
+  child.stdout?.on('data', (c: Buffer) => {
+    total += c.length;
+    if (total <= WEBM_VTT_EXTRACT_MAX_BYTES) {
+      chunks.push(c);
+    } else {
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        /* ignore */
+      }
+    }
+  });
+  const { code, out } = await new Promise<{ code: number | null; out: string }>((resolve) => {
+    const t = setTimeout(() => {
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        /* ignore */
+      }
+    }, timeoutMs);
+    child.on('close', (c) => {
+      clearTimeout(t);
+      resolve({ code: c, out: Buffer.concat(chunks).toString('utf8') });
+    });
+    child.on('error', () => {
+      clearTimeout(t);
+      resolve({ code: -1, out: '' });
+    });
+  });
+  if (code !== 0) return null;
+  const s = out.trim();
+  return s || null;
 }
 
 export type DownloadResult =
