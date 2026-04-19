@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
 import * as promptApi from '../api/prompt.api';
+import { AppBlockingLoader } from '../components/AppBlockingLoader';
 import { ManualTokenModal } from '../components/ManualTokenModal';
 import { resolveLtiContextValue } from '../utils/lti-context';
 import { appendBridgeLog } from '../utils/bridge-log';
@@ -207,6 +208,7 @@ export default function TimerPage({ context }: TimerPageProps) {
   const [gateChooserMeta, setGateChooserMeta] = useState<{ allowed: number; attempt: number } | null>(null);
   const [accessCode, setAccessCode] = useState('');
   const [accessError, setAccessError] = useState<string | null>(null);
+  const [accessVerifying, setAccessVerifying] = useState(false);
   const [blocked, setBlocked] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [recordSecondsLeft, setRecordSecondsLeft] = useState(0);
@@ -743,6 +745,7 @@ export default function TimerPage({ context }: TimerPageProps) {
 
   const handleVerifyAccess = async () => {
     setAccessError(null);
+    setAccessVerifying(true);
     try {
       setLastFunction('POST /api/prompt/verify-access');
       const res = await promptApi.verifyAccess(accessCode, simpleFingerprint(), effectiveAssignmentId);
@@ -784,6 +787,8 @@ export default function TimerPage({ context }: TimerPageProps) {
       }
     } catch (e) {
       setAccessError(e instanceof Error ? e.message : 'Verify failed');
+    } finally {
+      setAccessVerifying(false);
     }
   };
 
@@ -990,59 +995,100 @@ export default function TimerPage({ context }: TimerPageProps) {
     setRecording(true);
   }, [phase, doSubmit, deckPrompts, captureProfile]);
 
+  const blockingLoaderProps = useMemo(() => {
+    if (phase === 'upload' && !submitError) {
+      const parts = [submitInfo?.trim(), recordedBlob ? `Upload size: ${toMb(recordedBlob.size)}` : ''].filter(Boolean);
+      return {
+        active: true as const,
+        message: 'Uploading submission…',
+        subMessage: parts.length ? parts.join('\n') : undefined,
+      };
+    }
+    if (accessVerifying) {
+      return { active: true as const, message: 'Verifying access code…', subMessage: undefined };
+    }
+    if (loading) {
+      return { active: true as const, message: 'Loading assignment…', subMessage: undefined };
+    }
+    return { active: false as const, message: '', subMessage: undefined };
+  }, [phase, submitError, submitInfo, recordedBlob, accessVerifying, loading]);
+
+  const blockingOverlay = (
+    <AppBlockingLoader
+      active={blockingLoaderProps.active}
+      message={blockingLoaderProps.message}
+      subMessage={blockingLoaderProps.subMessage}
+    />
+  );
+
   if (!context) {
     return (
-      <div className="prompter-page">
-        <div className="prompter-card">
-          <p className="prompter-info-message">Launch from Canvas to continue.</p>
+      <>
+        {blockingOverlay}
+        <div className="prompter-page">
+          <div className="prompter-card">
+            <p className="prompter-info-message">Launch from Canvas to continue.</p>
+          </div>
         </div>
-      </div>
+      </>
     );
   }
 
   if (loading) {
     return (
-      <div className="prompter-page">
-        <div className="prompter-card">
-          <p className="prompter-info-message">Loading...</p>
+      <>
+        {blockingOverlay}
+        <div className="prompter-page" aria-hidden="true">
+          <div className="prompter-card" />
         </div>
-      </div>
+      </>
     );
   }
 
   if (showManualTokenModal) {
     return (
-      <div className="prompter-page">
-        <div className="prompter-card">
-          <p className="prompter-info-message">Canvas API token required.</p>
+      <>
+        {blockingOverlay}
+        <div className="prompter-page">
+          <div className="prompter-card">
+            <p className="prompter-info-message">Canvas API token required.</p>
+          </div>
+          <ManualTokenModal
+            message="LTI 1.1 does not support OAuth. Enter your Canvas API token to load the prompt timer."
+            onSuccess={() => {
+              setShowManualTokenModal(false);
+              loadConfig();
+            }}
+            onDismiss={() => setShowManualTokenModal(false)}
+          />
         </div>
-        <ManualTokenModal
-          message="LTI 1.1 does not support OAuth. Enter your Canvas API token to load the prompt timer."
-          onSuccess={() => {
-            setShowManualTokenModal(false);
-            loadConfig();
-          }}
-          onDismiss={() => setShowManualTokenModal(false)}
-        />
-      </div>
+      </>
     );
   }
 
   const isDeepLink = context?.messageType === 'LtiDeepLinkingRequest';
   if (isDeepLink && config === null && !loading) {
     return (
-      <div className="prompter-page">
-        <div className="prompter-card">
-          <p className="prompter-info-message">
-            This assignment is not configured for ASL Express. Please use the standard file upload tab instead.
-          </p>
+      <>
+        {blockingOverlay}
+        <div className="prompter-page">
+          <div className="prompter-card">
+            <p className="prompter-info-message">
+              This assignment is not configured for ASL Express. Please use the standard file upload tab instead.
+            </p>
+          </div>
         </div>
-      </div>
+      </>
     );
   }
 
   if (teacherViewingTimer) {
-    return <div className="prompter-page" />;
+    return (
+      <>
+        {blockingOverlay}
+        <div className="prompter-page" />
+      </>
+    );
   }
 
   if (phase === 'submissionChoice') {
@@ -1055,35 +1101,40 @@ export default function TimerPage({ context }: TimerPageProps) {
           ? `Attempts remaining: ${Math.max(0, allowed - attempt)}`
           : null;
     return (
-      <div className="prompter-page">
-        <div className="prompter-card">
-          <h1>Your submission</h1>
-          <p className="prompter-info-message">You already have a recording for this assignment.</p>
-          {attemptsLabel ? <p className="prompter-info-message">{attemptsLabel}</p> : null}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '16px' }}>
-            <button
-              type="button"
-              onClick={openViewerFromSubmissionGate}
-              className="prompter-btn-ready prompter-btn-full prompter-btn-lg"
-            >
-              View feedback
-            </button>
-            <button
-              type="button"
-              onClick={continueNewAttemptFromSubmissionGate}
-              className="prompter-btn-ready prompter-btn-full prompter-btn-lg"
-            >
-              Start another attempt
-            </button>
+      <>
+        {blockingOverlay}
+        <div className="prompter-page">
+          <div className="prompter-card">
+            <h1>Your submission</h1>
+            <p className="prompter-info-message">You already have a recording for this assignment.</p>
+            {attemptsLabel ? <p className="prompter-info-message">{attemptsLabel}</p> : null}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '16px' }}>
+              <button
+                type="button"
+                onClick={openViewerFromSubmissionGate}
+                className="prompter-btn-ready prompter-btn-full prompter-btn-lg"
+              >
+                View feedback
+              </button>
+              <button
+                type="button"
+                onClick={continueNewAttemptFromSubmissionGate}
+                className="prompter-btn-ready prompter-btn-full prompter-btn-lg"
+              >
+                Start another attempt
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      </>
     );
   }
 
   if (phase === 'access' && needsAccessCode) {
     return (
-      <div className="prompter-page">
+      <>
+        {blockingOverlay}
+        <div className="prompter-page">
         <div className="prompter-access-code-container">
           <h1>Access Code</h1>
           <p className="prompter-info-message">Please enter the access code provided by your instructor.</p>
@@ -1109,6 +1160,7 @@ export default function TimerPage({ context }: TimerPageProps) {
           )}
         </div>
       </div>
+      </>
     );
   }
 
@@ -1117,33 +1169,41 @@ export default function TimerPage({ context }: TimerPageProps) {
     const s = secondsLeft % 60;
     const display = displayPrompts[promptIndex] ?? (displayPrompts[0] ?? 'Warm up. When the timer ends, you will record.');
     return (
-      <div className="prompter-page">
-        <div className="prompter-card">
-          <div className="prompter-prompt-column prompter-prompt-column-center">{display}</div>
-          <div className="prompter-timer-display">{m}:{s < 10 ? '0' : ''}{s}</div>
-          <button type="button" onClick={() => setPhase('preflight')} className="prompter-btn-ready">Ready Early</button>
+      <>
+        {blockingOverlay}
+        <div className="prompter-page">
+          <div className="prompter-card">
+            <div className="prompter-prompt-column prompter-prompt-column-center">{display}</div>
+            <div className="prompter-timer-display">{m}:{s < 10 ? '0' : ''}{s}</div>
+            <button type="button" onClick={() => setPhase('preflight')} className="prompter-btn-ready">Ready Early</button>
+          </div>
         </div>
-      </div>
+      </>
     );
   }
 
   if (phase === 'getReady') {
     const showNum = Math.max(1, getReadyTick);
     return (
-      <div className="prompter-page">
-        <div className="prompter-card prompter-get-ready-card">
-          <p className="prompter-get-ready-heading">Get Ready!</p>
-          <div className="prompter-get-ready-count" aria-live="polite">
-            {getReadyTick > 0 ? showNum : ''}
+      <>
+        {blockingOverlay}
+        <div className="prompter-page">
+          <div className="prompter-card prompter-get-ready-card">
+            <p className="prompter-get-ready-heading">Get Ready!</p>
+            <div className="prompter-get-ready-count" aria-live="polite">
+              {getReadyTick > 0 ? showNum : ''}
+            </div>
           </div>
         </div>
-      </div>
+      </>
     );
   }
 
   if (phase === 'preflight') {
     return (
-      <div className="prompter-page">
+      <>
+        {blockingOverlay}
+        <div className="prompter-page">
         <div className="prompter-card">
           <h1>Camera & Mic</h1>
           <p className="prompter-info-message prompter-info-message-spaced">Allow camera and microphone to record your signing.</p>
@@ -1199,6 +1259,7 @@ export default function TimerPage({ context }: TimerPageProps) {
           </button>
         </div>
       </div>
+      </>
     );
   }
 
@@ -1229,7 +1290,9 @@ export default function TimerPage({ context }: TimerPageProps) {
     const youtubeConcurrentSplit =
       Boolean(studentYoutubeFlow && !deckMode && youtubeVidForConcurrent && ycRec && !youtubeStimulusError);
     return (
-      <div className="prompter-page">
+      <>
+        {blockingOverlay}
+        <div className="prompter-page">
         <div className="prompter-card">
           <div className="prompter-timer-display-sm">
             {rm}:{rs < 10 ? '0' : ''}{rs}
@@ -1347,35 +1410,44 @@ export default function TimerPage({ context }: TimerPageProps) {
           {submitInfo && <p className="prompter-info-message">{submitInfo}</p>}
         </div>
       </div>
+      </>
     );
   }
 
   if (phase === 'upload') {
     return (
-      <div className="prompter-page">
-        <div className="prompter-card">
-          <p className="prompter-info-message">Uploading video to Canvas...</p>
-          {recordedBlob && (
-            <p className="prompter-info-message">Upload size: {toMb(recordedBlob.size)}</p>
-          )}
-          {submitError && <p className="prompter-error-message prompter-error-message-mt">{submitError}</p>}
-          {submitInfo && <p className="prompter-info-message">{submitInfo}</p>}
-          {submitError && (
-            <button type="button" onClick={retryLastSubmit} className="prompter-btn-ready">
-              Retry upload
-            </button>
-          )}
+      <>
+        {blockingOverlay}
+        <div className="prompter-page">
+          <div className="prompter-card">
+            {submitError ? (
+              <>
+                <p className="prompter-info-message">Upload could not complete.</p>
+                <p className="prompter-error-message prompter-error-message-mt">{submitError}</p>
+                {submitInfo ? <p className="prompter-info-message">{submitInfo}</p> : null}
+                {recordedBlob ? <p className="prompter-info-message">Upload size: {toMb(recordedBlob.size)}</p> : null}
+                <button type="button" onClick={retryLastSubmit} className="prompter-btn-ready">
+                  Retry upload
+                </button>
+              </>
+            ) : (
+              <p className="prompter-sr-only">Upload in progress</p>
+            )}
+          </div>
         </div>
-      </div>
+      </>
     );
   }
 
   return (
-    <div className="prompter-page">
-      <div className="prompter-card">
-        <h1>Done</h1>
-        <p className="prompter-info-message">Your submission has been sent to Canvas.</p>
+    <>
+      {blockingOverlay}
+      <div className="prompter-page">
+        <div className="prompter-card">
+          <h1>Done</h1>
+          <p className="prompter-info-message">Your submission has been sent to Canvas.</p>
+        </div>
       </div>
-    </div>
+    </>
   );
 }

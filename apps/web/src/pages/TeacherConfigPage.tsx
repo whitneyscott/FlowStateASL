@@ -6,6 +6,7 @@ import { resolveLtiContextValue } from '../utils/lti-context';
 import * as promptApi from '../api/prompt.api';
 import * as flashcardTeacherApi from '../api/flashcard-teacher.api';
 import type { PlaylistHierarchyRow } from '../api/flashcard-teacher.api';
+import { AppBlockingLoader } from '../components/AppBlockingLoader';
 import { ManualTokenModal } from '../components/ManualTokenModal';
 import { computeDeckHubFilters } from '../utils/deckHierarchyFilters';
 import { normalizeYoutubeInputToVideoIdClient } from '../utils/youtube-video-id';
@@ -883,13 +884,44 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     }
   };
 
+  const configBlockingLoader = useMemo(() => {
+    if (creatingModule) return { active: true as const, message: 'Creating module…', subMessage: undefined as string | undefined };
+    if (deletingAssignment) return { active: true as const, message: 'Deleting assignment…', subMessage: undefined as string | undefined };
+    if (creatingAssignment) return { active: true as const, message: 'Creating assignment…', subMessage: undefined as string | undefined };
+    if (saving) return { active: true as const, message: 'Saving…', subMessage: undefined as string | undefined };
+    if (resetting) return { active: true as const, message: 'Resetting…', subMessage: undefined as string | undefined };
+    if (assignmentId && loading) return { active: true as const, message: 'Loading configuration…', subMessage: undefined as string | undefined };
+    if (loadingAssignments) return { active: true as const, message: 'Loading assignments…', subMessage: undefined as string | undefined };
+    return { active: false as const, message: '', subMessage: undefined as string | undefined };
+  }, [
+    creatingModule,
+    deletingAssignment,
+    creatingAssignment,
+    saving,
+    resetting,
+    assignmentId,
+    loading,
+    loadingAssignments,
+  ]);
+
+  const configBlockingOverlay = (
+    <AppBlockingLoader
+      active={configBlockingLoader.active}
+      message={configBlockingLoader.message}
+      subMessage={configBlockingLoader.subMessage}
+    />
+  );
+
   if (!teacher || !context) {
     return (
-      <div className="prompter-page">
-        <div className="prompter-card">
-          <p className="prompter-info-message">Teacher access required.</p>
+      <>
+        {configBlockingOverlay}
+        <div className="prompter-page">
+          <div className="prompter-card">
+            <p className="prompter-info-message">Teacher access required.</p>
+          </div>
         </div>
-      </div>
+      </>
     );
   }
 
@@ -899,11 +931,12 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
 
   if (assignmentId && loading) {
     return (
-      <div className="prompter-page">
-        <div className="prompter-card">
-          <p className="prompter-info-message">Loading configuration...</p>
+      <>
+        {configBlockingOverlay}
+        <div className="prompter-page" aria-hidden="true">
+          <div className="prompter-card" />
         </div>
-      </div>
+      </>
     );
   }
 
@@ -1013,6 +1046,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
 
 
   return (
+    <>
+      {configBlockingOverlay}
     <div className="prompter-page">
       <div className="prompter-page-inner">
         <h1 className="prompter-settings-page-title">Prompt Manager Settings</h1>
@@ -1704,5 +1739,6 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         />
       )}
     </div>
+    </>
   );
 }

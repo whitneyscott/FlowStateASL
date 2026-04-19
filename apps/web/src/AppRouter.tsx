@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useLtiContext } from './hooks/useLtiContext';
+import { AppBlockingLoader } from './components/AppBlockingLoader';
 import { BridgeLog } from './components/BridgeLog';
 import { ToolSelector } from './components/ToolSelector';
 import { useAppMode } from './contexts/AppModeContext';
@@ -15,10 +16,12 @@ export default function AppRouter() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-gray-100 p-4">
-        <BridgeLog context={null} loading={true} error={null} />
-        <p className="text-gray-600">Loading...</p>
-      </div>
+      <>
+        <AppBlockingLoader active message="Loading course…" />
+        <div className="min-h-screen flex flex-col items-center justify-center bg-gray-100 p-4" aria-hidden="true">
+          <BridgeLog context={null} loading={true} error={null} />
+        </div>
+      </>
     );
   }
 

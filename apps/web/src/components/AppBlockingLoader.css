@@ -1,0 +1,64 @@
+/* Full-viewport blocking loader (portal to body). Below ManualTokenModal (10050) / AppModeModal shell; above prompter-modal-overlay (1000) and viewer chrome. */
+.app-blocking-loader-root {
+  position: fixed;
+  inset: 0;
+  z-index: 9800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+}
+
+.app-blocking-loader-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+}
+
+.app-blocking-loader-panel {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  padding: 2rem 2.5rem;
+  max-width: min(90vw, 420px);
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.2);
+  border-top: 6px solid #008ee2;
+}
+
+.app-blocking-loader-spinner {
+  width: 48px;
+  height: 48px;
+  border: 4px solid #e2e8f0;
+  border-top-color: #008ee2;
+  border-radius: 50%;
+  animation: app-blocking-loader-spin 0.85s linear infinite;
+}
+
+@keyframes app-blocking-loader-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.app-blocking-loader-message {
+  margin: 0;
+  font-family: sans-serif;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: #0f172a;
+  text-align: center;
+}
+
+.app-blocking-loader-sub {
+  margin: 0;
+  font-family: sans-serif;
+  font-size: 0.875rem;
+  color: #475569;
+  text-align: center;
+  line-height: 1.4;
+}

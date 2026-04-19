@@ -10,6 +10,7 @@ import { GradingPlaybackBar } from '../components/GradingPlaybackBar';
 import { SproutSourceCardModal } from '../components/SproutSourceCardModal';
 import { YoutubeStimulusShell } from '../components/YoutubeStimulusShell';
 import { YoutubeIframePlayer, type YoutubeIframePlayerHandle } from '../components/YoutubeIframePlayer';
+import { AppBlockingLoader } from '../components/AppBlockingLoader';
 import { CaptionsAccessibilityPanel } from '../components/CaptionsAccessibilityPanel';
 import { TeacherFeedbackRichEditor } from '../components/TeacherFeedbackRichEditor';
 import { feedbackEditorIsEmpty, sanitizeTeacherFeedbackHtml } from '../utils/teacher-feedback-html';
@@ -1493,26 +1494,56 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     };
   }, [loading, textPromptVisible]);
 
+  const viewerBlockingLoader = useMemo(() => {
+    if (saving && assignmentId) {
+      return { active: true as const, message: 'Saving…', subMessage: undefined as string | undefined };
+    }
+    if (loading) {
+      return {
+        active: true as const,
+        message: gradingMode ? 'Loading submissions…' : 'Loading submission…',
+        subMessage: undefined as string | undefined,
+      };
+    }
+    if (!assignmentId && loadingAssignments) {
+      return { active: true as const, message: 'Loading assignments…', subMessage: undefined as string | undefined };
+    }
+    return { active: false as const, message: '', subMessage: undefined as string | undefined };
+  }, [saving, assignmentId, loading, gradingMode, loadingAssignments]);
+
+  const viewerBlockingOverlay = (
+    <AppBlockingLoader
+      active={viewerBlockingLoader.active}
+      message={viewerBlockingLoader.message}
+      subMessage={viewerBlockingLoader.subMessage}
+    />
+  );
+
   if (!context) {
     return (
-      <div className="prompter-page">
-        <div className="prompter-card">
-          <p className="prompter-info-message">Launch from Canvas to continue.</p>
+      <>
+        {viewerBlockingOverlay}
+        <div className="prompter-page">
+          <div className="prompter-card">
+            <p className="prompter-info-message">Launch from Canvas to continue.</p>
+          </div>
         </div>
-      </div>
+      </>
     );
   }
 
   if (!assignmentId) {
     return (
-      <div className="prompter-page">
+      <>
+        {viewerBlockingOverlay}
+        <div className="prompter-page">
         <div className="prompter-card">
           <h1>{teacher ? 'Grade Submissions' : 'Video Viewer'}</h1>
           {teacher ? (
             <>
               <p className="prompter-info-message prompter-viewer-select-prompt">Select an assignment to grade submissions.</p>
               {loadingAssignments ? (
-                <p className="prompter-info-message">Loading assignments...</p>
+                <p className="prompter-info-message prompter-sr-only">Loading assignments list</p>
               ) : configuredAssignments.length === 0 ? (
                 <p className="prompter-info-message">No configured assignments in this course.</p>
               ) : (
@@ -1541,27 +1572,32 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
           )}
         </div>
       </div>
+      </>
     );
   }
 
   if (loading) {
     return (
-      <div className="prompter-page">
-        <div className="prompter-card">
-          <p className="prompter-info-message">Loading...</p>
+      <>
+        {viewerBlockingOverlay}
+        <div className="prompter-page" aria-hidden="true">
+          <div className="prompter-card" />
         </div>
-      </div>
+      </>
     );
   }
 
   if (!gradingMode && !mySubmission) {
     return (
-      <div className="prompter-page">
-        <div className="prompter-card">
-          <h1>View Submission</h1>
-          <p className="prompter-info-message">No submission found for this assignment.</p>
+      <>
+        {viewerBlockingOverlay}
+        <div className="prompter-page">
+          <div className="prompter-card">
+            <h1>View Submission</h1>
+            <p className="prompter-info-message">No submission found for this assignment.</p>
+          </div>
         </div>
-      </div>
+      </>
     );
   }
 
@@ -1570,7 +1606,9 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   const noSubmissionsInGradingMode = gradingMode && submissions.length === 0;
 
   return (
-    <div className="prompter-page prompter-page--viewer">
+    <>
+      {viewerBlockingOverlay}
+      <div className="prompter-page prompter-page--viewer">
       <div className="prompter-viewer-layout" id="viewer-layout">
         <aside
           ref={leftSidebarRef}
@@ -2359,5 +2397,6 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
         </div>
       )}
     </div>
+    </>
   );
 }
