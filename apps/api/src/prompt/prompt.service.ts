@@ -2460,6 +2460,14 @@ export class PromptService {
         }
       }
 
+      appendLtiLog('sign-to-voice', 'resolvePromptRowFromWebmMetadata: after subtitle extraction', {
+        userId: args.userId,
+        assignmentId: args.assignmentId,
+        hasSubtitleStream: probe.hasSubtitleStream,
+        captionsVttPopulated: !!captionsVtt,
+        captionsVttCharLength: captionsVtt?.length ?? 0,
+      });
+
       const tagRaw = probe.promptDataTag;
       if (!tagRaw) {
         appendLtiLog('webm-prompt', 'read: FAIL (missing_PROMPT_DATA_tag)', { userId: args.userId });
