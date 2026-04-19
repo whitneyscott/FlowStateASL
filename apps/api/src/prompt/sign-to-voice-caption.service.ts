@@ -302,6 +302,7 @@ export class SignToVoiceCaptionService {
         [{ locale: 'en', kind: 'subtitles', content: vtt }],
         domainOverride,
         canvasToken,
+        studentUserId,
       );
       appendLtiLog('sign-to-voice', 'pipeline: OK (Canvas media_tracks)', {
         userId: studentUserId,

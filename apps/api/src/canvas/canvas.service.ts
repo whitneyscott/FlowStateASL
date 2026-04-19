@@ -3114,6 +3114,7 @@ export class CanvasService {
 
   /**
    * Set/replace media tracks on a submission file (Canvas native CC). PUT replaces the full track list for the attachment.
+   * When `studentUserId` is set, adds `as_user_id` so a teacher/service token is authorized as the submission owner (caption ACL).
    * @see https://canvas.instructure.com/doc/api/media_objects.html — PUT /api/v1/media_attachments/:attachment_id/media_tracks
    */
   async putMediaAttachmentMediaTracks(
@@ -3121,10 +3122,13 @@ export class CanvasService {
     tracks: Array<{ locale: string; kind: string; content: string }>,
     domainOverride?: string,
     tokenOverride?: string | null,
+    studentUserId?: string | null,
   ): Promise<void> {
     const base = this.getBaseUrl(domainOverride);
     const id = encodeURIComponent(String(attachmentId).trim());
-    const url = `${base}/api/v1/media_attachments/${id}/media_tracks?include[]=content`;
+    const actAs = (studentUserId ?? '').trim();
+    const asUserQuery = actAs ? `&as_user_id=${encodeURIComponent(actAs)}` : '';
+    const url = `${base}/api/v1/media_attachments/${id}/media_tracks?include[]=content${asUserQuery}`;
     const res = await fetch(url, {
       method: 'PUT',
       headers: this.getAuthHeaders(tokenOverride),
@@ -3134,6 +3138,7 @@ export class CanvasService {
     appendLtiLog('canvas', 'putMediaAttachmentMediaTracks', {
       attachmentId,
       trackCount: tracks.length,
+      asUserId: actAs || undefined,
       status: res.status,
       preview: raw.slice(0, 400),
     });
