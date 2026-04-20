@@ -1172,6 +1172,12 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     [current?.body, current?.submissionComments],
   );
   const isDeckPromptMode = deckTimeline.length > 0;
+  /** Deck submissions carry card timing in JSON metadata, not transcript VTT; hide caption UX for that path. */
+  const submissionCaptionsForPlayer = useMemo(
+    () => (isDeckPromptMode ? undefined : submissionCaptionsVtt),
+    [isDeckPromptMode, submissionCaptionsVtt],
+  );
+  const deckGradingStackOrder = isDeckPromptMode && gradingMode;
   const isTextPromptMode = !isDeckPromptMode;
   const activeDeckPrompt = useMemo(
     () => activeDeckPromptAt(currentTime, deckTimeline),
@@ -1919,23 +1925,28 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
           )}
         </aside>
         <div className="prompter-viewer-resize-handle" id="resize-handle-left" title="Drag to resize" />
-        <main className="prompter-viewer-center" id="viewer-center">
-          {error && <div className="prompter-viewer-error-box">{error}</div>}
-          {noSubmissionsInGradingMode && (
-            <div className="prompter-viewer-no-submissions">
-              <p className="prompter-info-message">No submissions yet for this assignment.</p>
-              <button
-                type="button"
-                className="prompter-viewer-grade-btn"
-                onClick={() => setSearchParams({ grading: '1' })}
-              >
-                Change assignment
-              </button>
-            </div>
-          )}
+        <main
+          className={`prompter-viewer-center${deckGradingStackOrder ? ' prompter-viewer-center--deck-grading-stack' : ''}`}
+          id="viewer-center"
+        >
+          <div className="prompter-viewer-slot-top">
+            {error && <div className="prompter-viewer-error-box">{error}</div>}
+            {noSubmissionsInGradingMode && (
+              <div className="prompter-viewer-no-submissions">
+                <p className="prompter-info-message">No submissions yet for this assignment.</p>
+                <button
+                  type="button"
+                  className="prompter-viewer-grade-btn"
+                  onClick={() => setSearchParams({ grading: '1' })}
+                >
+                  Change assignment
+                </button>
+              </div>
+            )}
+          </div>
 
           {assignmentId && (
-            <div className="prompter-viewer-center-row prompter-viewer-center-row--title">
+            <div className="prompter-viewer-center-row prompter-viewer-center-row--title prompter-viewer-slot-assignment-title">
               <h1 className="prompter-viewer-assignment-title">
                 {assignment?.name?.trim() || `Assignment ${assignmentId}`}
               </h1>
@@ -1943,7 +1954,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
           )}
 
           {gradingMode && submissions.length > 0 && (
-            <div className="prompter-viewer-center-row prompter-viewer-center-row--submission-nav">
+            <div className="prompter-viewer-center-row prompter-viewer-center-row--submission-nav prompter-viewer-slot-deck-later-nav">
               <div className="prompter-viewer-submission-nav-inner">
                 <div className="prompter-viewer-dropdown-row prompter-viewer-dropdown-row--inline">
                   <label htmlFor="submission-select">Submission:</label>
@@ -1986,7 +1997,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
           )}
 
           {gradingMode && current && (
-            <div className="prompter-viewer-center-row prompter-viewer-center-row--grade">
+            <div className="prompter-viewer-center-row prompter-viewer-center-row--grade prompter-viewer-slot-deck-later-grade">
               <div className="prompter-viewer-grade-row-full">
                 {pointsPossible != null && (
                   <>
@@ -2023,6 +2034,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
             </div>
           )}
 
+          <div className="prompter-viewer-slot-submission-media">
           {youtubeDualLayout && youtubeStimulusForGrading && current?.videoUrl ? (
             <div className="prompter-viewer-center-row">
               <div className="prompter-viewer-youtube-dual">
@@ -2088,7 +2100,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                       videoRef={videoRef}
                       videoDurationSeconds={current.videoDurationSeconds}
                       durationSource={current.durationSource}
-                      captionsVtt={submissionCaptionsVtt}
+                      captionsVtt={submissionCaptionsForPlayer}
                     />
                   </div>
                 </div>
@@ -2171,7 +2183,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                       videoRef={videoRef}
                       videoDurationSeconds={current.videoDurationSeconds}
                       durationSource={current.durationSource}
-                      captionsVtt={submissionCaptionsVtt}
+                      captionsVtt={submissionCaptionsForPlayer}
                     />
                   </>
                 ) : hasSubmissionNoVideo ? (
@@ -2184,15 +2196,16 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
               </div>
             </>
           )}
+          </div>
 
-          {gradingMode && current && !noSubmissionsInGradingMode ? (
+          {gradingMode && current && !noSubmissionsInGradingMode && !isDeckPromptMode ? (
             <div className="prompter-viewer-center-row prompter-viewer-captions-access-wrap">
               <CaptionsAccessibilityPanel />
             </div>
           ) : null}
 
           {isDeckPromptMode && (
-            <>
+            <div className="prompter-viewer-slot-deck-active-group">
               <div className="prompter-viewer-center-row prompter-viewer-center-row--active-header">
                 <h2 className="prompter-viewer-section-heading">Active Item</h2>
               </div>
@@ -2289,7 +2302,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                   <p className="prompter-viewer-active-item-hint">Play the video to see the active deck item.</p>
                 )}
               </div>
-            </>
+            </div>
           )}
 
           {isTextPromptMode && (
@@ -2312,7 +2325,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
           )}
 
           {teacher && !noSubmissionsInGradingMode && (
-            <div className="prompter-viewer-center-row prompter-viewer-center-row--freeform-feedback">
+            <div className="prompter-viewer-center-row prompter-viewer-center-row--freeform-feedback prompter-viewer-slot-freeform-group">
               <h2 className="prompter-viewer-section-heading">Free-form feedback</h2>
               {activeFeedback.length > 0 && (
                 <div className="prompter-viewer-feedback-at-playhead" aria-live="polite">

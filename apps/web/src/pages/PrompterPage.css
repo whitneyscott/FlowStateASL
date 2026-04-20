@@ -879,6 +879,32 @@
   min-width: 0;
 }
 
+/**
+ * Deck grading: put submission video first, then rubric ratings + live prompt under the video,
+ * then free-form comments, then submission picker + course grade (matches instructor workflow).
+ */
+.prompter-viewer-center--deck-grading-stack .prompter-viewer-slot-top {
+  order: 1;
+}
+.prompter-viewer-center--deck-grading-stack .prompter-viewer-slot-assignment-title {
+  order: 2;
+}
+.prompter-viewer-center--deck-grading-stack .prompter-viewer-slot-submission-media {
+  order: 10;
+}
+.prompter-viewer-center--deck-grading-stack .prompter-viewer-slot-deck-active-group {
+  order: 20;
+}
+.prompter-viewer-center--deck-grading-stack .prompter-viewer-slot-freeform-group {
+  order: 30;
+}
+.prompter-viewer-center--deck-grading-stack .prompter-viewer-slot-deck-later-nav {
+  order: 40;
+}
+.prompter-viewer-center--deck-grading-stack .prompter-viewer-slot-deck-later-grade {
+  order: 50;
+}
+
 .prompter-viewer-center-row {
   width: 100%;
   max-width: 100%;
