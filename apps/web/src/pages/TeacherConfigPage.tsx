@@ -1397,15 +1397,25 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     </div>
   );
 
+  const rubricKnownInList = rubricId && rubrics.some((r) => String(r.id) === rubricId);
+
   const rubricSelector = (
     <div className="prompter-settings-section">
       <label className="prompter-settings-label"><strong>Rubric (optional):</strong></label>
+      <p className="prompter-hint">
+        Matches the rubric attached to this assignment in Canvas when one is set (including after import).
+      </p>
       <select
         className="prompter-settings-input"
         value={rubricId}
         onChange={(e) => setRubricId(e.target.value)}
       >
         <option value="">— No Rubric —</option>
+        {rubricId && !rubricKnownInList ? (
+          <option value={rubricId}>
+            Attached rubric (Canvas id {rubricId})
+          </option>
+        ) : null}
         {rubrics.map((r) => (
           <option key={r.id} value={String(r.id)}>
             {r.title} ({r.pointsPossible} pts)

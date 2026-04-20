@@ -912,9 +912,14 @@ export class CanvasService {
     allowed_attempts?: number;
     /** Canvas-allowed submission types, e.g. online_upload, online_text_entry */
     submission_types?: string[];
+    /**
+     * Course rubric template id from `include[]=rubric_association` (for Prompt Manager / grading UI).
+     * Present when a rubric is attached to the assignment in Canvas.
+     */
+    linkedRubricId?: string;
   } | null> {
     const base = this.getBaseUrl(domainOverride);
-    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}`;
+    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}?include[]=rubric_association`;
     const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
     if (!res.ok) {
       if (res.status === 401) throw new CanvasTokenExpiredError(401);
@@ -928,7 +933,13 @@ export class CanvasService {
       assignment_group_id?: number;
       allowed_attempts?: number;
       submission_types?: string[];
+      rubric_association?: { rubric_id?: number | string } | null;
     };
+    const rawAssocRid = data.rubric_association?.rubric_id;
+    const linkedRubricId =
+      rawAssocRid != null && `${rawAssocRid}`.trim() !== '' && Number.isFinite(Number(rawAssocRid))
+        ? String(Math.floor(Number(rawAssocRid)))
+        : undefined;
     return {
       name: data.name,
       description: data.description,
@@ -937,6 +948,7 @@ export class CanvasService {
       assignment_group_id: data.assignment_group_id,
       allowed_attempts: data.allowed_attempts,
       submission_types: Array.isArray(data.submission_types) ? data.submission_types : undefined,
+      ...(linkedRubricId ? { linkedRubricId } : {}),
     };
   }
 

@@ -1184,6 +1184,8 @@ export class PromptService {
             : config?.allowedAttempts == null
               ? { allowedAttempts: 1 }
               : {}),
+          // Surface Canvas-attached rubric in config + teacher UI even when the settings blob omits rubricId.
+          ...(assignment.linkedRubricId ? { rubricId: assignment.linkedRubricId } : {}),
         };
         if (!hydrated.promptMode) hydrated.promptMode = 'text';
         return { ...hydrated, resolvedAssignmentId: assignmentId };
@@ -3371,6 +3373,8 @@ export class PromptService {
     name?: string;
     pointsPossible?: number;
     rubric?: Array<unknown>;
+    /** Course rubric template id when Canvas has a rubric association (mirrors hydrated prompt config). */
+    rubricId?: string;
     /** Sprout account id for embed URLs (same source as flashcard / course settings). */
     sproutAccountId?: string;
     allowedAttempts?: number;
@@ -3392,16 +3396,17 @@ export class PromptService {
     if (!raw) return null;
     let rubric = Array.isArray(raw.rubric) && raw.rubric.length > 0 ? raw.rubric : null;
     const blob = await this.readPromptManagerSettingsBlob(ctx.courseId, domainOverride, token);
+    const cfg = blob?.configs?.[assignmentId];
     if (!rubric) {
-      const rubricId = blob?.configs?.[assignmentId]?.rubricId?.trim();
-      if (rubricId) {
-        const fetched = await this.canvas.getRubric(ctx.courseId, rubricId, domainOverride, token);
+      const rubricIdForFetch =
+        (raw.linkedRubricId ?? '').trim() || (cfg?.rubricId ?? '').trim();
+      if (rubricIdForFetch) {
+        const fetched = await this.canvas.getRubric(ctx.courseId, rubricIdForFetch, domainOverride, token);
         if (fetched?.length) rubric = fetched;
       }
     }
     const name = typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : undefined;
     const sproutAccountId = getSproutAccountId(this.config);
-    const cfg = blob?.configs?.[assignmentId];
     const allowedAttempts =
       raw.allowed_attempts != null && Number.isFinite(Number(raw.allowed_attempts))
         ? Number(raw.allowed_attempts)
@@ -3434,17 +3439,21 @@ export class PromptService {
         },
       };
     }
+    const resolvedRubricId =
+      (raw.linkedRubricId ?? '').trim() || (cfg?.rubricId ?? '').trim() || undefined;
     appendLtiLog('viewer', 'getAssignmentForGrading: sprout embed config snapshot', {
       assignmentId,
       hasSproutAccountId: !!sproutAccountId,
       sproutAccountIdLen: sproutAccountId ? sproutAccountId.length : 0,
       sproutAccountIdSuffix: sproutAccountId ? sproutAccountId.slice(-4) : '(none)',
       hasRubric: !!(rubric && Array.isArray(rubric) && rubric.length > 0),
+      rubricId: resolvedRubricId ?? '(none)',
     });
     return {
       name,
       pointsPossible: raw.points_possible,
       rubric: rubric ?? undefined,
+      ...(resolvedRubricId ? { rubricId: resolvedRubricId } : {}),
       sproutAccountId,
       ...(allowedAttempts !== undefined ? { allowedAttempts } : {}),
       ...(promptMode ? { promptMode } : {}),
