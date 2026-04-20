@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useSearchParams, useNavigate, Link } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
 import { resolveLtiContextValue } from '../utils/lti-context';
@@ -89,7 +89,6 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const [allowedAttempts, setAllowedAttempts] = useState(1);
   const [instructions, setInstructions] = useState('');
   const [signToVoiceRequired, setSignToVoiceRequired] = useState(false);
-  const [showSettings, setShowSettings] = useState(true);
   const [showManualTokenModal, setShowManualTokenModal] = useState(false);
   const [importBusy, setImportBusy] = useState(false);
   const [importInfo, setImportInfo] = useState<string | null>(null);
@@ -782,7 +781,6 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       await loadAssignments();
       setSearchParams({ assignmentId: newId });
       setAssignmentActionMode('edit');
-      setShowSettings(true);
       setConfigAssignValue(newId);
     } catch (e: unknown) {
       if (e instanceof promptApi.NeedsManualTokenError) {
@@ -1114,7 +1112,6 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       setImportInfo('Assignment settings were imported.');
       setImportModalOpen(false);
       setAssignmentActionMode('edit');
-      setShowSettings(true);
       setConfigAssignValue(tid);
       setSearchParams((prev) => {
         const p = new URLSearchParams(prev);
@@ -1154,7 +1151,6 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   }
 
   const showForm = hasLti;
-  const effectiveAssignmentId = assignmentId;
   const canEditAssignmentSettings = assignmentActionMode === 'edit' && !!assignmentId;
 
   if (assignmentId && loading) {
@@ -1309,21 +1305,6 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
 
         {showForm && (
           <>
-            <div className="prompter-settings-actions-row prompter-settings-top-actions">
-              <button type="button" className="prompter-btn-toggle-settings" onClick={() => setShowSettings((s) => !s)}>
-                {showSettings ? 'Hide Settings' : 'Show Settings'}
-              </button>
-              {effectiveAssignmentId && (
-                <Link
-                  to={`/viewer?assignmentId=${encodeURIComponent(effectiveAssignmentId)}&grading=1`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="prompter-btn-start prompter-btn-grading"
-                >
-                  Open for Grading
-                </Link>
-              )}
-            </div>
             {hasLti && (
               <div className="prompter-settings-card prompter-settings-card-compact">
                 <h2 className="prompter-settings-card-title">Assignments</h2>
@@ -1352,7 +1333,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                         onClick={enterCreateMode}
                         disabled={loadingAssignments || saving}
                       >
-                        Create
+                        New Assignment
                       </button>
                       <button
                         type="button"
@@ -1440,7 +1421,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
               <p className="prompter-hint">
                 Create an assignment first, then switch to Edit mode to configure prompt settings.
               </p>
-            ) : showSettings && (
+            ) : (
               <div className="prompter-settings-config-form">
                 <div className="prompter-settings-two-col">
                     <div className="prompter-settings-col-assignment">
