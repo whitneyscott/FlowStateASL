@@ -715,7 +715,10 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   useEffect(() => { syncFeedbackFromCurrent(); }, [syncFeedbackFromCurrent]);
 
   const loadTeacher = useCallback(async () => {
-    if (!teacher || !assignmentId) return;
+    if (!teacher || !assignmentId) {
+      setLoading(false);
+      return;
+    }
     appendViewerBridgeLog('loadTeacher:start', { assignmentId });
     setLoading(true);
     setError(null);
@@ -756,7 +759,10 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   }, [teacher, assignmentId, setLastFunction, setLastApiResult, setLastApiError]);
 
   const loadStudent = useCallback(async () => {
-    if (!assignmentId || !context) return;
+    if (!assignmentId || !context) {
+      setLoading(false);
+      return;
+    }
     appendViewerBridgeLog('loadStudent:start', { assignmentId });
     setLoading(true);
     setError(null);
@@ -789,6 +795,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   const loadConfiguredAssignments = useCallback(async () => {
     if (!teacher || !context?.courseId) {
       console.log('[TeacherViewer] loadConfiguredAssignments SKIPPED', { teacher: !!teacher, courseId: context?.courseId });
+      setLoadingAssignments(false);
       return;
     }
     console.log('[TeacherViewer] loadConfiguredAssignments CALLING /api/prompt/configured-assignments');
@@ -810,7 +817,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   }, [teacher, assignmentId, loadConfiguredAssignments]);
 
   useEffect(() => {
-    if (gradingMode) loadTeacher();
+    if (gradingMode && assignmentId) loadTeacher();
     else if (assignmentId && context) loadStudent();
     else setLoading(false);
   }, [gradingMode, assignmentId, context, loadTeacher, loadStudent]);
@@ -1498,7 +1505,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     if (saving && assignmentId) {
       return { active: true as const, message: 'Saving…', subMessage: undefined as string | undefined };
     }
-    if (loading) {
+    if (assignmentId && loading) {
       return {
         active: true as const,
         message: gradingMode ? 'Loading submissions…' : 'Loading submission…',
