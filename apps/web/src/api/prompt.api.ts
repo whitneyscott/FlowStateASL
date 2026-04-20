@@ -614,12 +614,18 @@ export async function getCanvasAssignmentsForImport(): Promise<{
   return fetchJsonWithOAuthRedirect(`${base}/canvas-assignments-for-import`);
 }
 
-export async function getAssignmentImportOptions(sourceSettingsAssignmentId: string): Promise<{
+export async function getAssignmentImportOptions(
+  sourceSettingsAssignmentId: string,
+  targetAssignmentId?: string,
+): Promise<{
   prioritizedAssignments: CanvasAssignmentBriefForImport[];
   otherAssignments: CanvasAssignmentBriefForImport[];
   sourceConfigCount: number;
+  targetCanvasModuleId: string | null;
 }> {
   const q = new URLSearchParams({ sourceSettingsAssignmentId: sourceSettingsAssignmentId.trim() });
+  const tid = (targetAssignmentId ?? '').trim();
+  if (tid) q.set('targetAssignmentId', tid);
   return fetchJsonWithOAuthRedirect(`${base}/settings-blob/assignment-import-options?${q.toString()}`);
 }
 

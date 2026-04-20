@@ -4091,10 +4091,12 @@ export class PromptService {
   async getAssignmentImportOptionsForImport(
     ctx: LtiContext,
     sourceSettingsAssignmentId: string,
+    targetAssignmentId?: string,
   ): Promise<{
     prioritizedAssignments: CanvasAssignmentBrief[];
     otherAssignments: CanvasAssignmentBrief[];
     sourceConfigCount: number;
+    targetCanvasModuleId: string | null;
   }> {
     const sourceId = (sourceSettingsAssignmentId ?? '').trim();
     if (!sourceId) {
@@ -4115,10 +4117,15 @@ export class PromptService {
     const keys = new Set(Object.keys(blob?.configs ?? {}));
     const all = await this.canvas.listAssignmentsBrief(ctx.courseId, domainOverride, token);
     const byName = (a: CanvasAssignmentBrief, b: CanvasAssignmentBrief) => a.name.localeCompare(b.name);
+    const tid = (targetAssignmentId ?? '').trim();
+    const targetCanvasModuleId = tid
+      ? await this.canvas.findFirstModuleIdContainingAssignment(ctx.courseId, tid, domainOverride, token)
+      : null;
     return {
       prioritizedAssignments: all.filter((a) => keys.has(a.id)).sort(byName),
       otherAssignments: all.filter((a) => !keys.has(a.id)).sort(byName),
       sourceConfigCount: keys.size,
+      targetCanvasModuleId,
     };
   }
 
@@ -4135,7 +4142,8 @@ export class PromptService {
         sourceKey: string | null;
         targetAssignmentId: string;
         assignmentName: string;
-        requiresModuleId: true;
+        requiresModuleId: boolean;
+        detectedCanvasModuleId: string | null;
         strategy: 'from_source' | 'kept_existing' | 'created_defaults';
       }
     | {
@@ -4188,20 +4196,30 @@ export class PromptService {
     };
     const strategy = resolveStrategy();
 
+    const detectedCanvasModuleId = await this.canvas.findFirstModuleIdContainingAssignment(
+      ctx.courseId,
+      targetAid,
+      domainOverride,
+      token,
+    );
+    const manualModuleId = (dto.moduleId ?? '').trim();
+    const effectiveModuleId = manualModuleId || detectedCanvasModuleId || '';
+
     if (dto.dryRun) {
       return {
         dryRun: true,
         sourceKey: sourceKey ?? null,
         targetAssignmentId: targetAid,
         assignmentName: targetRow.name,
-        requiresModuleId: true,
+        requiresModuleId: !effectiveModuleId,
+        detectedCanvasModuleId,
         strategy,
       };
     }
-    const moduleIdTrim = (dto.moduleId ?? '').trim();
+    const moduleIdTrim = effectiveModuleId;
     if (!moduleIdTrim) {
       throw new BadRequestException(
-        'moduleId is required: choose a Canvas module so the assignment can be placed and the Prompter LTI link added above it.',
+        'This assignment is not in any Canvas module. Choose a module so the Prompter tool can be added above the assignment.',
       );
     }
     const existingConfigs = { ...(targetBlob?.configs ?? {}) };

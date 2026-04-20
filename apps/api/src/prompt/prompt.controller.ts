@@ -585,10 +585,15 @@ export class PromptController {
     @Req() req: Request,
     @Res() res: Response,
     @Query('sourceSettingsAssignmentId') sourceSettingsAssignmentId?: string,
+    @Query('targetAssignmentId') targetAssignmentId?: string,
   ) {
     const ctx = this.getCtx(req);
     try {
-      const result = await this.prompt.getAssignmentImportOptionsForImport(ctx, sourceSettingsAssignmentId ?? '');
+      const result = await this.prompt.getAssignmentImportOptionsForImport(
+        ctx,
+        sourceSettingsAssignmentId ?? '',
+        targetAssignmentId ?? '',
+      );
       return res.json(result);
     } catch (err) {
       if (err instanceof CanvasTokenExpiredError) {

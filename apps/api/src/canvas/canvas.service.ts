@@ -1240,6 +1240,28 @@ export class CanvasService {
     return { created: true, itemId: created?.id };
   }
 
+  /**
+   * If the assignment appears as an Assignment module item in any course module,
+   * returns the first module id (string) in Canvas module position order.
+   */
+  async findFirstModuleIdContainingAssignment(
+    courseId: string,
+    assignmentId: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<string | null> {
+    const aid = parseInt(assignmentId, 10);
+    if (Number.isNaN(aid)) return null;
+    const modules = await this.listModules(courseId, domainOverride, tokenOverride);
+    const sorted = [...modules].sort((a, b) => a.position - b.position);
+    for (const m of sorted) {
+      const items = await this.listModuleItems(courseId, String(m.id), domainOverride, tokenOverride);
+      const hit = items.some((i) => i.type === 'Assignment' && i.content_id === aid);
+      if (hit) return String(m.id);
+    }
+    return null;
+  }
+
   /** List module items (positions, types) for LTI + assignment sync. */
   async listModuleItems(
     courseId: string,

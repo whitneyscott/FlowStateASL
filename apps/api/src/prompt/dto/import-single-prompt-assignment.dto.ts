@@ -1,7 +1,10 @@
 export interface ImportSinglePromptAssignmentDto {
   sourceSettingsAssignmentId: string;
   targetAssignmentId: string;
-  /** Required when applying (non–dry-run): module for Canvas placement + Prompter LTI row above the assignment. */
+  /**
+   * Optional override. When omitted, the API uses the Canvas module that already contains this assignment
+   * (first match in module order); if none, apply fails until the teacher picks a module.
+   */
   moduleId?: string;
   dryRun?: boolean;
 }

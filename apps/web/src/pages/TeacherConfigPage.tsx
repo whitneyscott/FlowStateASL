@@ -107,6 +107,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     prioritizedAssignments: promptApi.CanvasAssignmentBriefForImport[];
     otherAssignments: promptApi.CanvasAssignmentBriefForImport[];
     sourceConfigCount: number;
+    targetCanvasModuleId: string | null;
   } | null>(null);
   const [importSourceAssignmentId, setImportSourceAssignmentId] = useState('');
   const [importTargetAssignmentId, setImportTargetAssignmentId] = useState('');
@@ -1130,7 +1131,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setImportOptionsLoading(true);
     setImportModalMessage(null);
     void promptApi
-      .getAssignmentImportOptions(importSourceAssignmentId.trim())
+      .getAssignmentImportOptions(importSourceAssignmentId.trim(), importTargetAssignmentId.trim())
       .then((p) => {
         if (!cancelled) {
           setImportPartition(p);
@@ -1149,7 +1150,14 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     return () => {
       cancelled = true;
     };
-  }, [importModalOpen, importSourceAssignmentId, teacher, hasLti]);
+  }, [importModalOpen, importSourceAssignmentId, importTargetAssignmentId, teacher, hasLti]);
+
+  useEffect(() => {
+    const mid = importPartition?.targetCanvasModuleId;
+    if (mid != null && String(mid).trim() !== '') {
+      setImportModuleId(String(mid).trim());
+    }
+  }, [importPartition?.targetCanvasModuleId]);
 
   useEffect(() => {
     if (!importPartition) return;
@@ -1286,12 +1294,15 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     const sid = importSourceAssignmentId.trim();
     const tid = importTargetAssignmentId.trim();
     const mid = importModuleId.trim();
+    const canvasModule = (importPartition?.targetCanvasModuleId ?? '').toString().trim();
     if (!sid || !tid) {
       setImportModalMessage('Select both source settings assignment and target assignment.');
       return;
     }
-    if (!mid) {
-      setImportModalMessage('Select a Canvas module so the Prompter tool can be added above the assignment.');
+    if (!mid && !canvasModule) {
+      setImportModalMessage(
+        'This assignment is not in any Canvas module yet. Select a module so the Prompter tool can be placed above it.',
+      );
       return;
     }
     setImportModalBusy(true);
@@ -1300,7 +1311,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       const res = await promptApi.importSinglePromptAssignment({
         sourceSettingsAssignmentId: sid,
         targetAssignmentId: tid,
-        moduleId: mid,
+        ...(mid ? { moduleId: mid } : {}),
         dryRun: false,
       });
       await loadAssignments();
@@ -1321,7 +1332,16 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     } finally {
       setImportModalBusy(false);
     }
-  }, [teacher, hasLti, importSourceAssignmentId, importTargetAssignmentId, importModuleId, loadAssignments, setSearchParams]);
+  }, [
+    teacher,
+    hasLti,
+    importSourceAssignmentId,
+    importTargetAssignmentId,
+    importModuleId,
+    importPartition?.targetCanvasModuleId,
+    loadAssignments,
+    setSearchParams,
+  ]);
 
   if (!teacher || !context) {
     return (
@@ -2318,14 +2338,21 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                     created_defaults).
                   </p>
                 )}
-                <label className="prompter-settings-label">Module (required — places assignment + Prompter LTI link)</label>
+                <label className="prompter-settings-label">
+                  Module (prefilled when this assignment is already a Canvas module item; change if you want a
+                  different placement)
+                </label>
                 <select
                   className="prompter-settings-input"
                   value={importModuleId}
                   onChange={(e) => setImportModuleId(e.target.value)}
                   disabled={importModalBusy}
                 >
-                  <option value="">— Select module —</option>
+                  <option value="">
+                    {importPartition?.targetCanvasModuleId
+                      ? '— Using Canvas module above (or pick another) —'
+                      : '— Select module (assignment not in any module yet) —'}
+                  </option>
                   {modules.map((m) => (
                     <option key={m.id} value={String(m.id)}>
                       {m.name}
@@ -2349,9 +2376,11 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                     className="prompter-btn-ready"
                     disabled={
                       importModalBusy ||
+                      importOptionsLoading ||
                       !importSourceAssignmentId.trim() ||
                       !importTargetAssignmentId.trim() ||
-                      !importModuleId.trim()
+                      (!importModuleId.trim() &&
+                        !(importPartition?.targetCanvasModuleId ?? '').toString().trim())
                     }
                     onClick={() => void handleImportModalSingleMerge()}
                   >
