@@ -1,6 +1,6 @@
 ---
 name: ASL Express import pipeline
-overview: Three separate teacher-facing pipelines (orphan restore, cross-course import, TRUE+WAY course setup) sharing name resolution and dual-write blob helpers; distinct UI entry points on Teacher Config.
+overview: Three teacher-facing pipelines (orphan restore, cross-course import, curriculum setup); Pipelines 1–2 unchanged; Pipeline 3 orchestrates pluggable CurriculumAdapters (TWA first, SN stub) with zero curriculum conditionals in core code.
 todos:
   - id: shared-resolve-by-name
     content: Implement resolveAssignmentIdByName(name, targetCourseAssignments) → matched | conflict | unmatched; unit tests
@@ -10,16 +10,22 @@ todos:
     content: Pipeline 1 — same-course orphan restore for Prompt Manager + Flashcards (read old blob, validate, merge, write, stale-key warnings)
   - id: pipeline2-cross-course
     content: Pipeline 2 — cross-course import with remap UI for conflicts/unmatched; drop resourceLink map; clear module/group/rubric; deck remap by title where applicable
-  - id: pipeline3-twa-detect
-    content: Pipeline 3 — TWA assignment + module detection via agreed regexes; HTML parsers for SOAR and Watch and Sign descriptions
-  - id: pipeline3-twa-modules
-    content: Pipeline 3 — Canvas module/Page/LTI insertions with idempotency + destructive description-clear confirmation modal
+  - id: curriculum-adapter-interface
+    content: Add CurriculumAdapter interface + shared types (DetectedAssignment, ParsedAssignmentContent, ModuleTransformation, etc.) under apps/api/src/prompt/curricula/index.ts (path adjustable)
+  - id: curriculum-registry
+    content: Export CURRICULUM_ADAPTERS registry (TrueWayAslAdapter only at first); core Pipeline 3 iterates registry — no if (curriculum === 'true-way-asl') in core
+  - id: true-way-adapter
+    content: Extract all TWA-specific regexes, HTML parsers, module rules, config templates, buildGenerationPrompt into curricula/true-way-asl.ts implementing CurriculumAdapter
+  - id: signing-naturally-stub
+    content: Add curricula/signing-naturally.ts documented stub (loadSentenceLibrary, loadPlaylist; detection patterns TODO; parseAssignment may compose library+playlist into ParsedAssignmentContent for core uniformity)
+  - id: pipeline3-orchestration
+    content: Pipeline 3 core — fetch assignments/modules, call selected adapter only, run transformations + writes; idempotency + destructive confirmation unchanged in behavior
   - id: prompt-mode-watch-sign
     content: Add promptMode watch_and_sign + Timer/recorder student flow (Watch then single narrative Record); align PromptConfigJson / DTOs with SOAR fields (warmup, sprout refs, etc.)
   - id: production-question-banks
     content: Production Test — Claude generation, approval modals, random variation at test start; confirm or add persistence schema
   - id: ui-three-entry-points
-    content: TeacherConfigPage — three separate flows (Restore / Import course / Set up TRUE+WAY) with appropriate confirmations
+    content: TeacherConfigPage — Restore / Import course / Set up Curriculum; curriculum flow lists only adapters with detectAssignments matches; auto if one, confirm if many
 ---
 
 # ASL Express import pipeline — full plan
@@ -29,6 +35,8 @@ Canonical copy in repo: [`.cursor/plans/active/asl_express_import_pipeline.plan.
 ## Overview
 
 Three distinct pipelines sharing common infrastructure (name resolution, blob write helpers). They are **separate entry points in the UI** — do not collapse them into one generic “import” flow.
+
+**Pipeline 3** uses a **curriculum adapter** pattern: core orchestration depends only on `CurriculumAdapter`; each publisher or pedagogy (TRUE+WAY ASL first, Signing Naturally anticipated) lives in its own module. **Pipelines 1 and 2 are unchanged** by this split.
 
 ---
 
@@ -107,13 +115,86 @@ Read source flashcard settings JSON; **remap deck IDs by title match** where pos
 
 ---
 
-## Pipeline 3 — TRUE+WAY ASL course setup
+## Pipeline 3 — Curriculum setup (adapter-driven)
 
 ### Overview
 
-**Not** a settings migration. TWA assignments already exist from the publisher cartridge. Pipeline 3 **detects** them by name, scaffolds module structure, creates Canvas Pages, inserts LTI items, generates Production Test question banks, and writes Prompt Manager configs. This is a **course scaffolding** operation.
+**Not** a settings migration. Publisher (or structured) assignments already exist in the course. Pipeline 3 **selects a curriculum adapter**, which **detects** relevant assignments and modules, returns **module transformations**, **parses** assignment content, **builds** `PromptConfigJson`, and supplies **generation prompts** for Production-style flows. Core code **only** calls the `CurriculumAdapter` interface — **no** `if (curriculum === 'true-way-asl')` (or any curriculum id) in the orchestration layer.
 
-### Detection patterns
+The first full implementation is **TRUE+WAY ASL** (`TrueWayAslAdapter`). **Signing Naturally** is a **documented stub** until patterns and teacher workflows are defined.
+
+### Curriculum adapter interface
+
+Define in [`apps/api/src/prompt/curricula/index.ts`](apps/api/src/prompt/curricula/index.ts) (or `libs/…` if shared; keep **one canonical** export used by the API pipeline):
+
+```typescript
+interface CurriculumAdapter {
+  id: string;
+  displayName: string;
+
+  detectAssignments(assignments: Assignment[]): DetectedAssignment[];
+  detectModules(modules: Module[]): DetectedModule[];
+  parseAssignment(assignment: Assignment): ParsedAssignmentContent;
+  buildPromptConfig(type: AssignmentType, parsed: ParsedAssignmentContent): PromptConfigJson;
+  getModuleTransformations(
+    detected: DetectedAssignment[],
+    modules: DetectedModule[],
+  ): ModuleTransformation[];
+  buildGenerationPrompt(
+    sentences: string[],
+    unitVocabulary: string[],
+    priorVocabulary: string[],
+  ): string;
+}
+```
+
+Support types (`DetectedAssignment`, `DetectedModule`, `ParsedAssignmentContent`, `ModuleTransformation`, `AssignmentType`, thin Canvas `Assignment` / `Module` views) live alongside the interface or in `curricula/types.ts` as needed.
+
+### Adapter registry
+
+```typescript
+// curricula/index.ts
+import { TrueWayAslAdapter } from './true-way-asl';
+// SigningNaturallyAdapter anticipated but not yet implemented
+
+export const CURRICULUM_ADAPTERS: CurriculumAdapter[] = [
+  TrueWayAslAdapter,
+];
+```
+
+Core Pipeline 3: iterate `CURRICULUM_ADAPTERS` only for **discovery** where needed; **execute** using the **chosen** adapter instance returned from UI/API selection (see UI rules below).
+
+### TRUE+WAY ASL — `curricula/true-way-asl.ts`
+
+**Move** (when implementing) all TWA-specific logic into `TrueWayAslAdapter` implementing `CurriculumAdapter`:
+
+- Assignment and module **detection regexes**
+- **HTML parsing** for SOAR and Watch and Sign descriptions
+- **Module transformation** rules (Page inserts, LTI placement, description clear + redirect)
+- **Config templates** / `buildPromptConfig` mapping to `PromptConfigJson`
+- **`buildGenerationPrompt`** for Production Test Claude calls
+
+Behavior and outputs stay **identical** to the pre-adapter plan; this is a **refactor of location**, not a behavior change.
+
+### Signing Naturally — `curricula/signing-naturally.ts` (stub)
+
+Structured **stub**, not implemented:
+
+- **No publisher HTML as source of truth** — teacher-owned **sentence library** and **playlists** replace cartridge parsing. Document **`loadSentenceLibrary(unitNumber: number): string[]`** and **`loadPlaylist(unitNumber: number): PlaylistRef`** as the SN content sources.
+- **`buildPromptConfig`**, **`getModuleTransformations`**, and **`buildGenerationPrompt`** are intended to match **TWA behavior** once inputs exist.
+- **`parseAssignment`**: at implementation time, either compose library + playlist into a unified **`ParsedAssignmentContent`** for the core pipeline, or introduce a narrow extension type — **core must never branch on curriculum string**; only the adapter implementation differs.
+- **Module naming / detection regexes** for SN courses — **TODO** in stub comments until conventions are known.
+- **Copyright note:** teacher-authored sentences and teacher-owned video avoid publisher-HTML copyright issues; pedagogical structure is not copyrightable.
+
+Register `SigningNaturallyAdapter` in `CURRICULUM_ADAPTERS` only when it implements detection without false positives.
+
+---
+
+### TRUE+WAY ASL reference (lives in adapter implementation)
+
+The following tables are **specification for `TrueWayAslAdapter`** — not duplicated in core.
+
+#### Detection patterns
 
 **Assignment title regexes:**
 
@@ -133,7 +214,7 @@ Read source flashcard settings JSON; **remap deck IDs by title match** where pos
 
 Unit number extracted from each pattern provides cross-reference between assignments and modules.
 
-### HTML parsing — SOAR assignment
+#### HTML parsing — SOAR assignment
 
 From assignment description HTML:
 
@@ -145,7 +226,7 @@ From assignment description HTML:
 | Sentences (1–10)  | `<ol><li>` items               | strip HTML → plain text                     |
 | Boilerplate       | description + copyright footer | fingerprint to confirm assignment type    |
 
-### HTML parsing — Watch and Sign assignment
+#### HTML parsing — Watch and Sign assignment
 
 | Field              | Source                         | Method                   |
 | ------------------ | ------------------------------ | ------------------------ |
@@ -155,15 +236,15 @@ From assignment description HTML:
 | Instructions text  | `<p>` after Instructions       | strip HTML               |
 | Suggested signs    | `<ul><li>` items               | strip HTML               |
 
-### Module transformations per unit
+#### Module transformations per unit
 
-#### Unit intro module — `⭐ Unit X: [Topic]`
+##### Unit intro module — `⭐ Unit X: [Topic]`
 
 | Action | Item                                                         | Position                               |
 | ------ | ------------------------------------------------------------ | -------------------------------------- |
 | INSERT | Canvas Page — SOAR reference (Sprout + 10 sentences)         | Teacher-configurable; default = end of module |
 
-#### Unit review module — `⭐ Unit X Review`
+##### Unit review module — `⭐ Unit X Review`
 
 | Action | Item                                                         | Position                                      |
 | ------ | ------------------------------------------------------------ | --------------------------------------------- |
@@ -173,13 +254,13 @@ From assignment description HTML:
 | INSERT | LTI — SOAR                                                   | Immediately **above** TWA SOAR assignment      |
 | MODIFY | TWA SOAR assignment                                          | Clear description → redirect message          |
 
-**Destructive warning:** Clearing TWA assignment descriptions is **irreversible**. Teacher must confirm in an **approval modal** before Pipeline 3 runs any modification.
+**Destructive warning:** Clearing publisher assignment descriptions is **irreversible** for TWA flow. Teacher must confirm in an **approval modal** before Pipeline 3 runs any modification.
 
 **Idempotency:** Before inserting a module item, check whether an LTI item of the same type already exists **adjacent** to the target assignment; **skip** if present so re-run does not duplicate.
 
-### Prompt Manager config written per assignment
+#### Prompt Manager config written per assignment (TWA)
 
-#### SOAR config (conceptual)
+##### SOAR config (conceptual)
 
 - Text-style prompts: 10 sentences verbatim.
 - Warm-up: `warmupEnabled` (teacher toggle), `warmupDurationMinutes` (default 5, teacher-configurable).
@@ -188,13 +269,13 @@ From assignment description HTML:
 
 **Codebase alignment (implementation):** Today [`PromptConfigJson`](apps/api/src/prompt/dto/prompt-config.dto.ts) uses `promptMode` (`'text' | 'decks' | 'youtube'`), not `mode`. SOAR-specific fields (`warmupEnabled`, `sproutVideoId`, `submissionAssignmentId`, etc.) will need DTO + API + UI extensions unless mapped onto existing fields.
 
-#### Watch and Sign config (conceptual)
+##### Watch and Sign config (conceptual)
 
 - New **`promptMode`: `watch_and_sign`** (or equivalent) — see below.
 - Sprout reference ids/hashes; `recordingTimeLimitMinutes` (default 3, teacher-configurable).
 - `submissionAssignmentId`: TWA Watch and Sign assignment id.
 
-### New prompt mode: Watch and Sign
+#### New prompt mode: Watch and Sign
 
 Hybrid: neither pure static text nor YouTube stimulus mode.
 
@@ -207,7 +288,7 @@ Hybrid: neither pure static text nor YouTube stimulus mode.
 
 **In-class vs homework:** Either; default homework using existing recorder. Structured in-class (Watch → Plan → Record) **deferred** pending cohort feedback; architecture should allow a future flag.
 
-### Production Test — question bank generation
+#### Production Test — question bank generation
 
 **Generation**
 
@@ -238,6 +319,7 @@ Hybrid: neither pure static text nor YouTube stimulus mode.
 | `resolveAssignmentIdByName`   | Pipeline 2 remap + Pipeline 3 linking                              |
 | `writePromptManagerSettingsBlob` | All pipelines that persist PM blob + announcement               |
 | `writeFlashcardSettingsBlob`  | Flashcard orphan + cross-course                                     |
+| `CurriculumAdapter` + registry | Pipeline 3 only — discovery, parse, transform, config, generation prompt |
 
 Implement **`writePromptManagerSettingsBlob`** by factoring logic from [`putConfig`](apps/api/src/prompt/prompt.service.ts) (assignment description + [`findSettingsAnnouncementByTitle` / create / update](apps/api/src/canvas/canvas.service.ts)).
 
@@ -249,7 +331,17 @@ Implement **`writePromptManagerSettingsBlob`** by factoring logic from [`putConf
 
 1. **Restore orphaned settings** — “I reinstalled the LTI and lost my settings.”
 2. **Import from another course** — “Copy settings from a previous semester.”
-3. **Set up TRUE+WAY ASL** — “Cartridge imported; configure ASL Express for it.”
+3. **Set up Curriculum** — (formerly framed as TRUE+WAY-only) “Configure ASL Express for my imported curriculum.”
+
+**Curriculum flow (Pipeline 3) behavior:**
+
+- Label the entry **“Set Up Curriculum”**, not “Set Up TRUE+WAY ASL.”
+- Load course assignments (and modules as needed), then evaluate **`CURRICULUM_ADAPTERS`**: keep adapters whose **`detectAssignments()`** returns at least one match in the current course (and optionally gate on `detectModules()` if the adapter requires module context).
+- **Exactly one** adapter with matches → proceed with that adapter automatically (still show low-friction confirmation if the flow is destructive).
+- **Multiple** adapters with matches → **teacher must pick** which curriculum applies before orchestration runs.
+- **Zero** matches → explain no supported curriculum was detected; do not show a false curriculum choice.
+
+Adding **Signing Naturally** later is **register the adapter** (+ implement detection); **no UI string or layout change** required beyond what the registry already drives.
 
 Each flow gets its own confirmation / risk UX (Pipeline 3 highest friction for destructive steps).
 
@@ -259,7 +351,7 @@ Each flow gets its own confirmation / risk UX (Pipeline 3 highest friction for d
 
 - Endpoints: **teacher** context + valid Canvas token only.
 - Cross-course: verify token can read **source** course before returning blob.
-- Destructive ops (clear TWA descriptions): **explicit** confirmation.
+- Destructive ops (e.g. clear publisher assignment descriptions in TWA adapter flow): **explicit** confirmation.
 - `appendLtiLog`: course IDs, counts, remap stats — **do not** log full prompt bodies.
 - Rate-limit or confirm destructive **`replace_selected`**.
 - After any import: **stale config key** detection for `configs` keys with no matching assignment in course.
@@ -279,5 +371,7 @@ Each flow gets its own confirmation / risk UX (Pipeline 3 highest friction for d
 2. Pipeline 1 (simplest; validates write path + stale warnings).
 3. Pipeline 2 + UI for conflicts/unmatched.
 4. **`watch_and_sign`** mode + config/DTO + Timer/recorder behavior.
-5. Pipeline 3 detection + HTML parsers + module/LTI/Page mutations (behind strong confirmations).
-6. Production bank generation + approval UI + persistence verification.
+5. **`CurriculumAdapter` interface + types + `CURRICULUM_ADAPTERS` registry**; implement **`TrueWayAslAdapter`** by **moving** existing TWA logic from any core/orchestration file into `curricula/true-way-asl.ts` without behavior change; add **`signing-naturally.ts` stub**.
+6. Pipeline 3 **orchestration** (adapter-only calls) + module/LTI/Page mutations (behind strong confirmations).
+7. Production bank generation + approval UI + persistence verification (invokes active adapter’s **`buildGenerationPrompt`**).
+8. **Set up Curriculum** UI wiring (adapter discovery rules above).
