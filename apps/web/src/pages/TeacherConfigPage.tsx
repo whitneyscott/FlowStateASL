@@ -1306,13 +1306,22 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       await loadAssignments();
       setImportInfo(JSON.stringify(res, null, 2));
       setImportModalOpen(false);
+      setAssignmentActionMode('edit');
+      setShowSettings(true);
+      setConfigAssignValue(tid);
+      setSearchParams((prev) => {
+        const p = new URLSearchParams(prev);
+        p.delete('create');
+        p.set('assignmentId', tid);
+        return p;
+      });
     } catch (e) {
       setImportModalMessage(e instanceof Error ? e.message : String(e));
       if (e instanceof promptApi.NeedsManualTokenError) setShowManualTokenModal(true);
     } finally {
       setImportModalBusy(false);
     }
-  }, [teacher, hasLti, importSourceAssignmentId, importTargetAssignmentId, importModuleId, loadAssignments]);
+  }, [teacher, hasLti, importSourceAssignmentId, importTargetAssignmentId, importModuleId, loadAssignments, setSearchParams]);
 
   if (!teacher || !context) {
     return (
@@ -2303,8 +2312,10 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                 {importPartition && (
                   <p className="prompter-hint">
                     Source blob has {importPartition.sourceConfigCount} assignment key
-                    {importPartition.sourceConfigCount === 1 ? '' : 's'}. Other assignments match by stored assignment
-                    name when the Canvas id differs.
+                    {importPartition.sourceConfigCount === 1 ? '' : 's'}. If the target is not in the source blob, the
+                    API keeps existing Prompt Manager settings when present, or creates defaults (same as a new
+                    assignment) and opens Edit for you. Preview shows the strategy (from_source / kept_existing /
+                    created_defaults).
                   </p>
                 )}
                 <label className="prompter-settings-label">Module (required — places assignment + Prompter LTI link)</label>

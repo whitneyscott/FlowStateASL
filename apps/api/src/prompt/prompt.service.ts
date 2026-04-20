@@ -3626,6 +3626,37 @@ export class PromptService {
     );
   }
 
+  /** Defaults for a Canvas assignment that should appear in Prompt Manager but has no blob entry yet. */
+  private async buildDefaultPromptConfigForCanvasAssignment(
+    courseId: string,
+    assignmentId: string,
+    canvasAssignmentName: string,
+    moduleIdTrim: string,
+    domainOverride: string | undefined,
+    token: string,
+  ): Promise<PromptConfigJson> {
+    let name = canvasAssignmentName.trim() || 'ASL Express Assignment';
+    let assignmentGroupId: string | undefined;
+    try {
+      const assign = await this.canvas.getAssignment(courseId, assignmentId, domainOverride, token);
+      if (assign?.name && String(assign.name).trim()) name = String(assign.name).trim();
+      if (assign?.assignment_group_id != null) {
+        assignmentGroupId = String(assign.assignment_group_id);
+      }
+    } catch {
+      /* keep name / omit group */
+    }
+    return {
+      minutes: 5,
+      prompts: [],
+      accessCode: '',
+      assignmentName: name,
+      ...(assignmentGroupId ? { assignmentGroupId } : {}),
+      moduleId: moduleIdTrim,
+      promptMode: 'text',
+    };
+  }
+
   /** Teacher only. Creates a Canvas assignment (file + text submission types) and adds entry to configs map.
    * Pass assignmentGroupId (or create via newGroupName) to place in correct group (matches PHP). */
   async createPromptManagerAssignment(
@@ -4101,12 +4132,19 @@ export class PromptService {
   ): Promise<
     | {
         dryRun: true;
-        sourceKey: string;
+        sourceKey: string | null;
         targetAssignmentId: string;
         assignmentName: string;
         requiresModuleId: true;
+        strategy: 'from_source' | 'kept_existing' | 'created_defaults';
       }
-    | { imported: true; sourceKey: string; targetAssignmentId: string; moduleId: string }
+    | {
+        imported: true;
+        sourceKey: string | null;
+        targetAssignmentId: string;
+        moduleId: string;
+        strategy: 'from_source' | 'kept_existing' | 'created_defaults';
+      }
   > {
     const sourceAid = (dto.sourceSettingsAssignmentId ?? '').trim();
     const targetAid = (dto.targetAssignmentId ?? '').trim();
@@ -4127,33 +4165,37 @@ export class PromptService {
     );
     const { blob: sourceBlob } = repairPromptManagerSettingsBlobFromUnknown(rawSource ?? {});
     const sourceConfigs = sourceBlob.configs ?? {};
-    if (Object.keys(sourceConfigs).length === 0) {
-      throw new BadRequestException(
-        'No configs found in the source assignment description. Choose an assignment that stores exported Prompt Manager JSON.',
-      );
-    }
     const targetList = await this.canvas.listAssignmentsBrief(ctx.courseId, domainOverride, token);
     const targetRow = targetList.find((a) => a.id === targetAid);
     if (!targetRow) {
       throw new BadRequestException('Target assignment not found in this course');
     }
+    const targetBlob = await readPromptManagerSettingsBlobFromCanvas(this.canvas, ctx.courseId, domainOverride, token);
+    const priorTarget = targetBlob?.configs?.[targetAid];
+    const priorExists =
+      priorTarget !== undefined &&
+      priorTarget !== null &&
+      typeof priorTarget === 'object' &&
+      !Array.isArray(priorTarget) &&
+      Object.keys(priorTarget as object).length > 0;
+
     const sourceKey = this.findSourceConfigKeyForTargetAssignment(sourceConfigs, targetAid, targetRow.name);
-    if (!sourceKey) {
-      throw new BadRequestException(
-        'No matching entry in the source settings for this assignment. Try a wholesale import, or ensure stored assignment names match the Canvas assignment title.',
-      );
-    }
-    const base = sourceConfigs[sourceKey];
-    if (!base) {
-      throw new BadRequestException('Source configuration is missing');
-    }
+    const base = sourceKey ? sourceConfigs[sourceKey] : undefined;
+    const resolveStrategy = (): 'from_source' | 'kept_existing' | 'created_defaults' => {
+      if (sourceKey && base) return 'from_source';
+      if (priorExists) return 'kept_existing';
+      return 'created_defaults';
+    };
+    const strategy = resolveStrategy();
+
     if (dto.dryRun) {
       return {
         dryRun: true,
-        sourceKey,
+        sourceKey: sourceKey ?? null,
         targetAssignmentId: targetAid,
         assignmentName: targetRow.name,
         requiresModuleId: true,
+        strategy,
       };
     }
     const moduleIdTrim = (dto.moduleId ?? '').trim();
@@ -4162,9 +4204,22 @@ export class PromptService {
         'moduleId is required: choose a Canvas module so the assignment can be placed and the Prompter LTI link added above it.',
       );
     }
-    const targetBlob = await readPromptManagerSettingsBlobFromCanvas(this.canvas, ctx.courseId, domainOverride, token);
     const existingConfigs = { ...(targetBlob?.configs ?? {}) };
-    const merged = this.clearCrossCoursePromptFields({ ...base });
+    let merged: PromptConfigJson;
+    if (sourceKey && base) {
+      merged = this.clearCrossCoursePromptFields({ ...base });
+    } else if (priorExists) {
+      merged = { ...(priorTarget as PromptConfigJson) };
+    } else {
+      merged = await this.buildDefaultPromptConfigForCanvasAssignment(
+        ctx.courseId,
+        targetAid,
+        targetRow.name,
+        moduleIdTrim,
+        domainOverride,
+        token,
+      );
+    }
     merged.moduleId = moduleIdTrim;
     existingConfigs[targetAid] = merged;
     const outBlob: PromptManagerSettingsBlob = {
@@ -4190,11 +4245,18 @@ export class PromptService {
     });
     appendLtiLog('prompt-import', 'importSinglePromptAssignmentFromSourceAssignment', {
       courseId: ctx.courseId,
-      sourceKey,
+      sourceKey: sourceKey ?? null,
       targetAssignmentId: targetAid,
       moduleId: moduleIdTrim,
+      strategy,
     });
-    return { imported: true, sourceKey, targetAssignmentId: targetAid, moduleId: moduleIdTrim };
+    return {
+      imported: true,
+      sourceKey: sourceKey ?? null,
+      targetAssignmentId: targetAid,
+      moduleId: moduleIdTrim,
+      strategy,
+    };
   }
 
   /** Teacher: scan for TRUE+WAY-style assignment titles and merge default Prompt Manager fields. */
