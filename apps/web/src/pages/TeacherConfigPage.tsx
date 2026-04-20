@@ -13,6 +13,7 @@ import { normalizeYoutubeInputToVideoIdClient } from '../utils/youtube-video-id'
 import { YoutubeStimulusShell } from '../components/YoutubeStimulusShell';
 import { YoutubeIframePlayer, type YoutubeIframePlayerHandle } from '../components/YoutubeIframePlayer';
 import { YoutubeClipRangeEditor } from '../components/YoutubeClipRangeEditor';
+import { TeacherPromptRte } from '../components/TeacherPromptRte';
 import '../components/TeacherSettings.css';
 import './PrompterPage.css';
 
@@ -1771,8 +1772,16 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                       </div>
                       <div className="prompter-settings-field">
                         <label className="prompter-settings-label">Instructions (optional):</label>
-                        <p className="prompter-hint">Displayed in the assignment description and on the first screen students see.</p>
-                        <textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={4} placeholder="Instructions for students..." className="prompter-settings-input" />
+                        <p className="prompter-hint">
+                          Rich text, stored as HTML. Displayed in the Canvas assignment description and on the first
+                          screen students see.
+                        </p>
+                        <TeacherPromptRte
+                          className="prompter-instructions-rte"
+                          value={instructions}
+                          onChange={setInstructions}
+                          placeholder="Instructions for students…"
+                        />
                       </div>
                       {rubricSelector}
                     </div>
@@ -1829,14 +1838,16 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                             + Add to Pool
                           </button>
                         </div>
+                        <p className="prompter-hint">
+                          Each prompt is rich text (saved as HTML). Students see it formatted during warm-up and
+                          recording.
+                        </p>
                         {prompts.map((p, i) => (
                           <div key={i} className="prompter-prompt-item-row">
-                            <textarea
+                            <TeacherPromptRte
                               value={p}
-                              onChange={(e) => updatePrompt(i, e.target.value)}
-                              rows={2}
-                              className="prompter-settings-input"
-                              placeholder="Prompt text..."
+                              onChange={(html) => updatePrompt(i, html)}
+                              placeholder="Prompt text…"
                             />
                             <button type="button" onClick={() => removePrompt(i)} className="prompter-btn-remove">
                               Remove

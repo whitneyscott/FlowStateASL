@@ -11,6 +11,7 @@ import { appendBridgeLog } from '../utils/bridge-log';
 import { nextDeckIndexAfterAdvance } from '../utils/deck-advance';
 import { YoutubeStimulusShell } from '../components/YoutubeStimulusShell';
 import { YoutubeIframePlayer } from '../components/YoutubeIframePlayer';
+import { TeacherAuthoredHtmlBlock } from '../components/TeacherAuthoredHtmlBlock';
 import './PrompterPage.css';
 
 const TEACHER_ROLE_PATTERNS = [
@@ -1229,13 +1230,17 @@ export default function TimerPage({ context }: TimerPageProps) {
   if (phase === 'warmup') {
     const m = Math.floor(secondsLeft / 60);
     const s = secondsLeft % 60;
-    const display = displayPrompts[promptIndex] ?? (displayPrompts[0] ?? 'Warm up. When the timer ends, you will record.');
+    const display =
+      displayPrompts[promptIndex] ??
+      (displayPrompts[0] ?? 'Warm up. When the timer ends, you will record.');
     return (
       <>
         {blockingOverlay}
         <div className="prompter-page">
           <div className="prompter-card">
-            <div className="prompter-prompt-column prompter-prompt-column-center">{display}</div>
+            <div className="prompter-prompt-column prompter-prompt-column-center">
+              <TeacherAuthoredHtmlBlock html={display} className="prompter-prompt-html" />
+            </div>
             <div className="prompter-timer-display">{m}:{s < 10 ? '0' : ''}{s}</div>
             <button type="button" onClick={() => setPhase('preflight')} className="prompter-btn-ready">Ready Early</button>
           </div>
@@ -1339,16 +1344,27 @@ export default function TimerPage({ context }: TimerPageProps) {
         : 0;
     const youtubeClipEndSafe =
       youtubeVidForConcurrent && ycRec && youtubeClipEnd > youtubeClipStart ? youtubeClipEnd : youtubeClipStart + 1;
-    const recordPromptText =
-      deckMode
-        ? currentPromptText
-        : studentYoutubeFlow
-          ? config?.youtubePromptConfig?.label?.trim() ||
-            (config?.instructions?.trim()
-              ? `${config.instructions.trim().slice(0, 500)}${config.instructions.trim().length > 500 ? '…' : ''}`
-              : '') ||
-            'Respond while the clip plays (interpret or voice along). If the video stays paused, press play — your camera is already recording.'
-          : currentPromptText;
+    const instructionsTrim = (config?.instructions ?? '').trim();
+    const ycLabelForPrompt = (ycRec?.label ?? '').trim();
+    const defaultYoutubeInstruction =
+      'Respond while the clip plays (interpret or voice along). If the video stays paused, press play — your camera is already recording.';
+    const youtubeInstructionBlock =
+      ycLabelForPrompt ? (
+        <div>{ycLabelForPrompt}</div>
+      ) : instructionsTrim ? (
+        <TeacherAuthoredHtmlBlock html={instructionsTrim} className="prompter-prompt-html" />
+      ) : (
+        <div>{defaultYoutubeInstruction}</div>
+      );
+    const recordSidePromptEl = deckMode ? (
+      <div key={promptIndex} className="prompter-deck-prompt-display">
+        <TeacherAuthoredHtmlBlock html={currentPromptText} className="prompter-prompt-html" />
+      </div>
+    ) : studentYoutubeFlow ? (
+      youtubeInstructionBlock
+    ) : (
+      <TeacherAuthoredHtmlBlock html={currentPromptText} className="prompter-prompt-html" />
+    );
     const youtubeConcurrentSplit =
       Boolean(studentYoutubeFlow && !deckMode && youtubeVidForConcurrent && ycRec && !youtubeStimulusError);
     return (
@@ -1370,9 +1386,7 @@ export default function TimerPage({ context }: TimerPageProps) {
             </p>
           )}
           {youtubeConcurrentSplit && ycRec && (
-            <div className="prompter-youtube-record-prompt-banner">
-              <div>{recordPromptText}</div>
-            </div>
+            <div className="prompter-youtube-record-prompt-banner">{youtubeInstructionBlock}</div>
           )}
           {youtubeVidForConcurrent && ycRec && youtubeStimulusError && (
             <>
@@ -1447,13 +1461,11 @@ export default function TimerPage({ context }: TimerPageProps) {
             <div className="prompter-record-layout">
               {deckMode ? (
                 <div className="prompter-deck-prompt-shell prompter-deck-prompt-shell--record">
-                  <div key={promptIndex} className="prompter-deck-prompt-display">
-                    {currentPromptText}
-                  </div>
+                  {recordSidePromptEl}
                 </div>
               ) : (
                 <div className="prompter-prompt-column" style={{ flex: '1 1 300px', maxWidth: 480 }}>
-                  <div>{recordPromptText}</div>
+                  {recordSidePromptEl}
                 </div>
               )}
               <div className="prompter-record-video-col">

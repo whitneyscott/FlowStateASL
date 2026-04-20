@@ -55,6 +55,7 @@ import type { Response } from 'express';
 import {
   type PromptManagerSettingsBlob,
   PROMPT_MANAGER_SETTINGS_ASSIGNMENT_TITLE,
+  extractPromptManagerSettingsBlobFromCanvasContent,
   readPromptManagerSettingsBlobFromCanvas,
   readPromptManagerSettingsBlobFromCanvasAssignmentDescription,
   writePromptManagerSettingsBlobToCanvas,
@@ -3789,6 +3790,17 @@ export class PromptService {
     return n;
   }
 
+  /**
+   * When importing into Prompt Manager, prefer the Canvas assignment's student-facing description as
+   * `instructions` — unless the description is (or embeds) Prompt Manager JSON blob data.
+   */
+  private canvasDescriptionForInstructionsImport(description: string | null | undefined): string | undefined {
+    const t = (description ?? '').trim();
+    if (!t) return undefined;
+    if (extractPromptManagerSettingsBlobFromCanvasContent(t)) return undefined;
+    return t;
+  }
+
   /** Teacher: full Prompt Manager settings blob for backup / cross-course import. */
   async exportPromptManagerSettingsBlob(ctx: LtiContext): Promise<PromptManagerSettingsBlob> {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
@@ -3987,6 +3999,24 @@ export class PromptService {
     } else {
       mergedConfigs = { ...existingConfigs, ...remappedConfigs };
     }
+
+    const importedAssignmentIds = Object.keys(remappedConfigs).filter((id) => targetIds.has(id));
+    await Promise.all(
+      importedAssignmentIds.map(async (aid) => {
+        try {
+          const assign = await this.canvas.getAssignment(ctx.courseId, aid, domainOverride, token);
+          const fromCanvas = this.canvasDescriptionForInstructionsImport(assign?.description);
+          if (fromCanvas !== undefined && mergedConfigs[aid]) {
+            mergedConfigs[aid] = { ...mergedConfigs[aid], instructions: fromCanvas };
+          }
+        } catch (e) {
+          appendLtiLog('prompt-import', 'importPromptManagerSettingsBlob: instructions from Canvas description skipped', {
+            assignmentId: aid,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }),
+    );
 
     const outBlob: PromptManagerSettingsBlob = {
       ...targetBlob,
@@ -4256,7 +4286,20 @@ export class PromptService {
       );
     }
     merged.moduleId = moduleIdTrim;
+    try {
+      const targetAssign = await this.canvas.getAssignment(ctx.courseId, targetAid, domainOverride, token);
+      const fromCanvas = this.canvasDescriptionForInstructionsImport(targetAssign?.description);
+      if (fromCanvas !== undefined) {
+        merged = { ...merged, instructions: fromCanvas };
+      }
+    } catch (e) {
+      appendLtiLog('prompt-import', 'importSinglePromptAssignmentFromSourceAssignment: instructions from Canvas description skipped', {
+        targetAssignmentId: targetAid,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
     existingConfigs[targetAid] = merged;
+
     const outBlob: PromptManagerSettingsBlob = {
       ...(targetBlob ?? {}),
       v: 1,

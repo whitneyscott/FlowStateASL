@@ -438,6 +438,46 @@
   resize: vertical;
 }
 
+/* react-quill (teacher text prompts + instructions) */
+.prompter-prompt-rte-wrap {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+}
+
+.prompter-prompt-rte-wrap .ql-toolbar {
+  border-radius: 6px 6px 0 0;
+  border-color: #ccc;
+  background: #fafafa;
+}
+
+.prompter-prompt-rte-wrap .ql-container {
+  border-radius: 0 0 6px 6px;
+  border-color: #ccc;
+  font-size: 15px;
+}
+
+.prompter-prompt-rte-wrap .ql-editor {
+  min-height: 4.5rem;
+}
+
+.prompter-instructions-rte .ql-editor {
+  min-height: 8rem;
+}
+
+.prompter-prompt-html {
+  width: 100%;
+  text-align: left;
+}
+
+.prompter-prompt-html p:first-child {
+  margin-top: 0;
+}
+
+.prompter-prompt-html p:last-child {
+  margin-bottom: 0;
+}
+
 .prompter-btn-remove {
   background: #dc3545;
   color: white;
