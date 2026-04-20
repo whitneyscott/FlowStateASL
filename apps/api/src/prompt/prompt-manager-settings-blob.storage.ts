@@ -1,6 +1,7 @@
 import { appendLtiLog } from '../common/last-error.store';
 import type { CanvasService } from '../canvas/canvas.service';
 import type { PromptConfigJson } from './dto/prompt-config.dto';
+import { repairPromptManagerSettingsBlobFromUnknown } from './prompt-settings-blob-repair.util';
 
 export interface PromptManagerSettingsBlob {
   v?: number;
@@ -16,19 +17,26 @@ export const PROMPT_MANAGER_SETTINGS_ANNOUNCEMENT_TITLE = 'ASL Express Prompt Ma
 export function extractPromptManagerSettingsBlobFromCanvasContent(raw: string): PromptManagerSettingsBlob | null {
   const trimmed = raw?.trim();
   if (!trimmed) return null;
-  try {
-    const parsed = JSON.parse(trimmed) as PromptManagerSettingsBlob;
-    if (parsed && typeof parsed === 'object') return parsed;
-  } catch {
-    const jsonMatch = trimmed.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      try {
-        const parsed = JSON.parse(jsonMatch[0]) as PromptManagerSettingsBlob;
-        if (parsed && typeof parsed === 'object') return parsed;
-      } catch {
-        /* ignore */
+  const tryParse = (json: string): PromptManagerSettingsBlob | null => {
+    try {
+      const parsed = JSON.parse(json) as unknown;
+      const { blob, notes } = repairPromptManagerSettingsBlobFromUnknown(parsed);
+      if (notes.length > 0) {
+        appendLtiLog('prompt-import', 'extractPromptManagerSettingsBlob: repaired shape', {
+          noteCount: notes.length,
+          notes: notes.slice(0, 8),
+        });
       }
+      return blob;
+    } catch {
+      return null;
     }
+  };
+  const direct = tryParse(trimmed);
+  if (direct) return direct;
+  const jsonMatch = trimmed.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    return tryParse(jsonMatch[0]);
   }
   return null;
 }

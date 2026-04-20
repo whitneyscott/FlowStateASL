@@ -626,6 +626,7 @@ export async function getAssignmentImportOptions(sourceSettingsAssignmentId: str
 export async function importSinglePromptAssignment(body: {
   sourceSettingsAssignmentId: string;
   targetAssignmentId: string;
+  moduleId?: string;
   dryRun?: boolean;
 }): Promise<Record<string, unknown>> {
   return fetchJsonWithOAuthRedirect(`${base}/settings-blob/import-one-assignment`, {

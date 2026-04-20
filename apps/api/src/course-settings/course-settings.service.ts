@@ -19,6 +19,7 @@ import { CourseSettingsEntity } from './entities/course-settings.entity';
 import { getSproutAccountId } from '../common/utils/sprout-account-id.util';
 import {
   readFlashcardSettingsBlobFromCanvas,
+  repairFlashcardSettingsBlobFromUnknown,
   writeFlashcardSettingsBlobToCanvas,
   type FlashcardSettingsBlob,
 } from './flashcard-settings-blob.storage';
@@ -889,19 +890,9 @@ export class CourseSettingsService {
       if (!b) {
         throw new BadRequestException('No Flashcard settings found in source course');
       }
-      source = {
-        v: 1,
-        selectedCurriculums: [...(b.selectedCurriculums ?? [])],
-        selectedUnits: [...(b.selectedUnits ?? [])],
-        updatedAt: new Date().toISOString(),
-      };
+      source = repairFlashcardSettingsBlobFromUnknown(b);
     } else if (dto.blob) {
-      source = {
-        v: 1,
-        selectedCurriculums: dto.blob.selectedCurriculums ?? [],
-        selectedUnits: dto.blob.selectedUnits ?? [],
-        updatedAt: new Date().toISOString(),
-      };
+      source = repairFlashcardSettingsBlobFromUnknown(dto.blob as unknown);
     } else {
       throw new BadRequestException('Provide blob or sourceCourseId');
     }

@@ -112,6 +112,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const [importTargetAssignmentId, setImportTargetAssignmentId] = useState('');
   const [importModalBusy, setImportModalBusy] = useState(false);
   const [importModalMessage, setImportModalMessage] = useState<string | null>(null);
+  const [importModuleId, setImportModuleId] = useState('');
 
   // Deck mode state
   const [promptMode, setPromptMode] = useState<'text' | 'decks' | 'youtube'>('text');
@@ -1168,7 +1169,11 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setImportModalBusy(true);
     setImportPartition(null);
     setImportTargetAssignmentId('');
+    setImportModuleId('');
     try {
+      if (!modules.length) {
+        void loadModules();
+      }
       const brief = await promptApi.getCanvasAssignmentsForImport();
       setImportCanvasBrief(brief);
       const first = brief.settingsTitleCandidates[0]?.id ?? '';
@@ -1181,11 +1186,12 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     } finally {
       setImportModalBusy(false);
     }
-  }, [teacher, hasLti]);
+  }, [teacher, hasLti, modules.length, loadModules]);
 
   const closeImportModal = useCallback(() => {
     setImportModalOpen(false);
     setImportModalMessage(null);
+    setImportModuleId('');
   }, []);
 
   const handleImportModalWholesalePreview = useCallback(async () => {
@@ -1228,12 +1234,13 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setImportModalBusy(true);
     setImportModalMessage(null);
     try {
-      await promptApi.importPromptManagerSettingsBlob({
+      const res = await promptApi.importPromptManagerSettingsBlob({
         mode: 'merge',
         sourceAssignmentId: sid,
         dryRun: false,
       });
       await loadAssignments();
+      setImportInfo(JSON.stringify(res, null, 2));
       setImportModalOpen(false);
     } catch (e) {
       if (e instanceof promptApi.ImportPromptConflictError) {
@@ -1278,19 +1285,26 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     if (!teacher || !hasLti) return;
     const sid = importSourceAssignmentId.trim();
     const tid = importTargetAssignmentId.trim();
+    const mid = importModuleId.trim();
     if (!sid || !tid) {
       setImportModalMessage('Select both source settings assignment and target assignment.');
+      return;
+    }
+    if (!mid) {
+      setImportModalMessage('Select a Canvas module so the Prompter tool can be added above the assignment.');
       return;
     }
     setImportModalBusy(true);
     setImportModalMessage(null);
     try {
-      await promptApi.importSinglePromptAssignment({
+      const res = await promptApi.importSinglePromptAssignment({
         sourceSettingsAssignmentId: sid,
         targetAssignmentId: tid,
+        moduleId: mid,
         dryRun: false,
       });
       await loadAssignments();
+      setImportInfo(JSON.stringify(res, null, 2));
       setImportModalOpen(false);
     } catch (e) {
       setImportModalMessage(e instanceof Error ? e.message : String(e));
@@ -1298,7 +1312,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     } finally {
       setImportModalBusy(false);
     }
-  }, [teacher, hasLti, importSourceAssignmentId, importTargetAssignmentId, loadAssignments]);
+  }, [teacher, hasLti, importSourceAssignmentId, importTargetAssignmentId, importModuleId, loadAssignments]);
 
   if (!teacher || !context) {
     return (
@@ -2200,7 +2214,10 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
               <button
                 type="button"
                 className={importModalTab === 'single' ? 'prompter-btn-ready' : 'prompter-btn-secondary'}
-                onClick={() => setImportModalTab('single')}
+                onClick={() => {
+                  setImportModalTab('single');
+                  setImportModuleId((m) => (m.trim() ? m : moduleId.trim()));
+                }}
                 disabled={importModalBusy}
               >
                 Single assignment
@@ -2234,6 +2251,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
               <>
                 <p className="prompter-hint">
                   Preview shows remap conflicts. Merge writes into this course's Prompt Manager Settings assignment.
+                  When the source is another assignment (not the canonical Prompt Manager Settings row), it is deleted
+                  from Canvas after a successful merge if the API allows removal.
                 </p>
                 <div className="prompter-settings-actions-row">
                   <button
@@ -2288,6 +2307,23 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                     name when the Canvas id differs.
                   </p>
                 )}
+                <label className="prompter-settings-label">Module (required — places assignment + Prompter LTI link)</label>
+                <select
+                  className="prompter-settings-input"
+                  value={importModuleId}
+                  onChange={(e) => setImportModuleId(e.target.value)}
+                  disabled={importModalBusy}
+                >
+                  <option value="">— Select module —</option>
+                  {modules.map((m) => (
+                    <option key={m.id} value={String(m.id)}>
+                      {m.name}
+                    </option>
+                  ))}
+                </select>
+                {!modules.length && (
+                  <p className="prompter-hint">Loading modules… If none appear, refresh the page after saving once.</p>
+                )}
                 <div className="prompter-settings-actions-row">
                   <button
                     type="button"
@@ -2300,7 +2336,12 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                   <button
                     type="button"
                     className="prompter-btn-ready"
-                    disabled={importModalBusy || !importSourceAssignmentId.trim() || !importTargetAssignmentId.trim()}
+                    disabled={
+                      importModalBusy ||
+                      !importSourceAssignmentId.trim() ||
+                      !importTargetAssignmentId.trim() ||
+                      !importModuleId.trim()
+                    }
                     onClick={() => void handleImportModalSingleMerge()}
                   >
                     {importModalBusy ? '…' : 'Import this assignment'}

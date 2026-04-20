@@ -10,24 +10,62 @@ export interface FlashcardSettingsBlob {
   updatedAt?: string;
 }
 
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return v != null && typeof v === 'object' && !Array.isArray(v);
+}
+
+/** Coerce arbitrary JSON into a valid flashcard settings shape (never throws). */
+export function repairFlashcardSettingsBlobFromUnknown(input: unknown): FlashcardSettingsBlob {
+  const now = new Date().toISOString();
+  let raw: unknown = input;
+  if (typeof raw === 'string') {
+    try {
+      raw = JSON.parse(raw) as unknown;
+    } catch {
+      return { v: 1, selectedCurriculums: [], selectedUnits: [], updatedAt: now };
+    }
+  }
+  if (!isPlainObject(raw)) {
+    return { v: 1, selectedCurriculums: [], selectedUnits: [], updatedAt: now };
+  }
+  const o = raw;
+  const toStrArray = (v: unknown): string[] => {
+    if (Array.isArray(v)) return v.map((x) => String(x ?? '').trim()).filter(Boolean);
+    if (typeof v === 'string' && v.trim()) return [v.trim()];
+    return [];
+  };
+  let curricula = toStrArray(o.selectedCurriculums);
+  let units = toStrArray(o.selectedUnits);
+  if (!curricula.length && !units.length) {
+    const legacy = o.selection;
+    if (Array.isArray(legacy)) {
+      curricula = legacy.map((x) => String(x ?? '').trim()).filter(Boolean);
+    }
+  }
+  const vNum = Number(o.v);
+  return {
+    v: Number.isFinite(vNum) && vNum >= 1 ? Math.floor(vNum) : 1,
+    selectedCurriculums: curricula,
+    selectedUnits: units,
+    updatedAt: typeof o.updatedAt === 'string' && o.updatedAt.trim() ? o.updatedAt.trim() : now,
+  };
+}
+
 function extractFlashcardSettingsFromCanvasContent(raw: string): FlashcardSettingsBlob | null {
   const trimmed = raw?.trim();
   if (!trimmed) return null;
-  try {
-    const parsed = JSON.parse(trimmed) as FlashcardSettingsBlob;
-    if (parsed && typeof parsed === 'object') return parsed;
-  } catch {
-    const jsonMatch = trimmed.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      try {
-        const parsed = JSON.parse(jsonMatch[0]) as FlashcardSettingsBlob;
-        if (parsed && typeof parsed === 'object') return parsed;
-      } catch {
-        /* ignore */
-      }
+  const tryOne = (s: string): FlashcardSettingsBlob | null => {
+    try {
+      const parsed = JSON.parse(s) as unknown;
+      return repairFlashcardSettingsBlobFromUnknown(parsed);
+    } catch {
+      return null;
     }
-  }
-  return null;
+  };
+  return tryOne(trimmed) ?? (() => {
+    const jsonMatch = trimmed.match(/\{[\s\S]*\}/);
+    return jsonMatch ? tryOne(jsonMatch[0]) : null;
+  })();
 }
 
 async function ensureFlashcardSettingsAssignmentId(
@@ -101,25 +139,15 @@ export async function readFlashcardSettingsBlobFromCanvas(
     const assignment = await canvas.getAssignment(courseId, settingsAssignmentId, domainOverride, token);
     const raw = assignment?.description?.trim() ?? '';
     const blob = extractFlashcardSettingsFromCanvasContent(raw);
-    if (blob && Array.isArray(blob.selectedCurriculums) && Array.isArray(blob.selectedUnits)) {
-      return {
-        v: blob.v ?? 1,
-        selectedCurriculums: blob.selectedCurriculums,
-        selectedUnits: blob.selectedUnits,
-        updatedAt: blob.updatedAt,
-      };
+    if (blob) {
+      return blob;
     }
   }
   const ann = await canvas.findFlashcardSettingsAnnouncement(courseId, token, domainOverride);
   if (ann?.message?.trim()) {
     const parsed = extractFlashcardSettingsFromCanvasContent(ann.message);
-    if (parsed && Array.isArray(parsed.selectedCurriculums) && Array.isArray(parsed.selectedUnits)) {
-      return {
-        v: parsed.v ?? 1,
-        selectedCurriculums: parsed.selectedCurriculums,
-        selectedUnits: parsed.selectedUnits,
-        updatedAt: parsed.updatedAt,
-      };
+    if (parsed) {
+      return parsed;
     }
   }
   return null;
