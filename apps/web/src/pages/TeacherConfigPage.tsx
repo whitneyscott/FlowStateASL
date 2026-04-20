@@ -1176,13 +1176,14 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         dryRun: false,
       });
       await loadAssignments();
+      if (assignmentId) {
+        await load(assignmentId);
+      }
       setImportInfo(JSON.stringify(res, null, 2));
       setImportModalOpen(false);
     } catch (e) {
       if (e instanceof promptApi.ImportPromptConflictError) {
-        setImportModalMessage(
-          `Conflicts — resolve in Advanced import (id map) or adjust assignments.\n${JSON.stringify(e.payload, null, 2)}`,
-        );
+        setImportModalMessage('Some assignments could not be matched. Make sure assignment names match in both courses and try again.');
       } else {
         setImportModalMessage(e instanceof Error ? e.message : String(e));
       }
@@ -1190,7 +1191,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     } finally {
       setImportModalBusy(false);
     }
-  }, [teacher, hasLti, importSourceAssignmentId, loadAssignments]);
+  }, [teacher, hasLti, importSourceAssignmentId, loadAssignments, assignmentId, load]);
 
   const handleImportModalSingleMerge = useCallback(async () => {
     if (!teacher || !hasLti) return;
@@ -1218,6 +1219,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         dryRun: false,
       });
       await loadAssignments();
+      await load(tid);
       setImportInfo(JSON.stringify(res, null, 2));
       setImportModalOpen(false);
       setAssignmentActionMode('edit');
@@ -1243,6 +1245,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     importModuleId,
     importPartition?.targetCanvasModuleId,
     loadAssignments,
+    load,
     setSearchParams,
   ]);
 
@@ -2139,9 +2142,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
               </p>
             )}
             <p className="prompter-hint">
-              Pick a Canvas assignment whose <strong>description</strong> holds exported Prompt Manager JSON.
-              Only Prompt Manager settings assignments are listed here. Wholesale merges the whole blob into this
-              course&apos;s active settings. Single assignment copies one entry onto the Canvas assignment you choose.
+              Choose where to copy settings from, then import. Use <strong>Import all settings</strong> to copy
+              everything, or <strong>Import this assignment</strong> to copy only one assignment.
             </p>
             <div className="prompter-settings-actions-row prompter-settings-actions-row-mb-sm">
               <button
@@ -2164,7 +2166,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                 Single assignment
               </button>
             </div>
-            <label className="prompter-settings-label">Source assignment (Prompt Manager settings only)</label>
+            <label className="prompter-settings-label">Copy settings from</label>
             <select
               className="prompter-settings-input"
               value={importSourceAssignmentId}
@@ -2184,16 +2186,13 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
             </select>
             {!importCanvasBrief?.settingsTitleCandidates.length && importCanvasBrief && (
               <p className="prompter-hint">
-                No Prompt Manager settings assignment was found. Ensure the source assignment title includes
-                &quot;Prompt Manager Settings&quot;.
+                No Prompt Manager settings source was found in this course.
               </p>
             )}
             {importModalTab === 'wholesale' && (
               <>
                 <p className="prompter-hint">
-                  Merge writes into this course's Prompt Manager Settings assignment. When the source is another
-                  assignment (not the canonical Prompt Manager Settings row), it is deleted from Canvas after a
-                  successful merge if the API allows removal.
+                  This copies all saved Prompt Manager settings into this course.
                 </p>
                 <div className="prompter-settings-actions-row">
                   <button
@@ -2242,15 +2241,11 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                 </select>
                 {importPartition && (
                   <p className="prompter-hint">
-                    Source blob has {importPartition.sourceConfigCount} assignment key
-                    {importPartition.sourceConfigCount === 1 ? '' : 's'}. If the target is not in the source blob, the
-                    API keeps existing Prompt Manager settings when present, or creates defaults (same as a new
-                    assignment) and opens Edit for you.
+                    If no saved settings are found for the selected assignment, your current settings are kept.
                   </p>
                 )}
                 <label className="prompter-settings-label">
-                  Module (prefilled when this assignment is already a Canvas module item; change if you want a
-                  different placement)
+                  Module
                 </label>
                 <select
                   className="prompter-settings-input"
@@ -2270,7 +2265,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                   ))}
                 </select>
                 {!modules.length && (
-                  <p className="prompter-hint">Loading modules… If none appear, refresh the page after saving once.</p>
+                  <p className="prompter-hint">Loading modules…</p>
                 )}
                 <div className="prompter-settings-actions-row">
                   <button

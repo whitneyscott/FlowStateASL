@@ -55,7 +55,6 @@ import type { Response } from 'express';
 import {
   type PromptManagerSettingsBlob,
   PROMPT_MANAGER_SETTINGS_ASSIGNMENT_TITLE,
-  extractPromptManagerSettingsBlobFromCanvasContent,
   readPromptManagerSettingsBlobFromCanvas,
   readPromptManagerSettingsBlobFromCanvasAssignmentDescription,
   writePromptManagerSettingsBlobToCanvas,
@@ -3810,7 +3809,6 @@ export class PromptService {
   private canvasDescriptionForInstructionsImport(description: string | null | undefined): string | undefined {
     const t = (description ?? '').trim();
     if (!t) return undefined;
-    if (extractPromptManagerSettingsBlobFromCanvasContent(t)) return undefined;
     return t;
   }
 
