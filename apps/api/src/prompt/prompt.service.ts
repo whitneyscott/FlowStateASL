@@ -3566,6 +3566,7 @@ export class PromptService {
         domainOverride,
         token,
         blob: payload,
+        allowConfigShrink: true,
       });
       appendLtiLog('prompt', 'delete-assignment: settings blob cleaned', { assignmentId: aid });
     } else {

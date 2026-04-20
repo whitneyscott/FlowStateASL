@@ -159,16 +159,51 @@ export async function writePromptManagerSettingsBlobToCanvas(
     blob: PromptManagerSettingsBlob;
     /** When false, only update the Prompt Manager Settings assignment (default: true). */
     syncAnnouncement?: boolean;
+    /** Allow reducing config count (use only for explicit delete/replace flows). */
+    allowConfigShrink?: boolean;
   },
 ): Promise<void> {
   const { courseId, domainOverride, token, blob } = args;
   const syncAnnouncement = args.syncAnnouncement !== false;
-  const settingsAssignmentId = await ensurePromptManagerSettingsAssignmentId(
-    canvas,
+  const allowConfigShrink = args.allowConfigShrink === true;
+  const existingSettingsAssignmentId = await canvas.findAssignmentByTitle(
     courseId,
+    PROMPT_MANAGER_SETTINGS_ASSIGNMENT_TITLE,
     domainOverride,
     token,
   );
+  let existingConfigCount = 0;
+  if (existingSettingsAssignmentId) {
+    const existingAssignment = await canvas.getAssignment(
+      courseId,
+      existingSettingsAssignmentId,
+      domainOverride,
+      token,
+    );
+    const existingBlob = extractPromptManagerSettingsBlobFromCanvasContent(
+      existingAssignment?.description?.trim() ?? '',
+    );
+    existingConfigCount = Object.keys(existingBlob?.configs ?? {}).length;
+  }
+  const incomingConfigCount = Object.keys(blob?.configs ?? {}).length;
+  if (!allowConfigShrink && existingConfigCount > 0 && incomingConfigCount < existingConfigCount) {
+    appendLtiLog('prompt', 'writePromptManagerSettingsBlobToCanvas: blocked shrink write', {
+      courseId,
+      existingConfigCount,
+      incomingConfigCount,
+    });
+    throw new Error(
+      `Refusing to overwrite Prompt Manager settings with fewer configs (${incomingConfigCount} < ${existingConfigCount}).`,
+    );
+  }
+  const settingsAssignmentId =
+    existingSettingsAssignmentId ??
+    (await ensurePromptManagerSettingsAssignmentId(
+      canvas,
+      courseId,
+      domainOverride,
+      token,
+    ));
   const description = JSON.stringify(blob);
   await canvas.updateAssignmentDescription(courseId, settingsAssignmentId, description, domainOverride, token);
   if (!syncAnnouncement) return;
