@@ -1,4 +1,11 @@
-import { BadRequestException, ForbiddenException, Inject, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  HttpException,
+  HttpStatus,
+  Inject,
+  Injectable,
+} from '@nestjs/common';
 import { readFileSync, statSync } from 'node:fs';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
@@ -45,9 +52,15 @@ import { randomUUID } from 'crypto';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { Response } from 'express';
+import {
+  type PromptManagerSettingsBlob,
+  readPromptManagerSettingsBlobFromCanvas,
+  writePromptManagerSettingsBlobToCanvas,
+} from './prompt-manager-settings-blob.storage';
+import { resolveAssignmentIdByName, type CanvasAssignmentBrief } from './assignment-id-resolve.util';
+import type { ImportPromptManagerBlobDto } from './dto/import-prompt-manager-blob.dto';
+import { buildPartialPromptConfigForTrueWay, scanTrueWayAssignments, type TrueWayTemplateMatch } from './true-way-templates';
 
-const PROMPT_MANAGER_SETTINGS_ASSIGNMENT_TITLE = 'Prompt Manager Settings';
-const PROMPT_MANAGER_SETTINGS_ANNOUNCEMENT_TITLE = 'ASL Express Prompt Manager Settings';
 /**
  * Deck card timing (mirrors TimerPage): minimum prompt floor + cognitive transition.
  */
@@ -58,14 +71,6 @@ const DECK_MIN_TOTAL_SECONDS = DECK_MIN_VIDEO_FLOOR_SECONDS + DECK_COGNITIVE_TRA
 /** Canvas submission and file-upload API paths require a numeric user id, not LTI `sub` (opaque). */
 function isCanvasNumericUserId(id: string): boolean {
   return id.length > 0 && /^\d+$/.test(id);
-}
-
-interface PromptManagerSettingsBlob {
-  v?: number;
-  configs?: Record<string, PromptConfigJson>;
-  /** Maps LTI resource_link_id -> Canvas assignment id for launches where assignment_id is absent. */
-  resourceLinkAssignmentMap?: Record<string, string>;
-  updatedAt?: string;
 }
 
 interface DeckCardSource {
@@ -155,27 +160,6 @@ function toCanvasIso8601(raw: string | undefined): string | undefined {
   const d = new Date(s);
   if (Number.isNaN(d.getTime())) return undefined;
   return d.toISOString();
-}
-
-/** Extract JSON from Canvas content. Canvas may wrap in HTML. */
-function extractJsonBlob(raw: string): PromptManagerSettingsBlob | null {
-  const trimmed = raw?.trim();
-  if (!trimmed) return null;
-  try {
-    const parsed = JSON.parse(trimmed) as PromptManagerSettingsBlob;
-    if (parsed && typeof parsed === 'object') return parsed;
-  } catch {
-    const jsonMatch = trimmed.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      try {
-        const parsed = JSON.parse(jsonMatch[0]) as PromptManagerSettingsBlob;
-        if (parsed && typeof parsed === 'object') return parsed;
-      } catch {
-        /* ignore */
-      }
-    }
-  }
-  return null;
 }
 
 @Injectable()
@@ -490,92 +474,12 @@ export class PromptService {
     throw new Error('Assignment ID required. In course_navigation, pass assignmentId as query parameter.');
   }
 
-  private async ensurePromptManagerSettingsAssignment(
-    courseId: string,
-    domainOverride: string | undefined,
-    token: string,
-  ): Promise<string> {
-    const existing = await this.canvas.findAssignmentByTitle(
-      courseId,
-      PROMPT_MANAGER_SETTINGS_ASSIGNMENT_TITLE,
-      domainOverride,
-      token,
-    );
-    if (existing) return existing;
-    return this.canvas.createAssignment(
-      courseId,
-      PROMPT_MANAGER_SETTINGS_ASSIGNMENT_TITLE,
-      {
-        submissionTypes: ['online_text_entry'],
-        pointsPossible: 0,
-        published: true,
-        description: 'Stores Prompt Manager config per assignment (auto-created by ASL Express)',
-        omitFromFinalGrade: true,
-        tokenOverride: token,
-      },
-      domainOverride,
-    );
-  }
-
   private async readPromptManagerSettingsBlob(
     courseId: string,
     domainOverride: string | undefined,
     token: string,
   ): Promise<PromptManagerSettingsBlob | null> {
-    const settingsAssignmentId = await this.canvas.findAssignmentByTitle(
-      courseId,
-      PROMPT_MANAGER_SETTINGS_ASSIGNMENT_TITLE,
-      domainOverride,
-      token,
-    );
-    appendLtiLog('prompt-decks', 'readPromptManagerSettingsBlob: after findAssignmentByTitle', {
-      courseId,
-      settingsAssignmentId: settingsAssignmentId ?? null,
-    });
-    if (settingsAssignmentId) {
-      const assignment = await this.canvas.getAssignment(courseId, settingsAssignmentId, domainOverride, token);
-      appendLtiLog('prompt-decks', 'readPromptManagerSettingsBlob: after getAssignment', {
-        courseId,
-        settingsAssignmentId,
-        assignmentFound: !!assignment,
-        descriptionNonEmpty: Boolean((assignment?.description ?? '').trim()),
-      });
-      const raw = assignment?.description?.trim() ?? '';
-      const blob = extractJsonBlob(raw);
-      const configCount =
-        blob?.configs && typeof blob.configs === 'object' ? Object.keys(blob.configs).length : 0;
-      appendLtiLog('prompt-decks', 'readPromptManagerSettingsBlob: after extractJsonBlob (assignment description)', {
-        courseId,
-        source: 'assignment_description',
-        blobParsed: !!blob,
-        configCount,
-      });
-      if (blob) return blob;
-    }
-    const ann = await this.canvas.findSettingsAnnouncementByTitle(
-      courseId,
-      PROMPT_MANAGER_SETTINGS_ANNOUNCEMENT_TITLE,
-      token,
-      domainOverride,
-    );
-    appendLtiLog('prompt-decks', 'readPromptManagerSettingsBlob: after findSettingsAnnouncementByTitle', {
-      courseId,
-      announcementFound: !!ann,
-      hasMessage: Boolean((ann?.message ?? '').trim()),
-    });
-    if (ann?.message) {
-      const annBlob = extractJsonBlob(ann.message);
-      const annConfigCount =
-        annBlob?.configs && typeof annBlob.configs === 'object' ? Object.keys(annBlob.configs).length : 0;
-      appendLtiLog('prompt-decks', 'readPromptManagerSettingsBlob: after extractJsonBlob (announcement)', {
-        courseId,
-        source: 'announcement',
-        blobParsed: !!annBlob,
-        configCount: annConfigCount,
-      });
-      return annBlob;
-    }
-    return null;
+    return readPromptManagerSettingsBlobFromCanvas(this.canvas, courseId, domainOverride, token);
   }
 
   /**
@@ -633,7 +537,6 @@ export class PromptService {
     const rid = (resourceLinkId ?? '').trim();
     const aid = (assignmentId ?? '').trim();
     if (!rid || !aid) return;
-    const settingsAssignmentId = await this.ensurePromptManagerSettingsAssignment(courseId, domainOverride, token);
     const blob = await this.readPromptManagerSettingsBlob(courseId, domainOverride, token);
     const existingMap = blob?.resourceLinkAssignmentMap ?? {};
     if (existingMap[rid] === aid) return;
@@ -647,13 +550,12 @@ export class PromptService {
       },
       updatedAt: new Date().toISOString(),
     };
-    await this.canvas.updateAssignmentDescription(
+    await writePromptManagerSettingsBlobToCanvas(this.canvas, {
       courseId,
-      settingsAssignmentId,
-      JSON.stringify(payload),
       domainOverride,
       token,
-    );
+      blob: payload,
+    });
     appendLtiLog('prompt', 'rememberResourceLinkAssignmentMapping: saved', {
       resourceLinkId: rid,
       assignmentId: aid,
@@ -1094,7 +996,6 @@ export class PromptService {
           const banks = await this.generateStoredDeckPromptBanks(selectedDecks, totalCards, 2);
           const staticFallbackPrompts = (banks[0] ?? []).map((p) => p.title).filter(Boolean);
           if (banks.length > 0 || staticFallbackPrompts.length > 0) {
-            const settingsAssignmentId = await this.ensurePromptManagerSettingsAssignment(ctx.courseId, domainOverride, token);
             const payload: PromptManagerSettingsBlob = {
               ...blob,
               v: blob?.v ?? 1,
@@ -1113,13 +1014,12 @@ export class PromptService {
               },
               updatedAt: new Date().toISOString(),
             };
-            await this.canvas.updateAssignmentDescription(
-              ctx.courseId,
-              settingsAssignmentId,
-              JSON.stringify(payload),
+            await writePromptManagerSettingsBlobToCanvas(this.canvas, {
+              courseId: ctx.courseId,
               domainOverride,
               token,
-            );
+              blob: payload,
+            });
             config = {
               ...config,
               videoPromptConfig: {
@@ -1426,11 +1326,6 @@ export class PromptService {
       }
     }
 
-    const settingsAssignmentId = await this.ensurePromptManagerSettingsAssignment(
-      ctx.courseId,
-      domainOverride,
-      token,
-    );
     const blob = await this.readPromptManagerSettingsBlob(ctx.courseId, domainOverride, token);
     const configs = { ...(blob?.configs ?? {}), [assignmentId]: merged };
     // Read → merge → write: never overwrite entire blob; preserve existing fields.
@@ -1440,51 +1335,17 @@ export class PromptService {
       configs,
       updatedAt: new Date().toISOString(),
     };
-    const description = JSON.stringify(payload);
-    await this.canvas.updateAssignmentDescription(
-      ctx.courseId,
-      settingsAssignmentId,
-      description,
+    await writePromptManagerSettingsBlobToCanvas(this.canvas, {
+      courseId: ctx.courseId,
       domainOverride,
       token,
-    );
+      blob: payload,
+    });
     appendLtiLog('sign-to-voice', 'config: Prompt Manager blob saved', {
       assignmentId,
       signToVoiceRequired: merged.signToVoiceRequired === true,
       promptMode: merged.promptMode ?? '(unset)',
     });
-
-    try {
-      const ann = await this.canvas.findSettingsAnnouncementByTitle(
-        ctx.courseId,
-        PROMPT_MANAGER_SETTINGS_ANNOUNCEMENT_TITLE,
-        token,
-        domainOverride,
-      );
-      if (ann) {
-        await this.canvas.updateSettingsAnnouncement(
-          ctx.courseId,
-          ann.id,
-          description,
-          token,
-          domainOverride,
-        );
-      } else {
-        await this.canvas.createSettingsAnnouncement(
-          ctx.courseId,
-          `⚠️ DO NOT DELETE — ${PROMPT_MANAGER_SETTINGS_ANNOUNCEMENT_TITLE}`,
-          description,
-          token,
-          domainOverride,
-        );
-      }
-    } catch (annErr) {
-      appendLtiLog('prompt', 'putConfig: settings announcement sync failed (non-fatal)', {
-        assignmentId,
-        error: String(annErr),
-      });
-    }
-
 
     const moduleId = merged.moduleId?.trim();
     if (moduleId) {
@@ -3573,7 +3434,6 @@ export class PromptService {
         const c = configs[id];
         if (c) newConfigs[id] = c;
       }
-      const settingsAssignmentId = await this.ensurePromptManagerSettingsAssignment(ctx.courseId, domainOverride, token);
       // Read → merge → write: only remove purged assignment configs; preserve rest of blob.
       const payload: PromptManagerSettingsBlob = {
         ...blob,
@@ -3581,32 +3441,12 @@ export class PromptService {
         configs: newConfigs,
         updatedAt: new Date().toISOString(),
       };
-      await this.canvas.updateAssignmentDescription(
-        ctx.courseId,
-        settingsAssignmentId,
-        JSON.stringify(payload),
+      await writePromptManagerSettingsBlobToCanvas(this.canvas, {
+        courseId: ctx.courseId,
         domainOverride,
         token,
-      );
-      try {
-        const ann = await this.canvas.findSettingsAnnouncementByTitle(
-          ctx.courseId,
-          PROMPT_MANAGER_SETTINGS_ANNOUNCEMENT_TITLE,
-          token,
-          domainOverride,
-        );
-        if (ann) {
-          await this.canvas.updateSettingsAnnouncement(
-            ctx.courseId,
-            ann.id,
-            JSON.stringify(payload),
-            token,
-            domainOverride,
-          );
-        }
-      } catch {
-        /* optional announcement sync */
-      }
+        blob: payload,
+      });
     }
     result.sort((a, b) => a.name.localeCompare(b.name));
     appendLtiLog('viewer', 'getConfiguredAssignments', {
@@ -3644,39 +3484,18 @@ export class PromptService {
     const configs = { ...(blob?.configs ?? {}) };
     if (configs[aid] !== undefined) {
       delete configs[aid];
-      const settingsAssignmentId = await this.ensurePromptManagerSettingsAssignment(ctx.courseId, domainOverride, token);
       const payload: PromptManagerSettingsBlob = {
         ...blob,
         v: 1,
         configs,
         updatedAt: new Date().toISOString(),
       };
-      await this.canvas.updateAssignmentDescription(
-        ctx.courseId,
-        settingsAssignmentId,
-        JSON.stringify(payload),
+      await writePromptManagerSettingsBlobToCanvas(this.canvas, {
+        courseId: ctx.courseId,
         domainOverride,
         token,
-      );
-      try {
-        const ann = await this.canvas.findSettingsAnnouncementByTitle(
-          ctx.courseId,
-          PROMPT_MANAGER_SETTINGS_ANNOUNCEMENT_TITLE,
-          token,
-          domainOverride,
-        );
-        if (ann) {
-          await this.canvas.updateSettingsAnnouncement(
-            ctx.courseId,
-            ann.id,
-            JSON.stringify(payload),
-            token,
-            domainOverride,
-          );
-        }
-      } catch {
-        // optional announcement sync
-      }
+        blob: payload,
+      });
       appendLtiLog('prompt', 'delete-assignment: settings blob cleaned', { assignmentId: aid });
     } else {
       appendLtiLog('prompt', 'delete-assignment: no settings blob entry to remove', { assignmentId: aid });
@@ -3798,7 +3617,6 @@ export class PromptService {
       },
       domainOverride,
     );
-    const settingsAssignmentId = await this.ensurePromptManagerSettingsAssignment(ctx.courseId, domainOverride, token);
     const blob = await this.readPromptManagerSettingsBlob(ctx.courseId, domainOverride, token);
     const moduleIdTrim = (options?.moduleId ?? '').trim();
     const configs = {
@@ -3820,8 +3638,12 @@ export class PromptService {
       configs,
       updatedAt: new Date().toISOString(),
     };
-    const description = JSON.stringify(payload);
-    await this.canvas.updateAssignmentDescription(ctx.courseId, settingsAssignmentId, description, domainOverride, token);
+    await writePromptManagerSettingsBlobToCanvas(this.canvas, {
+      courseId: ctx.courseId,
+      domainOverride,
+      token,
+      blob: payload,
+    });
     if (moduleIdTrim) {
       try {
         await this.canvas.addAssignmentToModule(
@@ -3845,5 +3667,248 @@ export class PromptService {
       courseId: ctx.courseId,
     });
     return { assignmentId };
+  }
+
+  private normalizePromptImportPayload(
+    blob: NonNullable<ImportPromptManagerBlobDto['blob']>,
+  ): PromptManagerSettingsBlob {
+    if (typeof blob.v === 'number' && blob.v !== 1) {
+      throw new BadRequestException(`Unsupported settings blob version v=${blob.v}`);
+    }
+    if (blob.configs != null && (typeof blob.configs !== 'object' || Array.isArray(blob.configs))) {
+      throw new BadRequestException('configs must be a plain object');
+    }
+    return {
+      v: 1,
+      configs: (blob.configs as Record<string, PromptConfigJson>) ?? {},
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  private clearCrossCoursePromptFields(cfg: PromptConfigJson): PromptConfigJson {
+    const n = { ...cfg } as PromptConfigJson & { resolvedAssignmentId?: string };
+    delete n.moduleId;
+    delete n.assignmentGroupId;
+    delete n.rubricId;
+    delete n.resolvedAssignmentId;
+    return n;
+  }
+
+  /** Teacher: full Prompt Manager settings blob for backup / cross-course import. */
+  async exportPromptManagerSettingsBlob(ctx: LtiContext): Promise<PromptManagerSettingsBlob> {
+    const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
+    if (!token) {
+      throw new ForbiddenException('Canvas OAuth token required');
+    }
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
+    const blob = await readPromptManagerSettingsBlobFromCanvas(this.canvas, ctx.courseId, domainOverride, token);
+    return (
+      blob ?? {
+        v: 1,
+        configs: {},
+        updatedAt: new Date().toISOString(),
+      }
+    );
+  }
+
+  /**
+   * Teacher: merge or replace_selected Prompt Manager configs from JSON or another course.
+   * Drops resourceLinkAssignmentMap; clears module/group/rubric on imported configs.
+   */
+  async importPromptManagerSettingsBlob(
+    ctx: LtiContext,
+    dto: ImportPromptManagerBlobDto,
+  ): Promise<
+    | { dryRun: true; conflicts: Array<{ oldId: string; name: string; candidates: CanvasAssignmentBrief[] }>; unmatched: Array<{ oldId: string; name: string }>; map: Record<string, string> }
+    | { dryRun?: false; imported: number; staleAssignmentIds: string[] }
+  > {
+    const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
+    if (!token) {
+      throw new ForbiddenException('Canvas OAuth token required');
+    }
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
+    const skip = new Set((dto.skipSourceAssignmentIds ?? []).map((s) => s.trim()).filter(Boolean));
+
+    let sourceBlob: PromptManagerSettingsBlob;
+    const sourceCourseTrim = (dto.sourceCourseId ?? '').trim();
+    if (sourceCourseTrim) {
+      try {
+        const b = await readPromptManagerSettingsBlobFromCanvas(
+          this.canvas,
+          sourceCourseTrim,
+          domainOverride,
+          token,
+        );
+        if (!b?.configs || Object.keys(b.configs).length === 0) {
+          throw new BadRequestException('No Prompt Manager settings found in source course');
+        }
+        sourceBlob = {
+          v: 1,
+          configs: { ...b.configs },
+          updatedAt: new Date().toISOString(),
+        };
+      } catch (e) {
+        if (e instanceof BadRequestException) throw e;
+        appendLtiLog('prompt-import', 'importPromptManagerSettingsBlob: source course read failed', {
+          sourceCourseId: sourceCourseTrim,
+          error: String(e),
+        });
+        throw new BadRequestException(
+          `Could not read Prompt Manager settings from course ${sourceCourseTrim}. Ensure your Canvas token can access that course.`,
+        );
+      }
+    } else if (dto.blob) {
+      sourceBlob = this.normalizePromptImportPayload(dto.blob);
+    } else {
+      throw new BadRequestException('Provide blob or sourceCourseId');
+    }
+
+    const sourceConfigs = { ...sourceBlob.configs };
+    for (const sid of skip) {
+      delete sourceConfigs[sid];
+    }
+    const sourceKeys = Object.keys(sourceConfigs);
+    if (sourceKeys.length === 0) {
+      throw new BadRequestException('Nothing to import after skip list');
+    }
+
+    const targetList = await this.canvas.listAssignmentsBrief(ctx.courseId, domainOverride, token);
+    const targetIds = new Set(targetList.map((a) => a.id));
+    const sourceList = sourceCourseTrim
+      ? await this.canvas.listAssignmentsBrief(sourceCourseTrim, domainOverride, token)
+      : null;
+
+    const manual = { ...(dto.assignmentIdMap ?? {}) };
+    const conflicts: Array<{ oldId: string; name: string; candidates: CanvasAssignmentBrief[] }> = [];
+    const unmatched: Array<{ oldId: string; name: string }> = [];
+    const map: Record<string, string> = {};
+
+    for (const oldId of sourceKeys) {
+      if (manual[oldId]) {
+        map[oldId] = manual[oldId];
+        continue;
+      }
+      if (targetIds.has(oldId)) {
+        map[oldId] = oldId;
+        continue;
+      }
+      const name =
+        (sourceList?.find((a) => a.id === oldId)?.name ?? '').trim() ||
+        (sourceConfigs[oldId]?.assignmentName ?? '').trim();
+      if (!name) {
+        unmatched.push({ oldId, name: '' });
+        continue;
+      }
+      const r = resolveAssignmentIdByName(name, targetList);
+      if (r.status === 'matched') map[oldId] = r.newId;
+      else if (r.status === 'conflict') conflicts.push({ oldId, name, candidates: r.candidates });
+      else unmatched.push({ oldId, name });
+    }
+
+    if (dto.dryRun) {
+      return { dryRun: true, conflicts, unmatched, map };
+    }
+    if (conflicts.length > 0 || unmatched.length > 0) {
+      throw new HttpException(
+        {
+          message: 'Resolve name conflicts and unmatched assignments (use assignmentIdMap or skipSourceAssignmentIds), or call with dryRun to preview.',
+          conflicts,
+          unmatched,
+          partialMap: map,
+        },
+        HttpStatus.UNPROCESSABLE_ENTITY,
+      );
+    }
+
+    const remappedConfigs: Record<string, PromptConfigJson> = {};
+    for (const oldId of sourceKeys) {
+      const nid = map[oldId];
+      if (!nid) continue;
+      const base = sourceConfigs[oldId];
+      if (!base) continue;
+      remappedConfigs[nid] = this.clearCrossCoursePromptFields({ ...base });
+    }
+
+    const targetBlob = await readPromptManagerSettingsBlobFromCanvas(this.canvas, ctx.courseId, domainOverride, token);
+    const existingConfigs = { ...(targetBlob?.configs ?? {}) };
+    let mergedConfigs: Record<string, PromptConfigJson>;
+    if (dto.mode === 'replace_selected') {
+      const replaceKeys =
+        dto.replaceSourceAssignmentIds && dto.replaceSourceAssignmentIds.length > 0
+          ? dto.replaceSourceAssignmentIds
+          : sourceKeys;
+      mergedConfigs = { ...existingConfigs };
+      for (const oldId of replaceKeys) {
+        const nid = map[oldId];
+        if (nid && remappedConfigs[nid]) mergedConfigs[nid] = remappedConfigs[nid];
+      }
+    } else {
+      mergedConfigs = { ...existingConfigs, ...remappedConfigs };
+    }
+
+    const outBlob: PromptManagerSettingsBlob = {
+      ...targetBlob,
+      v: 1,
+      configs: mergedConfigs,
+      resourceLinkAssignmentMap: {},
+      updatedAt: new Date().toISOString(),
+    };
+
+    await writePromptManagerSettingsBlobToCanvas(this.canvas, {
+      courseId: ctx.courseId,
+      domainOverride,
+      token,
+      blob: outBlob,
+    });
+
+    appendLtiLog('prompt-import', 'importPromptManagerSettingsBlob applied', {
+      courseId: ctx.courseId,
+      mode: dto.mode,
+      sourceCourseId: sourceCourseTrim || null,
+      importedKeys: Object.keys(remappedConfigs).length,
+    });
+
+    const staleAssignmentIds = Object.keys(mergedConfigs).filter((id) => !targetIds.has(id));
+    return { imported: Object.keys(remappedConfigs).length, staleAssignmentIds };
+  }
+
+  /** Teacher: scan for TRUE+WAY-style assignment titles and merge default Prompt Manager fields. */
+  async applyTrueWayTemplates(ctx: LtiContext): Promise<{ updated: number; matches: TrueWayTemplateMatch[] }> {
+    const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
+    if (!token) {
+      throw new ForbiddenException('Canvas OAuth token required');
+    }
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
+    const list = await this.canvas.listAssignmentsBrief(ctx.courseId, domainOverride, token);
+    const matches = scanTrueWayAssignments(list);
+    if (matches.length === 0) {
+      return { updated: 0, matches: [] };
+    }
+    const blob = await readPromptManagerSettingsBlobFromCanvas(this.canvas, ctx.courseId, domainOverride, token);
+    const configs = { ...(blob?.configs ?? {}) };
+    let updated = 0;
+    for (const m of matches) {
+      const assign = await this.canvas.getAssignment(ctx.courseId, m.assignmentId, domainOverride, token);
+      const desc = assign?.description ?? '';
+      const partial = buildPartialPromptConfigForTrueWay(m.kind, m.name, desc);
+      const existing = configs[m.assignmentId] ?? {};
+      configs[m.assignmentId] = { ...existing, ...partial };
+      updated++;
+    }
+    const outBlob: PromptManagerSettingsBlob = {
+      ...(blob ?? {}),
+      v: 1,
+      configs,
+      resourceLinkAssignmentMap: blob?.resourceLinkAssignmentMap,
+      updatedAt: new Date().toISOString(),
+    };
+    await writePromptManagerSettingsBlobToCanvas(this.canvas, {
+      courseId: ctx.courseId,
+      domainOverride,
+      token,
+      blob: outBlob,
+    });
+    appendLtiLog('prompt-import', 'applyTrueWayTemplates', { courseId: ctx.courseId, updated, matchCount: matches.length });
+    return { updated, matches };
   }
 }

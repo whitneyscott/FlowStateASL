@@ -1,4 +1,4 @@
-import { Inject, Injectable, forwardRef } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Request } from 'express';
@@ -17,6 +17,12 @@ import {
 import { LtiService } from '../lti/lti.service';
 import { CourseSettingsEntity } from './entities/course-settings.entity';
 import { getSproutAccountId } from '../common/utils/sprout-account-id.util';
+import {
+  readFlashcardSettingsBlobFromCanvas,
+  writeFlashcardSettingsBlobToCanvas,
+  type FlashcardSettingsBlob,
+} from './flashcard-settings-blob.storage';
+import type { ImportFlashcardSettingsBlobDto } from './dto/import-flashcard-settings-blob.dto';
 
 const FLASHCARD_SETTINGS_ASSIGNMENT_TITLE = 'Flashcard Settings';
 const FLASHCARD_PROGRESS_TITLE = 'Flashcard Progress';
@@ -420,12 +426,6 @@ export class CourseSettingsService {
       canvasDomain,
       platformIss,
     });
-    const settingsAssignmentId = await this.ensureFlashcardSettingsAssignment(
-      courseId,
-      canvasOverride,
-      effectiveToken,
-    );
-
     const settingsPayload: SettingsAssignmentDescriptionData = {
       v: 1,
       selectedCurriculums: selectedCurriculums ?? [],
@@ -433,14 +433,17 @@ export class CourseSettingsService {
       updatedAt: new Date().toISOString(),
     };
 
-    const description = JSON.stringify(settingsPayload);
-    await this.canvas.updateAssignmentDescription(
+    await writeFlashcardSettingsBlobToCanvas(this.canvas, {
       courseId,
-      settingsAssignmentId,
-      description,
-      canvasOverride,
-      effectiveToken,
-    );
+      domainOverride: canvasOverride,
+      token: effectiveToken,
+      blob: {
+        v: 1,
+        selectedCurriculums: settingsPayload.selectedCurriculums ?? [],
+        selectedUnits: settingsPayload.selectedUnits ?? [],
+        updatedAt: settingsPayload.updatedAt,
+      },
+    });
 
     settingsCache.set(courseId, {
       data: {
@@ -449,13 +452,6 @@ export class CourseSettingsService {
       },
       expiresAt: Date.now() + SETTINGS_CACHE_TTL_MS,
     });
-
-    // Dual-write: announcement is primary for students — must succeed or save fails
-    const announcementPayload = {
-      selectedCurriculums: settingsPayload.selectedCurriculums ?? [],
-      selectedUnits: settingsPayload.selectedUnits ?? [],
-    };
-    await this.upsertFlashcardSettingsAnnouncement(courseId, announcementPayload, effectiveToken, canvasOverride);
 
     // DB usage commented out - data flows from assignments only
     // await this.repo.upsert(
@@ -832,5 +828,120 @@ export class CourseSettingsService {
         error: err instanceof Error ? err.message : String(err),
       });
     }
+  }
+
+  private uniqStrings(ids: string[]): string[] {
+    return [...new Set(ids.map((x) => x.trim()).filter(Boolean))];
+  }
+
+  async exportFlashcardSettingsBlob(
+    courseId: string,
+    options: {
+      canvasDomain?: string;
+      canvasBaseUrl?: string;
+      platformIss?: string;
+      canvasAccessToken?: string | null;
+    },
+  ): Promise<FlashcardSettingsBlob> {
+    const token = (options.canvasAccessToken ?? '').trim() || null;
+    if (!token) {
+      throw new BadRequestException('Canvas OAuth token required');
+    }
+    const canvasOverride = this.canvasOverrideFromLaunchHints({
+      canvasBaseUrl: options.canvasBaseUrl,
+      canvasDomain: options.canvasDomain,
+      platformIss: options.platformIss,
+    });
+    const blob = await readFlashcardSettingsBlobFromCanvas(this.canvas, courseId, canvasOverride, token);
+    return (
+      blob ?? {
+        v: 1,
+        selectedCurriculums: [],
+        selectedUnits: [],
+        updatedAt: new Date().toISOString(),
+      }
+    );
+  }
+
+  async importFlashcardSettingsBlob(
+    courseId: string,
+    dto: ImportFlashcardSettingsBlobDto,
+    options: {
+      canvasDomain?: string;
+      canvasBaseUrl?: string;
+      platformIss?: string;
+      canvasAccessToken?: string | null;
+    },
+  ): Promise<{ dryRun?: true; preview: FlashcardSettingsBlob } | { ok: true }> {
+    const token = (options.canvasAccessToken ?? '').trim() || null;
+    if (!token) {
+      throw new BadRequestException('Canvas OAuth token required');
+    }
+    const canvasOverride = this.canvasOverrideFromLaunchHints({
+      canvasBaseUrl: options.canvasBaseUrl,
+      canvasDomain: options.canvasDomain,
+      platformIss: options.platformIss,
+    });
+    const sourceCourseTrim = (dto.sourceCourseId ?? '').trim();
+    let source: FlashcardSettingsBlob;
+    if (sourceCourseTrim) {
+      const b = await readFlashcardSettingsBlobFromCanvas(this.canvas, sourceCourseTrim, canvasOverride, token);
+      if (!b) {
+        throw new BadRequestException('No Flashcard settings found in source course');
+      }
+      source = {
+        v: 1,
+        selectedCurriculums: [...(b.selectedCurriculums ?? [])],
+        selectedUnits: [...(b.selectedUnits ?? [])],
+        updatedAt: new Date().toISOString(),
+      };
+    } else if (dto.blob) {
+      source = {
+        v: 1,
+        selectedCurriculums: dto.blob.selectedCurriculums ?? [],
+        selectedUnits: dto.blob.selectedUnits ?? [],
+        updatedAt: new Date().toISOString(),
+      };
+    } else {
+      throw new BadRequestException('Provide blob or sourceCourseId');
+    }
+
+    const target = await readFlashcardSettingsBlobFromCanvas(this.canvas, courseId, canvasOverride, token);
+    let next: FlashcardSettingsBlob;
+    if (dto.mode === 'merge') {
+      next = {
+        v: 1,
+        selectedCurriculums: this.uniqStrings([
+          ...(target?.selectedCurriculums ?? []),
+          ...(source.selectedCurriculums ?? []),
+        ]),
+        selectedUnits: this.uniqStrings([...(target?.selectedUnits ?? []), ...(source.selectedUnits ?? [])]),
+        updatedAt: new Date().toISOString(),
+      };
+    } else {
+      next = {
+        v: 1,
+        selectedCurriculums: [...(source.selectedCurriculums ?? [])],
+        selectedUnits: [...(source.selectedUnits ?? [])],
+        updatedAt: new Date().toISOString(),
+      };
+    }
+
+    if (dto.dryRun) {
+      return { dryRun: true, preview: next };
+    }
+
+    await writeFlashcardSettingsBlobToCanvas(this.canvas, {
+      courseId,
+      domainOverride: canvasOverride,
+      token,
+      blob: next,
+    });
+    appendLtiLog('course-settings', 'importFlashcardSettingsBlob applied', {
+      courseId,
+      mode: dto.mode,
+      sourceCourseId: sourceCourseTrim || null,
+    });
+    return { ok: true };
   }
 }

@@ -95,3 +95,41 @@ export async function getStudentPlaylistsBatchForDeckPicker(showAllCatalog: bool
   });
   return { playlists, error: data.error };
 }
+
+async function fetchFlashcardJsonPost<T>(url: string, body: unknown): Promise<T> {
+  const res = await fetch(url, {
+    ...flashcardInit(),
+    method: 'POST',
+    headers: { ...flashcardInit().headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body ?? {}),
+  });
+  const data = await res.json().catch(() => ({}));
+  const b = data as { redirectToOAuth?: boolean; needsManualToken?: boolean; message?: string };
+  if (res.status === 401 && b.redirectToOAuth) {
+    window.location.href = `/api/oauth/canvas?returnTo=${encodeURIComponent(window.location.href)}`;
+    throw new Error('Redirecting to Canvas OAuth');
+  }
+  if (res.status === 401 && b.needsManualToken) {
+    throw new NeedsManualTokenError(b.message);
+  }
+  if (!res.ok) throw new Error(b.message ?? `HTTP ${res.status}`);
+  return data as T;
+}
+
+export async function exportFlashcardSettingsBlob(): Promise<{
+  v?: number;
+  selectedCurriculums: string[];
+  selectedUnits: string[];
+  updatedAt?: string;
+}> {
+  return fetchFlashcardJson('/api/course-settings/settings-blob/export');
+}
+
+export async function importFlashcardSettingsBlob(body: {
+  mode: 'merge' | 'replace_selected';
+  blob?: { v?: number; selectedCurriculums?: string[]; selectedUnits?: string[] };
+  sourceCourseId?: string;
+  dryRun?: boolean;
+}): Promise<{ dryRun?: true; preview: unknown } | { ok: true }> {
+  return fetchFlashcardJsonPost('/api/course-settings/settings-blob/import', body);
+}

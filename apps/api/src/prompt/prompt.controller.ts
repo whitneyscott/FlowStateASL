@@ -32,6 +32,7 @@ import { sanitizeLtiContext } from '../common/utils/lti-context-value.util';
 import { getOAuth401Body } from '../common/utils/oauth-401.util';
 import { PromptService } from './prompt.service';
 import { PutPromptConfigDto } from './dto/prompt-config.dto';
+import { ImportPromptManagerBlobDto } from './dto/import-prompt-manager-blob.dto';
 import { VerifyAccessDto } from './dto/verify-access.dto';
 import { SavePromptDto } from './dto/save-prompt.dto';
 import { SubmitPromptDto } from './dto/submit-prompt.dto';
@@ -544,6 +545,53 @@ export class PromptController {
       return res.json(result);
     }
     return res.type('html').send(result);
+  }
+
+  @Get('settings-blob/export')
+  @UseGuards(TeacherRoleGuard)
+  async exportPromptSettingsBlob(@Req() req: Request, @Res() res: Response) {
+    const ctx = this.getCtx(req);
+    try {
+      const blob = await this.prompt.exportPromptManagerSettingsBlob(ctx);
+      return res.json(blob);
+    } catch (err) {
+      if (err instanceof CanvasTokenExpiredError) {
+        return res.status(401).json(getOAuth401Body(req));
+      }
+      throw err;
+    }
+  }
+
+  @Post('settings-blob/import')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(TeacherRoleGuard)
+  async importPromptSettingsBlob(@Req() req: Request, @Body() dto: ImportPromptManagerBlobDto, @Res() res: Response) {
+    const ctx = this.getCtx(req);
+    try {
+      const result = await this.prompt.importPromptManagerSettingsBlob(ctx, dto);
+      return res.json(result);
+    } catch (err) {
+      if (err instanceof CanvasTokenExpiredError) {
+        return res.status(401).json(getOAuth401Body(req));
+      }
+      throw err;
+    }
+  }
+
+  @Post('settings-blob/apply-true-way-templates')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(TeacherRoleGuard)
+  async applyTrueWayTemplates(@Req() req: Request, @Res() res: Response) {
+    const ctx = this.getCtx(req);
+    try {
+      const result = await this.prompt.applyTrueWayTemplates(ctx);
+      return res.json(result);
+    } catch (err) {
+      if (err instanceof CanvasTokenExpiredError) {
+        return res.status(401).json(getOAuth401Body(req));
+      }
+      throw err;
+    }
   }
 
   @Get('submission-count')

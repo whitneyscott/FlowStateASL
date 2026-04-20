@@ -18,7 +18,9 @@ import { getOAuth401Body } from '../common/utils/oauth-401.util';
 import { CanvasTokenExpiredError } from '../canvas/canvas.service';
 import { LtiLaunchGuard } from '../lti/guards/lti-launch.guard';
 import { LtiService } from '../lti/lti.service';
+import { TeacherRoleGuard } from '../common/guards/teacher-role.guard';
 import { CourseSettingsService } from './course-settings.service';
+import { ImportFlashcardSettingsBlobDto } from './dto/import-flashcard-settings-blob.dto';
 
 @Controller('course-settings')
 @UseGuards(LtiLaunchGuard)
@@ -27,6 +29,53 @@ export class CourseSettingsController {
     private readonly courseSettings: CourseSettingsService,
     private readonly ltiService: LtiService,
   ) {}
+
+  @Get('settings-blob/export')
+  @UseGuards(TeacherRoleGuard)
+  async exportFlashcardSettingsBlob(@Req() req: Request, @Res() res: Response) {
+    const ctx = req.session?.ltiContext as LtiContext | undefined;
+    if (!ctx?.courseId) {
+      throw new ForbiddenException('LTI context required');
+    }
+    const canvasAccessToken = (req.session as { canvasAccessToken?: string } | undefined)?.canvasAccessToken;
+    try {
+      const blob = await this.courseSettings.exportFlashcardSettingsBlob(ctx.courseId, {
+        canvasDomain: ctx.canvasDomain,
+        canvasBaseUrl: ctx.canvasBaseUrl,
+        platformIss: ctx.platformIss,
+        canvasAccessToken: canvasAccessToken ?? undefined,
+      });
+      return res.json(blob);
+    } catch (err) {
+      if (err instanceof CanvasTokenExpiredError) {
+        return res.status(401).json(getOAuth401Body(req));
+      }
+      throw err;
+    }
+  }
+
+  @Post('settings-blob/import')
+  @UseGuards(TeacherRoleGuard)
+  async importFlashcardSettingsBlob(@Req() req: Request, @Body() dto: ImportFlashcardSettingsBlobDto) {
+    const ctx = req.session?.ltiContext as LtiContext | undefined;
+    if (!ctx?.courseId) {
+      throw new ForbiddenException('LTI context required');
+    }
+    const canvasAccessToken = (req.session as { canvasAccessToken?: string } | undefined)?.canvasAccessToken;
+    try {
+      return await this.courseSettings.importFlashcardSettingsBlob(ctx.courseId, dto, {
+        canvasDomain: ctx.canvasDomain,
+        canvasBaseUrl: ctx.canvasBaseUrl,
+        platformIss: ctx.platformIss,
+        canvasAccessToken: canvasAccessToken ?? undefined,
+      });
+    } catch (err) {
+      if (err instanceof CanvasTokenExpiredError) {
+        throw new HttpException(getOAuth401Body(req), HttpStatus.UNAUTHORIZED);
+      }
+      throw err;
+    }
+  }
 
   @Get()
   async get(@Req() req: Request, @Res() res: Response) {

@@ -752,6 +752,47 @@ export class CanvasService {
     return null;
   }
 
+  /** Paginated list of assignment id + name (e.g. import / remap). */
+  async listAssignmentsBrief(
+    courseId: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<Array<{ id: string; name: string }>> {
+    const base = this.getBaseUrl(domainOverride);
+    const out: Array<{ id: string; name: string }> = [];
+    let page = 1;
+    const perPage = 100;
+    while (true) {
+      const url = `${base}/api/v1/courses/${courseId}/assignments?per_page=${perPage}&page=${page}`;
+      const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
+      const rawBody = await res.text();
+      if (!res.ok) {
+        if (res.status === 401) throw new CanvasTokenExpiredError(401);
+        appendLtiLog('canvas', 'listAssignmentsBrief failed', {
+          status: res.status,
+          bodyPreview: rawBody.slice(0, 200),
+        });
+        throw new Error(`Canvas list assignments failed: ${res.status} ${rawBody.slice(0, 400)}`);
+      }
+      const data = (() => {
+        try {
+          return JSON.parse(rawBody) as Array<{ id?: number; name?: string }>;
+        } catch {
+          return [];
+        }
+      })();
+      const list = data ?? [];
+      for (const a of list) {
+        if (a?.id != null) {
+          out.push({ id: String(a.id), name: String(a.name ?? '') });
+        }
+      }
+      if (list.length < perPage) break;
+      page++;
+    }
+    return out;
+  }
+
   async ensureAssignmentGroup(
     courseId: string,
     groupName: string,

@@ -589,6 +589,59 @@ export async function deleteConfiguredAssignment(assignmentId: string): Promise<
   if (!res.ok) throw new Error(body.message ?? `HTTP ${res.status}`);
 }
 
+export class ImportPromptConflictError extends Error {
+  readonly payload: unknown;
+  constructor(message: string, payload: unknown) {
+    super(message);
+    this.name = 'ImportPromptConflictError';
+    this.payload = payload;
+  }
+}
+
+export async function exportPromptManagerSettingsBlob(): Promise<Record<string, unknown>> {
+  return fetchJsonWithOAuthRedirect<Record<string, unknown>>(`${base}/settings-blob/export`);
+}
+
+export async function importPromptManagerSettingsBlob(body: {
+  mode: 'merge' | 'replace_selected';
+  blob?: Record<string, unknown>;
+  sourceCourseId?: string;
+  assignmentIdMap?: Record<string, string>;
+  replaceSourceAssignmentIds?: string[];
+  dryRun?: boolean;
+  skipSourceAssignmentIds?: string[];
+}): Promise<Record<string, unknown>> {
+  const res = await fetch(`${base}/settings-blob/import`, apiInit({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }));
+  const data = await res.json().catch(() => ({}));
+  const bodyOut = data as { redirectToOAuth?: boolean; needsManualToken?: boolean; message?: string };
+  if (res.status === 401 && bodyOut.redirectToOAuth) {
+    window.location.href = `/api/oauth/canvas?returnTo=${encodeURIComponent(window.location.href)}`;
+    throw new Error('Redirecting to Canvas OAuth');
+  }
+  if (res.status === 401 && bodyOut.needsManualToken) {
+    throw new NeedsManualTokenError(bodyOut.message);
+  }
+  if (res.status === 422) {
+    throw new ImportPromptConflictError(bodyOut.message ?? 'Resolve import conflicts', data);
+  }
+  if (!res.ok) {
+    throw new Error(bodyOut.message ?? `HTTP ${res.status}`);
+  }
+  return data as Record<string, unknown>;
+}
+
+export async function applyTrueWayTemplates(): Promise<{ updated: number; matches: Array<Record<string, unknown>> }> {
+  return fetchJsonWithOAuthRedirect(`${base}/settings-blob/apply-true-way-templates`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+  });
+}
+
 export async function buildDeckPrompts(
   selectedDecks: DeckConfig[],
   totalCards: number,

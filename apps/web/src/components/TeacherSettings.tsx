@@ -3,6 +3,7 @@ import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
 import { ManualTokenModal } from './ManualTokenModal';
 import { ltiTokenHeaders } from '../api/lti-token';
+import * as flashcardTeacherApi from '../api/flashcard-teacher.api';
 import './TeacherSettings.css';
 
 const TEACHER_PATTERNS = [
@@ -60,6 +61,9 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
   const [recreating, setRecreating] = useState(false);
   const [recreateAnnouncementError, setRecreateAnnouncementError] = useState<string | null>(null);
   const [showManualTokenModal, setShowManualTokenModal] = useState(false);
+  const [fcImportJson, setFcImportJson] = useState('');
+  const [fcImportBusy, setFcImportBusy] = useState(false);
+  const [fcImportMsg, setFcImportMsg] = useState<string | null>(null);
 
   const teacher = context && isTeacher(context.roles);
   const hasLti = context && context.courseId && context.userId !== 'standalone';
@@ -405,6 +409,69 @@ export function TeacherSettings({ context, onConfigChange, onFilteredPlaylists }
       )}
       {allPlaylists.length > 0 && (
         <p className="teacher-settings-footer">{allPlaylists.length} decks loaded</p>
+      )}
+      {teacher && hasLti && (
+        <div className="teacher-settings-footer" style={{ marginTop: 12, textAlign: 'left' }}>
+          <p style={{ marginBottom: 8, fontWeight: 600 }}>Import / export (LTI course copy)</p>
+          <div className="teacher-settings-actions" style={{ flexWrap: 'wrap', gap: 8 }}>
+            <button
+              type="button"
+              className="teacher-settings-btn"
+              disabled={fcImportBusy}
+              onClick={async () => {
+                setFcImportBusy(true);
+                setFcImportMsg(null);
+                try {
+                  const data = await flashcardTeacherApi.exportFlashcardSettingsBlob();
+                  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = 'flashcard-settings.json';
+                  a.click();
+                  URL.revokeObjectURL(url);
+                  setFcImportMsg('Downloaded flashcard-settings.json');
+                } catch (e) {
+                  setFcImportMsg(e instanceof Error ? e.message : String(e));
+                } finally {
+                  setFcImportBusy(false);
+                }
+              }}
+            >
+              Download settings JSON
+            </button>
+          </div>
+          <textarea
+            style={{ width: '100%', marginTop: 8, minHeight: 64, fontFamily: 'monospace', fontSize: 12 }}
+            value={fcImportJson}
+            onChange={(e) => setFcImportJson(e.target.value)}
+            placeholder='Paste {"v":1,"selectedCurriculums":[],"selectedUnits":[]} then merge'
+          />
+          <div className="teacher-settings-actions" style={{ marginTop: 8 }}>
+            <button
+              type="button"
+              className="teacher-settings-btn"
+              disabled={fcImportBusy || !fcImportJson.trim()}
+              onClick={async () => {
+                setFcImportBusy(true);
+                setFcImportMsg(null);
+                try {
+                  const blob = JSON.parse(fcImportJson) as { selectedCurriculums?: string[]; selectedUnits?: string[] };
+                  await flashcardTeacherApi.importFlashcardSettingsBlob({ mode: 'merge', blob });
+                  setFcImportMsg('Merged. Reload page or re-open settings to refresh.');
+                  onConfigChange?.();
+                } catch (e) {
+                  setFcImportMsg(e instanceof Error ? e.message : String(e));
+                } finally {
+                  setFcImportBusy(false);
+                }
+              }}
+            >
+              Merge pasted JSON
+            </button>
+          </div>
+          {fcImportMsg && <p style={{ marginTop: 8, fontSize: 13 }}>{fcImportMsg}</p>}
+        </div>
       )}
       {showManualTokenModal && (
         <ManualTokenModal

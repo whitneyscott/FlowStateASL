@@ -86,7 +86,13 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const [signToVoiceRequired, setSignToVoiceRequired] = useState(false);
   const [showSettings, setShowSettings] = useState(true);
   const [showManualTokenModal, setShowManualTokenModal] = useState(false);
-  
+  const [importJsonText, setImportJsonText] = useState('');
+  const [importSourceCourseId, setImportSourceCourseId] = useState('');
+  const [importIdMapJson, setImportIdMapJson] = useState('');
+  const [flashcardImportJson, setFlashcardImportJson] = useState('');
+  const [importBusy, setImportBusy] = useState(false);
+  const [importInfo, setImportInfo] = useState<string | null>(null);
+
   // Deck mode state
   const [promptMode, setPromptMode] = useState<'text' | 'decks' | 'youtube'>('text');
   const [selectedDecks, setSelectedDecks] = useState<promptApi.DeckConfig[]>([]);
@@ -912,6 +918,171 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     />
   );
 
+  const downloadJsonFile = useCallback((filename: string, obj: unknown) => {
+    const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, []);
+
+  const parseOptionalIdMap = useCallback((raw: string): Record<string, string> | undefined => {
+    const t = raw.trim();
+    if (!t) return undefined;
+    const o = JSON.parse(t) as unknown;
+    if (!o || typeof o !== 'object' || Array.isArray(o)) {
+      throw new Error('Assignment id map must be a JSON object of old id → new id strings.');
+    }
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(o as Record<string, unknown>)) {
+      out[String(k)] = String(v);
+    }
+    return out;
+  }, []);
+
+  const handleExportPromptSettings = useCallback(async () => {
+    if (!teacher || !hasLti) return;
+    setImportBusy(true);
+    setImportInfo(null);
+    try {
+      const data = await promptApi.exportPromptManagerSettingsBlob();
+      downloadJsonFile('prompt-manager-settings.json', data);
+      setImportInfo('Prompt Manager settings export downloaded.');
+    } catch (e) {
+      setImportInfo(e instanceof Error ? e.message : String(e));
+      if (e instanceof promptApi.NeedsManualTokenError) setShowManualTokenModal(true);
+    } finally {
+      setImportBusy(false);
+    }
+  }, [teacher, hasLti, downloadJsonFile]);
+
+  const handleImportDryRun = useCallback(async () => {
+    if (!teacher || !hasLti) return;
+    setImportBusy(true);
+    setImportInfo(null);
+    try {
+      const sourceCourseId = importSourceCourseId.trim();
+      const txt = importJsonText.trim();
+      if (!txt && !sourceCourseId) {
+        setImportInfo('Paste JSON or enter a source course id.');
+        return;
+      }
+      const blob = txt ? (JSON.parse(txt) as Record<string, unknown>) : undefined;
+      const assignmentIdMap = importIdMapJson.trim() ? parseOptionalIdMap(importIdMapJson) : undefined;
+      const res = await promptApi.importPromptManagerSettingsBlob({
+        mode: 'merge',
+        ...(blob ? { blob } : {}),
+        ...(sourceCourseId ? { sourceCourseId } : {}),
+        ...(assignmentIdMap ? { assignmentIdMap } : {}),
+        dryRun: true,
+      });
+      setImportInfo(JSON.stringify(res, null, 2));
+    } catch (e) {
+      if (e instanceof promptApi.ImportPromptConflictError) {
+        setImportInfo(JSON.stringify(e.payload, null, 2));
+      } else {
+        setImportInfo(e instanceof Error ? e.message : String(e));
+      }
+      if (e instanceof promptApi.NeedsManualTokenError) setShowManualTokenModal(true);
+    } finally {
+      setImportBusy(false);
+    }
+  }, [teacher, hasLti, importJsonText, importSourceCourseId, importIdMapJson, parseOptionalIdMap]);
+
+  const handleImportMerge = useCallback(async () => {
+    if (!teacher || !hasLti) return;
+    setImportBusy(true);
+    setImportInfo(null);
+    try {
+      const sourceCourseId = importSourceCourseId.trim();
+      const txt = importJsonText.trim();
+      if (!txt && !sourceCourseId) {
+        setImportInfo('Paste JSON or enter a source course id.');
+        return;
+      }
+      const blob = txt ? (JSON.parse(txt) as Record<string, unknown>) : undefined;
+      const assignmentIdMap = importIdMapJson.trim() ? parseOptionalIdMap(importIdMapJson) : undefined;
+      const res = await promptApi.importPromptManagerSettingsBlob({
+        mode: 'merge',
+        ...(blob ? { blob } : {}),
+        ...(sourceCourseId ? { sourceCourseId } : {}),
+        ...(assignmentIdMap ? { assignmentIdMap } : {}),
+        dryRun: false,
+      });
+      setImportInfo(JSON.stringify(res, null, 2));
+      await loadAssignments();
+    } catch (e) {
+      if (e instanceof promptApi.ImportPromptConflictError) {
+        setImportInfo(JSON.stringify(e.payload, null, 2));
+      } else {
+        setImportInfo(e instanceof Error ? e.message : String(e));
+      }
+      if (e instanceof promptApi.NeedsManualTokenError) setShowManualTokenModal(true);
+    } finally {
+      setImportBusy(false);
+    }
+  }, [teacher, hasLti, importJsonText, importSourceCourseId, importIdMapJson, parseOptionalIdMap, loadAssignments]);
+
+  const handleApplyTrueWay = useCallback(async () => {
+    if (!teacher || !hasLti) return;
+    setImportBusy(true);
+    setImportInfo(null);
+    try {
+      const res = await promptApi.applyTrueWayTemplates();
+      setImportInfo(JSON.stringify(res, null, 2));
+      await loadAssignments();
+    } catch (e) {
+      setImportInfo(e instanceof Error ? e.message : String(e));
+      if (e instanceof promptApi.NeedsManualTokenError) setShowManualTokenModal(true);
+    } finally {
+      setImportBusy(false);
+    }
+  }, [teacher, hasLti, loadAssignments]);
+
+  const handleExportFlashcard = useCallback(async () => {
+    if (!teacher || !hasLti) return;
+    setImportBusy(true);
+    setImportInfo(null);
+    try {
+      const data = await flashcardTeacherApi.exportFlashcardSettingsBlob();
+      downloadJsonFile('flashcard-settings.json', data);
+      setImportInfo('Flashcard settings export downloaded.');
+    } catch (e) {
+      setImportInfo(e instanceof Error ? e.message : String(e));
+      if (e instanceof promptApi.NeedsManualTokenError) setShowManualTokenModal(true);
+    } finally {
+      setImportBusy(false);
+    }
+  }, [teacher, hasLti, downloadJsonFile]);
+
+  const handleFlashcardMerge = useCallback(async () => {
+    if (!teacher || !hasLti) return;
+    const txt = flashcardImportJson.trim();
+    if (!txt && !importSourceCourseId.trim()) {
+      setImportInfo('Paste flashcard JSON or set source course id above.');
+      return;
+    }
+    setImportBusy(true);
+    setImportInfo(null);
+    try {
+      const sourceCourseId = importSourceCourseId.trim();
+      const blob = txt ? (JSON.parse(txt) as { selectedCurriculums?: string[]; selectedUnits?: string[] }) : undefined;
+      const res = await flashcardTeacherApi.importFlashcardSettingsBlob({
+        mode: 'merge',
+        ...(blob ? { blob } : {}),
+        ...(sourceCourseId ? { sourceCourseId } : {}),
+      });
+      setImportInfo(JSON.stringify(res, null, 2));
+    } catch (e) {
+      setImportInfo(e instanceof Error ? e.message : String(e));
+      if (e instanceof promptApi.NeedsManualTokenError) setShowManualTokenModal(true);
+    } finally {
+      setImportBusy(false);
+    }
+  }, [teacher, hasLti, flashcardImportJson, importSourceCourseId]);
+
   if (!teacher || !context) {
     return (
       <>
@@ -1053,6 +1224,78 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         <h1 className="prompter-settings-page-title">Prompt Manager Settings</h1>
         {error && <div className="prompter-alert-error">{error}</div>}
         {saved && <div className="prompter-alert-success">Saved.</div>}
+
+        {teacher && hasLti && (
+          <div className="prompter-settings-card prompter-settings-card-compact" style={{ marginTop: '0.75rem' }}>
+            <h2 className="prompter-settings-card-title">Import and restore</h2>
+            <p className="prompter-settings-label prompter-settings-label-block">
+              Download Prompt Manager or Flashcard settings as JSON, or merge from another course (source course id) or a
+              pasted export. Cross-course import clears module and rubric links on imported configs; assignment ids are
+              remapped by matching assignment names when Canvas ids differ. Use Preview import to see conflicts before
+              merging.
+            </p>
+            <div className="prompter-settings-actions-row prompter-settings-actions-row-mb-sm">
+              <button type="button" className="prompter-btn-secondary" disabled={importBusy} onClick={handleExportPromptSettings}>
+                {importBusy ? '…' : 'Download Prompt settings JSON'}
+              </button>
+              <button type="button" className="prompter-btn-secondary" disabled={importBusy} onClick={handleApplyTrueWay}>
+                Apply TRUE+WAY title templates
+              </button>
+              <button type="button" className="prompter-btn-secondary" disabled={importBusy} onClick={handleExportFlashcard}>
+                Download Flashcard settings JSON
+              </button>
+            </div>
+            <label className="prompter-settings-label">Optional: source Canvas course id (cross-course)</label>
+            <input
+              className="prompter-settings-input"
+              value={importSourceCourseId}
+              onChange={(e) => setImportSourceCourseId(e.target.value)}
+              placeholder="Numeric course id"
+            />
+            <label className="prompter-settings-label">Paste Prompt Manager settings JSON (omit if using source course only)</label>
+            <textarea
+              className="prompter-settings-input"
+              rows={5}
+              value={importJsonText}
+              onChange={(e) => setImportJsonText(e.target.value)}
+              placeholder='{"v":1,"configs":{...}}'
+            />
+            <label className="prompter-settings-label">Optional assignment id map JSON (old Canvas id to new id)</label>
+            <textarea
+              className="prompter-settings-input"
+              rows={2}
+              value={importIdMapJson}
+              onChange={(e) => setImportIdMapJson(e.target.value)}
+              placeholder='{"12345":"67890"}'
+            />
+            <div className="prompter-settings-actions-row">
+              <button type="button" className="prompter-btn-secondary" disabled={importBusy} onClick={handleImportDryRun}>
+                Preview Prompt import
+              </button>
+              <button type="button" className="prompter-btn-ready" disabled={importBusy} onClick={handleImportMerge}>
+                Merge Prompt import
+              </button>
+            </div>
+            <label className="prompter-settings-label">Paste Flashcard settings JSON (merge with current)</label>
+            <textarea
+              className="prompter-settings-input"
+              rows={3}
+              value={flashcardImportJson}
+              onChange={(e) => setFlashcardImportJson(e.target.value)}
+              placeholder='{"v":1,"selectedCurriculums":[],"selectedUnits":[]}'
+            />
+            <div className="prompter-settings-actions-row">
+              <button type="button" className="prompter-btn-ready" disabled={importBusy} onClick={handleFlashcardMerge}>
+                Merge Flashcard settings
+              </button>
+            </div>
+            {importInfo && (
+              <pre className="prompter-settings-label" style={{ whiteSpace: 'pre-wrap', fontSize: 12, marginTop: 8 }}>
+                {importInfo}
+              </pre>
+            )}
+          </div>
+        )}
 
         {showForm && (
           <>
