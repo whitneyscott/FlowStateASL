@@ -3647,12 +3647,15 @@ export class PromptService {
   ): Promise<PromptConfigJson> {
     let name = canvasAssignmentName.trim() || 'ASL Express Assignment';
     let assignmentGroupId: string | undefined;
+    let rubricId: string | undefined;
     try {
       const assign = await this.canvas.getAssignment(courseId, assignmentId, domainOverride, token);
       if (assign?.name && String(assign.name).trim()) name = String(assign.name).trim();
       if (assign?.assignment_group_id != null) {
         assignmentGroupId = String(assign.assignment_group_id);
       }
+      const linkedRid = (assign?.linkedRubricId ?? '').trim();
+      if (linkedRid) rubricId = linkedRid;
     } catch {
       /* keep name / omit group */
     }
@@ -3662,6 +3665,7 @@ export class PromptService {
       accessCode: '',
       assignmentName: name,
       ...(assignmentGroupId ? { assignmentGroupId } : {}),
+      ...(rubricId ? { rubricId } : {}),
       moduleId: moduleIdTrim,
       promptMode: 'text',
     };
@@ -3808,6 +3812,27 @@ export class PromptService {
     if (!t) return undefined;
     if (extractPromptManagerSettingsBlobFromCanvasContent(t)) return undefined;
     return t;
+  }
+
+  /**
+   * Enrich imported config with Canvas-backed fields so Prompt Manager data reflects attached
+   * rubric/instructions immediately after import.
+   */
+  private applyCanvasAssignmentImportHydration(
+    cfg: PromptConfigJson,
+    assign: Awaited<ReturnType<CanvasService['getAssignment']>>,
+  ): PromptConfigJson {
+    if (!assign) return cfg;
+    let next = { ...cfg };
+    const fromCanvas = this.canvasDescriptionForInstructionsImport(assign.description);
+    if (fromCanvas !== undefined) {
+      next = { ...next, instructions: fromCanvas };
+    }
+    const linkedRubricId = (assign.linkedRubricId ?? '').trim();
+    if (linkedRubricId) {
+      next = { ...next, rubricId: linkedRubricId };
+    }
+    return next;
   }
 
   /** Teacher: full Prompt Manager settings blob for backup / cross-course import. */
@@ -4014,12 +4039,11 @@ export class PromptService {
       importedAssignmentIds.map(async (aid) => {
         try {
           const assign = await this.canvas.getAssignment(ctx.courseId, aid, domainOverride, token);
-          const fromCanvas = this.canvasDescriptionForInstructionsImport(assign?.description);
-          if (fromCanvas !== undefined && mergedConfigs[aid]) {
-            mergedConfigs[aid] = { ...mergedConfigs[aid], instructions: fromCanvas };
+          if (mergedConfigs[aid]) {
+            mergedConfigs[aid] = this.applyCanvasAssignmentImportHydration(mergedConfigs[aid], assign);
           }
         } catch (e) {
-          appendLtiLog('prompt-import', 'importPromptManagerSettingsBlob: instructions from Canvas description skipped', {
+          appendLtiLog('prompt-import', 'importPromptManagerSettingsBlob: Canvas hydration skipped', {
             assignmentId: aid,
             error: e instanceof Error ? e.message : String(e),
           });
@@ -4133,7 +4157,9 @@ export class PromptService {
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
     const all = await this.canvas.listAssignmentsBrief(ctx.courseId, domainOverride, token);
     const byName = (a: CanvasAssignmentBrief, b: CanvasAssignmentBrief) => a.name.localeCompare(b.name);
-    const settingsTitleCandidates = all.filter((a) => a.name.toLowerCase().includes('settings')).sort(byName);
+    const settingsTitleCandidates = all
+      .filter((a) => a.name.toLowerCase().includes('prompt manager settings'))
+      .sort(byName);
     return {
       allAssignments: [...all].sort(byName),
       settingsTitleCandidates,
@@ -4297,12 +4323,9 @@ export class PromptService {
     merged.moduleId = moduleIdTrim;
     try {
       const targetAssign = await this.canvas.getAssignment(ctx.courseId, targetAid, domainOverride, token);
-      const fromCanvas = this.canvasDescriptionForInstructionsImport(targetAssign?.description);
-      if (fromCanvas !== undefined) {
-        merged = { ...merged, instructions: fromCanvas };
-      }
+      merged = this.applyCanvasAssignmentImportHydration(merged, targetAssign);
     } catch (e) {
-      appendLtiLog('prompt-import', 'importSinglePromptAssignmentFromSourceAssignment: instructions from Canvas description skipped', {
+      appendLtiLog('prompt-import', 'importSinglePromptAssignmentFromSourceAssignment: Canvas hydration skipped', {
         targetAssignmentId: targetAid,
         error: e instanceof Error ? e.message : String(e),
       });
