@@ -2186,7 +2186,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
             <p className="prompter-hint">
               Pick a Canvas assignment whose <strong>description</strong> holds exported Prompt Manager JSON (titles
               containing &quot;Settings&quot; are listed first). Wholesale merges the whole blob into this
-              course&apos;s active settings. Single assignment copies one entry onto the Canvas assignment you choose.
+              course's active settings. Single assignment copies one entry onto the Canvas assignment you choose.
             </p>
             <div className="prompter-settings-actions-row prompter-settings-actions-row-mb-sm">
               <button
@@ -2233,7 +2233,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
             {importModalTab === 'wholesale' && (
               <>
                 <p className="prompter-hint">
-                  Preview shows remap conflicts. Merge writes into this course&apos;s Prompt Manager Settings assignment.
+                  Preview shows remap conflicts. Merge writes into this course's Prompt Manager Settings assignment.
                 </p>
                 <div className="prompter-settings-actions-row">
                   <button
