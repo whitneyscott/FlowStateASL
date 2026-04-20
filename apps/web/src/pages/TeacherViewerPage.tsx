@@ -583,6 +583,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   const rightSidebarRef = useRef<HTMLDivElement>(null);
   const resizeDebugLastSentAtRef = useRef(0);
   const [textPromptVisible, setTextPromptVisible] = useState(false);
+  const [captionHelpOpen, setCaptionHelpOpen] = useState(false);
   const [sourceCardPreviewVideoId, setSourceCardPreviewVideoId] = useState<string | null>(null);
   const ytStimulusRef = useRef<YoutubeIframePlayerHandle>(null);
   const [teacherStimulusCaptions, setTeacherStimulusCaptions] = useState(false);
@@ -594,6 +595,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   /* Teachers with assignmentId are treated as grading mode even without grading=1 (e.g. Config "Open for Grading" or direct link). */
   const gradingMode = teacher && (gradingFromUrl || !!assignmentId);
   const current = gradingMode ? submissions[index] : mySubmission;
+  const noSubmissionsInGradingMode = gradingMode && submissions.length === 0;
 
   useEffect(() => {
     if (!gradingMode || submissions.length === 0) {
@@ -634,6 +636,10 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     const pf = gradingPrefetchByUserId.get(current.userId);
     return pf?.captionsVtt ?? current.captionsVtt;
   }, [gradingMode, current?.userId, current?.captionsVtt, gradingPrefetchByUserId]);
+
+  useEffect(() => {
+    setCaptionHelpOpen(false);
+  }, [current?.userId, assignmentId]);
 
   const youtubeStimulusForGrading = useMemo(
     () => parseYoutubeMediaStimulusFromComments(current?.submissionComments),
@@ -1172,13 +1178,39 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     [current?.body, current?.submissionComments],
   );
   const isDeckPromptMode = deckTimeline.length > 0;
-  /** Deck submissions carry card timing in JSON metadata, not transcript VTT; hide caption UX for that path. */
-  const submissionCaptionsForPlayer = useMemo(
-    () => (isDeckPromptMode ? undefined : submissionCaptionsVtt),
-    [isDeckPromptMode, submissionCaptionsVtt],
-  );
-  const deckGradingStackOrder = isDeckPromptMode && gradingMode;
   const isTextPromptMode = !isDeckPromptMode;
+  /** Plain text + deck prompts do not use burned-in transcript tracks; YouTube / sign-to-voice may. */
+  const embedSubmissionVtt = useMemo(
+    () =>
+      !isDeckPromptMode &&
+      (assignment?.promptMode === 'youtube' ||
+        assignment?.promptMode === 'decks' ||
+        assignment?.signToVoiceRequired === true),
+    [isDeckPromptMode, assignment?.promptMode, assignment?.signToVoiceRequired],
+  );
+  const submissionCaptionsForPlayer = useMemo(
+    () => (embedSubmissionVtt ? submissionCaptionsVtt : undefined),
+    [embedSubmissionVtt, submissionCaptionsVtt],
+  );
+  /** Teacher grading with a selected submission: reorder column so video, comments, then rubric/context, then tools. */
+  const viewerGradingStackOrder = gradingMode && !!teacher && !!current && !noSubmissionsInGradingMode;
+  /** OS/browser live-caption tips: only where transcript-style playback matters (not deck or static text). */
+  const showCaptionsAccessibilityHelp = useMemo(
+    () =>
+      gradingMode &&
+      !!current?.userId &&
+      !noSubmissionsInGradingMode &&
+      !isDeckPromptMode &&
+      (assignment?.promptMode === 'youtube' || assignment?.signToVoiceRequired === true),
+    [
+      gradingMode,
+      current?.userId,
+      noSubmissionsInGradingMode,
+      isDeckPromptMode,
+      assignment?.promptMode,
+      assignment?.signToVoiceRequired,
+    ],
+  );
   const activeDeckPrompt = useMemo(
     () => activeDeckPromptAt(currentTime, deckTimeline),
     [currentTime, deckTimeline],
@@ -1616,7 +1648,6 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
 
   const promptUsed = getPromptFromComments(current?.body, current?.submissionComments, current?.promptHtml);
   const hasSubmissionNoVideo = current && !current.videoUrl;
-  const noSubmissionsInGradingMode = gradingMode && submissions.length === 0;
 
   return (
     <>
@@ -1926,10 +1957,10 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
         </aside>
         <div className="prompter-viewer-resize-handle" id="resize-handle-left" title="Drag to resize" />
         <main
-          className={`prompter-viewer-center${deckGradingStackOrder ? ' prompter-viewer-center--deck-grading-stack' : ''}`}
+          className={`prompter-viewer-center${viewerGradingStackOrder ? ' prompter-viewer-center--viewer-grading-stack' : ''}`}
           id="viewer-center"
         >
-          <div className="prompter-viewer-slot-top">
+          <div className={viewerGradingStackOrder ? 'prompter-viewer-slot-top' : undefined}>
             {error && <div className="prompter-viewer-error-box">{error}</div>}
             {noSubmissionsInGradingMode && (
               <div className="prompter-viewer-no-submissions">
@@ -1946,7 +1977,9 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
           </div>
 
           {assignmentId && (
-            <div className="prompter-viewer-center-row prompter-viewer-center-row--title prompter-viewer-slot-assignment-title">
+            <div
+              className={`prompter-viewer-center-row prompter-viewer-center-row--title${viewerGradingStackOrder ? ' prompter-viewer-slot-assignment-title' : ''}`}
+            >
               <h1 className="prompter-viewer-assignment-title">
                 {assignment?.name?.trim() || `Assignment ${assignmentId}`}
               </h1>
@@ -1954,7 +1987,9 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
           )}
 
           {gradingMode && submissions.length > 0 && (
-            <div className="prompter-viewer-center-row prompter-viewer-center-row--submission-nav prompter-viewer-slot-deck-later-nav">
+            <div
+              className={`prompter-viewer-center-row prompter-viewer-center-row--submission-nav${viewerGradingStackOrder ? ' prompter-viewer-slot-deck-later-nav' : ''}`}
+            >
               <div className="prompter-viewer-submission-nav-inner">
                 <div className="prompter-viewer-dropdown-row prompter-viewer-dropdown-row--inline">
                   <label htmlFor="submission-select">Submission:</label>
@@ -1997,7 +2032,9 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
           )}
 
           {gradingMode && current && (
-            <div className="prompter-viewer-center-row prompter-viewer-center-row--grade prompter-viewer-slot-deck-later-grade">
+            <div
+              className={`prompter-viewer-center-row prompter-viewer-center-row--grade${viewerGradingStackOrder ? ' prompter-viewer-slot-deck-later-grade' : ''}`}
+            >
               <div className="prompter-viewer-grade-row-full">
                 {pointsPossible != null && (
                   <>
@@ -2034,7 +2071,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
             </div>
           )}
 
-          <div className="prompter-viewer-slot-submission-media">
+          <div className={viewerGradingStackOrder ? 'prompter-viewer-slot-submission-media' : undefined}>
           {youtubeDualLayout && youtubeStimulusForGrading && current?.videoUrl ? (
             <div className="prompter-viewer-center-row">
               <div className="prompter-viewer-youtube-dual">
@@ -2198,14 +2235,58 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
           )}
           </div>
 
-          {gradingMode && current && !noSubmissionsInGradingMode && !isDeckPromptMode ? (
-            <div className="prompter-viewer-center-row prompter-viewer-captions-access-wrap">
-              <CaptionsAccessibilityPanel />
+          {teacher && !noSubmissionsInGradingMode && (
+            <div
+              className={`prompter-viewer-center-row prompter-viewer-center-row--freeform-feedback${viewerGradingStackOrder ? ' prompter-viewer-slot-freeform-group' : ''}`}
+            >
+              <h2 className="prompter-viewer-section-heading">Free-form feedback</h2>
+              {activeFeedback.length > 0 && (
+                <div className="prompter-viewer-feedback-at-playhead" aria-live="polite">
+                  {activeFeedback.map((f) => (
+                    <span key={f.id} className="prompter-viewer-feedback-at-playhead-item">
+                      <strong>{formatTime(f.time)}</strong>:{' '}
+                      <FeedbackHtmlSnippet html={f.text} />{' '}
+                    </span>
+                  ))}
+                </div>
+              )}
+              <p className="prompter-hint prompter-viewer-feedback-richtext-hint">
+                Rich text feedback is saved as HTML on the Canvas submission. Press <strong>Enter</strong> to post at the
+                current time; use <strong>Shift+Enter</strong> for a new line.
+              </p>
+              <div className="prompter-viewer-textarea-wrap" onKeyDown={handleCommentKeyDown}>
+                <TeacherFeedbackRichEditor
+                  key={`freeform-${current?.userId ?? 'none'}`}
+                  editorRef={commentEditorRef}
+                  initialHtml=""
+                  autoFocus={false}
+                />
+              </div>
+            </div>
+          )}
+
+          {showCaptionsAccessibilityHelp ? (
+            <div
+              className={`prompter-viewer-center-row prompter-viewer-captions-access-wrap${viewerGradingStackOrder ? ' prompter-viewer-slot-captions-disclosure' : ''}`}
+            >
+              <button
+                type="button"
+                className="prompter-viewer-grade-btn prompter-viewer-caption-help-toggle"
+                aria-expanded={captionHelpOpen}
+                onClick={() => setCaptionHelpOpen((o) => !o)}
+              >
+                {captionHelpOpen ? 'Hide' : 'Show'} caption & transcript accessibility tips
+              </button>
+              {captionHelpOpen ? (
+                <div className="prompter-viewer-caption-help-panel">
+                  <CaptionsAccessibilityPanel />
+                </div>
+              ) : null}
             </div>
           ) : null}
 
           {isDeckPromptMode && (
-            <div className="prompter-viewer-slot-deck-active-group">
+            <div className={viewerGradingStackOrder ? 'prompter-viewer-slot-deck-active-group' : undefined}>
               <div className="prompter-viewer-center-row prompter-viewer-center-row--active-header">
                 <h2 className="prompter-viewer-section-heading">Active Item</h2>
               </div>
@@ -2306,7 +2387,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
           )}
 
           {isTextPromptMode && (
-            <>
+            <div className={viewerGradingStackOrder ? 'prompter-viewer-slot-text-prompt-group' : undefined}>
               <div className="prompter-viewer-center-row prompter-viewer-center-row--active-header">
                 <h2 className="prompter-viewer-section-heading">Prompt</h2>
               </div>
@@ -2320,34 +2401,6 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                     {textPromptVisible ? 'Hide full prompt (side panel)' : 'Show full prompt (side panel)'}
                   </button>
                 </div>
-              </div>
-            </>
-          )}
-
-          {teacher && !noSubmissionsInGradingMode && (
-            <div className="prompter-viewer-center-row prompter-viewer-center-row--freeform-feedback prompter-viewer-slot-freeform-group">
-              <h2 className="prompter-viewer-section-heading">Free-form feedback</h2>
-              {activeFeedback.length > 0 && (
-                <div className="prompter-viewer-feedback-at-playhead" aria-live="polite">
-                  {activeFeedback.map((f) => (
-                    <span key={f.id} className="prompter-viewer-feedback-at-playhead-item">
-                      <strong>{formatTime(f.time)}</strong>:{' '}
-                      <FeedbackHtmlSnippet html={f.text} />{' '}
-                    </span>
-                  ))}
-                </div>
-              )}
-              <p className="prompter-hint prompter-viewer-feedback-richtext-hint">
-                Rich text feedback is saved as HTML on the Canvas submission. Press <strong>Enter</strong> to post at the
-                current time; use <strong>Shift+Enter</strong> for a new line.
-              </p>
-              <div className="prompter-viewer-textarea-wrap" onKeyDown={handleCommentKeyDown}>
-                <TeacherFeedbackRichEditor
-                  key={`freeform-${current?.userId ?? 'none'}`}
-                  editorRef={commentEditorRef}
-                  initialHtml=""
-                  autoFocus={false}
-                />
               </div>
             </div>
           )}
