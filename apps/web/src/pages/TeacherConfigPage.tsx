@@ -48,6 +48,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const [config, setConfig] = useState<promptApi.PromptConfig | null>(null);
   const [configuredAssignments, setConfiguredAssignments] = useState<promptApi.ConfiguredAssignment[]>([]);
   const [loadingAssignments, setLoadingAssignments] = useState(false);
+  /** Bumps when a new assignments fetch supersedes an older one; only the latest clears loading. */
+  const assignmentsLoadGenRef = useRef(0);
   const [, setGradeDropdownValue] = useState('');
   const [assignmentActionMode, setAssignmentActionMode] = useState<'edit' | 'grade' | 'create'>(
     createMode || !assignmentId ? 'create' : 'edit'
@@ -153,21 +155,28 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const loadAssignments = useCallback(async () => {
     if (!teacher || !hasLti) {
       console.log('[TeacherConfig] loadAssignments SKIPPED', { teacher: !!teacher, hasLti: !!hasLti, courseId: context?.courseId, userId: context?.userId });
+      assignmentsLoadGenRef.current += 1;
+      setLoadingAssignments(false);
       return;
     }
+    const gen = ++assignmentsLoadGenRef.current;
     console.log('[TeacherConfig] loadAssignments CALLING /api/prompt/configured-assignments');
     setLoadingAssignments(true);
     try {
       setLastFunction('GET /api/prompt/configured-assignments');
       const list = await promptApi.getConfiguredAssignments();
+      if (gen !== assignmentsLoadGenRef.current) return;
       setLastApiResult('GET /api/prompt/configured-assignments', 200, true);
       console.log('[TeacherConfig] getConfiguredAssignments response:', list);
       setConfiguredAssignments(list ?? []);
     } catch (e) {
+      if (gen !== assignmentsLoadGenRef.current) return;
       if (e instanceof promptApi.NeedsManualTokenError) setShowManualTokenModal(true);
       setConfiguredAssignments([]);
     } finally {
-      setLoadingAssignments(false);
+      if (gen === assignmentsLoadGenRef.current) {
+        setLoadingAssignments(false);
+      }
     }
   }, [teacher, hasLti, setLastFunction, setLastApiResult]);
 
@@ -362,7 +371,12 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   }, [hasLti, assignmentId, setLastFunction, setLastApiResult, setLastApiError]);
 
   useEffect(() => {
-    if (teacher && hasLti) loadAssignments();
+    if (teacher && hasLti) {
+      void loadAssignments();
+    } else {
+      assignmentsLoadGenRef.current += 1;
+      setLoadingAssignments(false);
+    }
   }, [teacher, hasLti, loadAssignments]);
 
   useEffect(() => {
@@ -1969,11 +1983,11 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
           onSuccess={() => {
             setShowManualTokenModal(false);
             setDeckPickerRefreshKey((k) => k + 1);
-            loadAssignments();
-            loadModules();
-            loadAssignmentGroups();
-            loadRubrics();
-            if (assignmentId) load(assignmentId);
+            void loadAssignments();
+            void loadModules();
+            void loadAssignmentGroups();
+            void loadRubrics();
+            if (assignmentId) void load(assignmentId);
           }}
           onDismiss={() => setShowManualTokenModal(false)}
         />
