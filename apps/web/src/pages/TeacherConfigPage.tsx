@@ -1689,9 +1689,6 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                             Sign-to-voice: transcribe student camera audio (Deepgram), mux captions into the submission, for
                             grading CC
                           </label>
-                          <p className="prompter-hint">
-                            Runs after Canvas accepts the upload. Requires <code>DEEPGRAM_API_KEY</code> on the API host.
-                          </p>
                         </div>
                       </div>
                     )}
