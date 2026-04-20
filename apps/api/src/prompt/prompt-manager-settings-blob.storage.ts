@@ -88,6 +88,7 @@ export async function readPromptManagerSettingsBlobFromCanvas(
   domainOverride: string | undefined,
   token: string,
 ): Promise<PromptManagerSettingsBlob | null> {
+  let assignmentBlob: PromptManagerSettingsBlob | null = null;
   const settingsAssignmentId = await canvas.findAssignmentByTitle(
     courseId,
     PROMPT_MANAGER_SETTINGS_ASSIGNMENT_TITLE,
@@ -116,7 +117,8 @@ export async function readPromptManagerSettingsBlobFromCanvas(
       blobParsed: !!blob,
       configCount,
     });
-    if (blob) return blob;
+    if (blob && configCount > 0) return blob;
+    assignmentBlob = blob;
   }
   const ann = await canvas.findSettingsAnnouncementByTitle(
     courseId,
@@ -139,9 +141,13 @@ export async function readPromptManagerSettingsBlobFromCanvas(
       blobParsed: !!annBlob,
       configCount: annConfigCount,
     });
-    return annBlob;
+    if (annBlob && annConfigCount > 0) {
+      // Recovery path: prefer non-empty announcement blob when assignment blob is empty/corrupt.
+      return annBlob;
+    }
+    if (annBlob) return annBlob;
   }
-  return null;
+  return assignmentBlob;
 }
 
 export async function writePromptManagerSettingsBlobToCanvas(

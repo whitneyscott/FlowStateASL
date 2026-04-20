@@ -3463,8 +3463,7 @@ export class PromptService {
     };
   }
 
-  /** Teacher only. Returns configured assignments with names and counts from Canvas.
-   * Purges any configs whose assignments have been deleted from Canvas (no DB - updates Prompt Manager Settings). */
+  /** Teacher only. Returns configured assignments with names and counts from Canvas. */
   async getConfiguredAssignments(ctx: LtiContext): Promise<
     Array<{ id: string; name: string; submissionCount: number; ungradedCount: number }>
   > {
@@ -3477,13 +3476,18 @@ export class PromptService {
     const configs = blob?.configs ?? {};
     const assignmentIds = Object.keys(configs).filter(Boolean);
     const result: Array<{ id: string; name: string; submissionCount: number; ungradedCount: number }> = [];
-    const validIds = new Set<string>();
     let assignmentNamesById: Map<string, string> | null = null;
     try {
       const brief = await this.canvas.listAssignmentsBrief(ctx.courseId, domainOverride, token);
-      assignmentNamesById = new Map(
-        brief.map((a) => [String(a.id).trim(), String(a.name ?? '').trim()]),
-      );
+      if (brief.length > 0) {
+        assignmentNamesById = new Map(
+          brief.map((a) => [String(a.id).trim(), String(a.name ?? '').trim()]),
+        );
+      } else {
+        appendLtiLog('prompt', 'getConfiguredAssignments: assignment brief list empty; using per-assignment fallback to avoid false negatives', {
+          configCount: assignmentIds.length,
+        });
+      }
     } catch (err) {
       appendLtiLog('prompt', 'getConfiguredAssignments: listAssignmentsBrief failed; falling back to per-assignment checks', {
         error: String(err),
@@ -3501,7 +3505,6 @@ export class PromptService {
         assignmentNameFromCanvas = assign?.name;
       }
       if (!assignmentExists) continue;
-      validIds.add(aid);
       let list: Array<{ user_id?: number; attachment?: { url?: string; download_url?: string }; attachments?: Array<{ url?: string; download_url?: string }>; versioned_attachments?: Array<Array<{ url?: string; download_url?: string }>>; workflow_state?: string }> = [];
       try {
         list = await this.canvas.listSubmissions(ctx.courseId, aid, domainOverride, token);
@@ -3515,32 +3518,6 @@ export class PromptService {
       const submissionCount = withFiles.length;
       const ungradedCount = withFiles.filter((s) => s.workflow_state !== 'graded').length;
       result.push({ id: aid, name, submissionCount, ungradedCount });
-    }
-    const purgedCount = assignmentIds.length - validIds.size;
-    if (purgedCount > 0) {
-      const purged = assignmentIds.filter((id) => !validIds.has(id));
-      appendLtiLog('prompt', 'purgeDeletedAssignments', {
-        purged,
-        count: purgedCount,
-      });
-      const newConfigs: Record<string, PromptConfigJson> = {};
-      for (const id of validIds) {
-        const c = configs[id];
-        if (c) newConfigs[id] = c;
-      }
-      // Read → merge → write: only remove purged assignment configs; preserve rest of blob.
-      const payload: PromptManagerSettingsBlob = {
-        ...blob,
-        v: 1,
-        configs: newConfigs,
-        updatedAt: new Date().toISOString(),
-      };
-      await writePromptManagerSettingsBlobToCanvas(this.canvas, {
-        courseId: ctx.courseId,
-        domainOverride,
-        token,
-        blob: payload,
-      });
     }
     result.sort((a, b) => a.name.localeCompare(b.name));
     appendLtiLog('viewer', 'getConfiguredAssignments', {
