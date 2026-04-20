@@ -1057,6 +1057,8 @@ export class CanvasService {
       unlockAt?: string;
       lockAt?: string;
       allowedAttempts?: number;
+      /** Canvas submission_types, e.g. online_upload + online_text_entry for ASL Express. */
+      submissionTypes?: string[];
     },
     domainOverride?: string,
     tokenOverride?: string | null,
@@ -1082,6 +1084,9 @@ export class CanvasService {
     if (updates.unlockAt !== undefined) body.unlock_at = updates.unlockAt || null;
     if (updates.lockAt !== undefined) body.lock_at = updates.lockAt || null;
     if (updates.allowedAttempts !== undefined) body.allowed_attempts = updates.allowedAttempts;
+    if (Array.isArray(updates.submissionTypes) && updates.submissionTypes.length > 0) {
+      body.submission_types = updates.submissionTypes;
+    }
     if (Object.keys(body).length === 0) return;
     appendLtiLog('canvas', 'updateAssignment: PUT to Canvas', {
       courseId,
@@ -1099,6 +1104,33 @@ export class CanvasService {
       const text = await res.text();
       throw new Error(`Canvas update assignment failed: ${res.status} ${text}`);
     }
+  }
+
+  /**
+   * ASL Express video flow expects file upload + online text (matches createPromptManagerAssignment).
+   * No-op when already configured.
+   */
+  async ensureAssignmentExpressSubmissionTypes(
+    courseId: string,
+    assignmentId: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<void> {
+    const cur = await this.getAssignment(courseId, assignmentId, domainOverride, tokenOverride);
+    const raw = cur?.submission_types ?? [];
+    const norm = raw.map((t) => String(t).toLowerCase());
+    if (norm.includes('online_upload') && norm.includes('online_text_entry')) {
+      appendLtiLog('canvas', 'ensureAssignmentExpressSubmissionTypes: already ok', { courseId, assignmentId });
+      return;
+    }
+    await this.updateAssignment(
+      courseId,
+      assignmentId,
+      { submissionTypes: ['online_upload', 'online_text_entry'] },
+      domainOverride,
+      tokenOverride,
+    );
+    appendLtiLog('canvas', 'ensureAssignmentExpressSubmissionTypes: updated', { courseId, assignmentId });
   }
 
   /** Delete an assignment from a course. */

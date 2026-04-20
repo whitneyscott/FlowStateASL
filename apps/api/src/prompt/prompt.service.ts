@@ -3821,6 +3821,7 @@ export class PromptService {
         staleAssignmentIds: string[];
         removedSourceSettingsAssignment?: boolean;
         removeSourceAssignmentError?: string;
+        submissionTypeUpdateFailures?: Array<{ assignmentId: string; error: string }>;
       }
   > {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
@@ -4002,6 +4003,21 @@ export class PromptService {
       blob: outBlob,
     });
 
+    const submissionTypeUpdateFailures: Array<{ assignmentId: string; error: string }> = [];
+    for (const aid of Object.keys(remappedConfigs)) {
+      if (!targetIds.has(aid)) continue;
+      try {
+        await this.canvas.ensureAssignmentExpressSubmissionTypes(ctx.courseId, aid, domainOverride, token);
+      } catch (e) {
+        const err = e instanceof Error ? e.message : String(e);
+        submissionTypeUpdateFailures.push({ assignmentId: aid, error: err });
+        appendLtiLog('prompt-import', 'importPromptManagerSettingsBlob: submission_types update failed', {
+          assignmentId: aid,
+          error: err,
+        });
+      }
+    }
+
     let removedSourceSettingsAssignment = false;
     let removeSourceAssignmentError: string | undefined;
     if (sourceAssignmentTrim) {
@@ -4041,6 +4057,7 @@ export class PromptService {
     return {
       imported: Object.keys(remappedConfigs).length,
       staleAssignmentIds,
+      ...(submissionTypeUpdateFailures.length > 0 ? { submissionTypeUpdateFailures } : {}),
       ...(sourceAssignmentTrim
         ? { removedSourceSettingsAssignment, ...(removeSourceAssignmentError ? { removeSourceAssignmentError } : {}) }
         : {}),
@@ -4247,6 +4264,13 @@ export class PromptService {
       resourceLinkAssignmentMap: targetBlob?.resourceLinkAssignmentMap ?? {},
       updatedAt: new Date().toISOString(),
     };
+    try {
+      await this.canvas.ensureAssignmentExpressSubmissionTypes(ctx.courseId, targetAid, domainOverride, token);
+    } catch (e) {
+      throw new BadRequestException(
+        `Could not set this assignment to file upload + text submission (required for ASL Express): ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
     await writePromptManagerSettingsBlobToCanvas(this.canvas, {
       courseId: ctx.courseId,
       domainOverride,
