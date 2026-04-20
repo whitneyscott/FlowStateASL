@@ -3478,11 +3478,29 @@ export class PromptService {
     const assignmentIds = Object.keys(configs).filter(Boolean);
     const result: Array<{ id: string; name: string; submissionCount: number; ungradedCount: number }> = [];
     const validIds = new Set<string>();
+    let assignmentNamesById: Map<string, string> | null = null;
+    try {
+      const brief = await this.canvas.listAssignmentsBrief(ctx.courseId, domainOverride, token);
+      assignmentNamesById = new Map(
+        brief.map((a) => [String(a.id).trim(), String(a.name ?? '').trim()]),
+      );
+    } catch (err) {
+      appendLtiLog('prompt', 'getConfiguredAssignments: listAssignmentsBrief failed; falling back to per-assignment checks', {
+        error: String(err),
+      });
+    }
     for (const aid of assignmentIds) {
-      const assign = await this.canvas.getAssignment(ctx.courseId, aid, domainOverride, token);
-      if (!assign) {
-        continue;
+      let assignmentExists = false;
+      let assignmentNameFromCanvas: string | undefined;
+      if (assignmentNamesById) {
+        assignmentNameFromCanvas = assignmentNamesById.get(aid);
+        assignmentExists = assignmentNameFromCanvas != null;
+      } else {
+        const assign = await this.canvas.getAssignment(ctx.courseId, aid, domainOverride, token);
+        assignmentExists = !!assign;
+        assignmentNameFromCanvas = assign?.name;
       }
+      if (!assignmentExists) continue;
       validIds.add(aid);
       let list: Array<{ user_id?: number; attachment?: { url?: string; download_url?: string }; attachments?: Array<{ url?: string; download_url?: string }>; versioned_attachments?: Array<Array<{ url?: string; download_url?: string }>>; workflow_state?: string }> = [];
       try {
@@ -3490,7 +3508,7 @@ export class PromptService {
       } catch {
         /* assignment exists but submissions may fail; use empty list */
       }
-      const name = assign?.name ?? configs[aid]?.assignmentName ?? `Assignment ${aid}`;
+      const name = assignmentNameFromCanvas ?? configs[aid]?.assignmentName ?? `Assignment ${aid}`;
       const withFiles = list.filter(
         (s) => submissionHasFile(s) || !!this.deepLinkFileStore.getSubmissionToken(ctx.courseId, aid, String(s.user_id ?? ''))
       );
