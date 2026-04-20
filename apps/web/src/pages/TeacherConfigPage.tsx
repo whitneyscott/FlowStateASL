@@ -48,8 +48,10 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const [config, setConfig] = useState<promptApi.PromptConfig | null>(null);
   const [configuredAssignments, setConfiguredAssignments] = useState<promptApi.ConfiguredAssignment[]>([]);
   const [loadingAssignments, setLoadingAssignments] = useState(false);
-  /** Bumps when a new assignments fetch supersedes an older one; only the latest clears loading. */
+  /** Supersedes in-flight fetches so only the latest response applies to `configuredAssignments`. */
   const assignmentsLoadGenRef = useRef(0);
+  /** Count of overlapping `loadAssignments` calls; spinner clears when the last one finishes. */
+  const assignmentsPendingRef = useRef(0);
   const [, setGradeDropdownValue] = useState('');
   const [assignmentActionMode, setAssignmentActionMode] = useState<'edit' | 'grade' | 'create'>(
     createMode || !assignmentId ? 'create' : 'edit'
@@ -160,21 +162,25 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       return;
     }
     const gen = ++assignmentsLoadGenRef.current;
+    assignmentsPendingRef.current++;
     console.log('[TeacherConfig] loadAssignments CALLING /api/prompt/configured-assignments');
     setLoadingAssignments(true);
     try {
       setLastFunction('GET /api/prompt/configured-assignments');
       const list = await promptApi.getConfiguredAssignments();
-      if (gen !== assignmentsLoadGenRef.current) return;
-      setLastApiResult('GET /api/prompt/configured-assignments', 200, true);
-      console.log('[TeacherConfig] getConfiguredAssignments response:', list);
-      setConfiguredAssignments(list ?? []);
-    } catch (e) {
-      if (gen !== assignmentsLoadGenRef.current) return;
-      if (e instanceof promptApi.NeedsManualTokenError) setShowManualTokenModal(true);
-      setConfiguredAssignments([]);
-    } finally {
       if (gen === assignmentsLoadGenRef.current) {
+        setLastApiResult('GET /api/prompt/configured-assignments', 200, true);
+        console.log('[TeacherConfig] getConfiguredAssignments response:', list);
+        setConfiguredAssignments(list ?? []);
+      }
+    } catch (e) {
+      if (gen === assignmentsLoadGenRef.current) {
+        if (e instanceof promptApi.NeedsManualTokenError) setShowManualTokenModal(true);
+        setConfiguredAssignments([]);
+      }
+    } finally {
+      assignmentsPendingRef.current = Math.max(0, assignmentsPendingRef.current - 1);
+      if (assignmentsPendingRef.current === 0) {
         setLoadingAssignments(false);
       }
     }
