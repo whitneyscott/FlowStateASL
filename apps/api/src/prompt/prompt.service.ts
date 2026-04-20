@@ -55,10 +55,12 @@ import type { Response } from 'express';
 import {
   type PromptManagerSettingsBlob,
   readPromptManagerSettingsBlobFromCanvas,
+  readPromptManagerSettingsBlobFromCanvasAssignmentDescription,
   writePromptManagerSettingsBlobToCanvas,
 } from './prompt-manager-settings-blob.storage';
 import { resolveAssignmentIdByName, type CanvasAssignmentBrief } from './assignment-id-resolve.util';
 import type { ImportPromptManagerBlobDto } from './dto/import-prompt-manager-blob.dto';
+import type { ImportSinglePromptAssignmentDto } from './dto/import-single-prompt-assignment.dto';
 import { buildPartialPromptConfigForTrueWay, scanTrueWayAssignments, type TrueWayTemplateMatch } from './true-way-templates';
 
 /**
@@ -3731,6 +3733,12 @@ export class PromptService {
 
     let sourceBlob: PromptManagerSettingsBlob;
     const sourceCourseTrim = (dto.sourceCourseId ?? '').trim();
+    const sourceAssignmentTrim = (dto.sourceAssignmentId ?? '').trim();
+    const sourceCount =
+      (sourceCourseTrim ? 1 : 0) + (sourceAssignmentTrim ? 1 : 0) + (dto.blob != null ? 1 : 0);
+    if (sourceCount !== 1) {
+      throw new BadRequestException('Provide exactly one of: blob, sourceCourseId, or sourceAssignmentId');
+    }
     if (sourceCourseTrim) {
       try {
         const b = await readPromptManagerSettingsBlobFromCanvas(
@@ -3757,10 +3765,39 @@ export class PromptService {
           `Could not read Prompt Manager settings from course ${sourceCourseTrim}. Ensure your Canvas token can access that course.`,
         );
       }
+    } else if (sourceAssignmentTrim) {
+      try {
+        const b = await readPromptManagerSettingsBlobFromCanvasAssignmentDescription(
+          this.canvas,
+          ctx.courseId,
+          sourceAssignmentTrim,
+          domainOverride,
+          token,
+        );
+        if (!b?.configs || Object.keys(b.configs).length === 0) {
+          throw new BadRequestException(
+            'No Prompt Manager settings JSON found in that assignment description. Pick an assignment whose description contains the exported settings.',
+          );
+        }
+        sourceBlob = {
+          v: 1,
+          configs: { ...b.configs },
+          updatedAt: new Date().toISOString(),
+        };
+      } catch (e) {
+        if (e instanceof BadRequestException) throw e;
+        appendLtiLog('prompt-import', 'importPromptManagerSettingsBlob: source assignment read failed', {
+          sourceAssignmentId: sourceAssignmentTrim,
+          error: String(e),
+        });
+        throw new BadRequestException(
+          'Could not read Prompt Manager settings from the selected Canvas assignment. Check the assignment id and OAuth access.',
+        );
+      }
     } else if (dto.blob) {
       sourceBlob = this.normalizePromptImportPayload(dto.blob);
     } else {
-      throw new BadRequestException('Provide blob or sourceCourseId');
+      throw new BadRequestException('Provide blob, sourceCourseId, or sourceAssignmentId');
     }
 
     const sourceConfigs = { ...sourceBlob.configs };
@@ -3774,9 +3811,12 @@ export class PromptService {
 
     const targetList = await this.canvas.listAssignmentsBrief(ctx.courseId, domainOverride, token);
     const targetIds = new Set(targetList.map((a) => a.id));
-    const sourceList = sourceCourseTrim
-      ? await this.canvas.listAssignmentsBrief(sourceCourseTrim, domainOverride, token)
-      : null;
+    let sourceList: CanvasAssignmentBrief[] | null = null;
+    if (sourceCourseTrim) {
+      sourceList = await this.canvas.listAssignmentsBrief(sourceCourseTrim, domainOverride, token);
+    } else if (sourceAssignmentTrim) {
+      sourceList = targetList;
+    }
 
     const manual = { ...(dto.assignmentIdMap ?? {}) };
     const conflicts: Array<{ oldId: string; name: string; candidates: CanvasAssignmentBrief[] }> = [];
@@ -3865,11 +3905,168 @@ export class PromptService {
       courseId: ctx.courseId,
       mode: dto.mode,
       sourceCourseId: sourceCourseTrim || null,
+      sourceAssignmentId: sourceAssignmentTrim || null,
       importedKeys: Object.keys(remappedConfigs).length,
     });
 
     const staleAssignmentIds = Object.keys(mergedConfigs).filter((id) => !targetIds.has(id));
     return { imported: Object.keys(remappedConfigs).length, staleAssignmentIds };
+  }
+
+  private findSourceConfigKeyForTargetAssignment(
+    sourceConfigs: Record<string, PromptConfigJson>,
+    targetAssignmentId: string,
+    targetAssignmentName: string,
+  ): string | undefined {
+    if (sourceConfigs[targetAssignmentId]) return targetAssignmentId;
+    const tName = targetAssignmentName.trim();
+    if (!tName) return undefined;
+    const onlyTarget: CanvasAssignmentBrief[] = [{ id: targetAssignmentId, name: tName }];
+    for (const k of Object.keys(sourceConfigs)) {
+      const cfgName = (sourceConfigs[k]?.assignmentName ?? '').trim();
+      if (!cfgName) continue;
+      const r = resolveAssignmentIdByName(cfgName, onlyTarget);
+      if (r.status === 'matched' && r.newId === targetAssignmentId) return k;
+    }
+    return undefined;
+  }
+
+  /** Brief assignment lists for Prompt Manager import UI (same course). */
+  async getCanvasAssignmentsForImport(ctx: LtiContext): Promise<{
+    allAssignments: CanvasAssignmentBrief[];
+    settingsTitleCandidates: CanvasAssignmentBrief[];
+  }> {
+    const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
+    if (!token) {
+      throw new ForbiddenException('Canvas OAuth token required');
+    }
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
+    const all = await this.canvas.listAssignmentsBrief(ctx.courseId, domainOverride, token);
+    const byName = (a: CanvasAssignmentBrief, b: CanvasAssignmentBrief) => a.name.localeCompare(b.name);
+    const settingsTitleCandidates = all.filter((a) => a.name.toLowerCase().includes('settings')).sort(byName);
+    return {
+      allAssignments: [...all].sort(byName),
+      settingsTitleCandidates,
+    };
+  }
+
+  /**
+   * Partition current-course assignments for the single-assignment import dropdown:
+   * prioritized = Canvas ids that appear as keys in the source blob; other = the rest.
+   */
+  async getAssignmentImportOptionsForImport(
+    ctx: LtiContext,
+    sourceSettingsAssignmentId: string,
+  ): Promise<{
+    prioritizedAssignments: CanvasAssignmentBrief[];
+    otherAssignments: CanvasAssignmentBrief[];
+    sourceConfigCount: number;
+  }> {
+    const sourceId = (sourceSettingsAssignmentId ?? '').trim();
+    if (!sourceId) {
+      throw new BadRequestException('sourceSettingsAssignmentId is required');
+    }
+    const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
+    if (!token) {
+      throw new ForbiddenException('Canvas OAuth token required');
+    }
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
+    const blob = await readPromptManagerSettingsBlobFromCanvasAssignmentDescription(
+      this.canvas,
+      ctx.courseId,
+      sourceId,
+      domainOverride,
+      token,
+    );
+    const keys = new Set(Object.keys(blob?.configs ?? {}));
+    const all = await this.canvas.listAssignmentsBrief(ctx.courseId, domainOverride, token);
+    const byName = (a: CanvasAssignmentBrief, b: CanvasAssignmentBrief) => a.name.localeCompare(b.name);
+    return {
+      prioritizedAssignments: all.filter((a) => keys.has(a.id)).sort(byName),
+      otherAssignments: all.filter((a) => !keys.has(a.id)).sort(byName),
+      sourceConfigCount: keys.size,
+    };
+  }
+
+  /**
+   * Merge one assignment's prompt config from a chosen "settings" assignment description into the
+   * canonical Prompt Manager Settings blob for this course.
+   */
+  async importSinglePromptAssignmentFromSourceAssignment(
+    ctx: LtiContext,
+    dto: ImportSinglePromptAssignmentDto,
+  ): Promise<
+    | { dryRun: true; sourceKey: string; targetAssignmentId: string; assignmentName: string }
+    | { imported: true; sourceKey: string; targetAssignmentId: string }
+  > {
+    const sourceAid = (dto.sourceSettingsAssignmentId ?? '').trim();
+    const targetAid = (dto.targetAssignmentId ?? '').trim();
+    if (!sourceAid || !targetAid) {
+      throw new BadRequestException('sourceSettingsAssignmentId and targetAssignmentId are required');
+    }
+    const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
+    if (!token) {
+      throw new ForbiddenException('Canvas OAuth token required');
+    }
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
+    const sourceBlob = await readPromptManagerSettingsBlobFromCanvasAssignmentDescription(
+      this.canvas,
+      ctx.courseId,
+      sourceAid,
+      domainOverride,
+      token,
+    );
+    const sourceConfigs = sourceBlob?.configs ?? {};
+    if (Object.keys(sourceConfigs).length === 0) {
+      throw new BadRequestException(
+        'No configs found in the source assignment description. Choose an assignment that stores exported Prompt Manager JSON.',
+      );
+    }
+    const targetList = await this.canvas.listAssignmentsBrief(ctx.courseId, domainOverride, token);
+    const targetRow = targetList.find((a) => a.id === targetAid);
+    if (!targetRow) {
+      throw new BadRequestException('Target assignment not found in this course');
+    }
+    const sourceKey = this.findSourceConfigKeyForTargetAssignment(sourceConfigs, targetAid, targetRow.name);
+    if (!sourceKey) {
+      throw new BadRequestException(
+        'No matching entry in the source settings for this assignment. Try a wholesale import, or ensure stored assignment names match the Canvas assignment title.',
+      );
+    }
+    const base = sourceConfigs[sourceKey];
+    if (!base) {
+      throw new BadRequestException('Source configuration is missing');
+    }
+    if (dto.dryRun) {
+      return {
+        dryRun: true,
+        sourceKey,
+        targetAssignmentId: targetAid,
+        assignmentName: targetRow.name,
+      };
+    }
+    const targetBlob = await readPromptManagerSettingsBlobFromCanvas(this.canvas, ctx.courseId, domainOverride, token);
+    const existingConfigs = { ...(targetBlob?.configs ?? {}) };
+    existingConfigs[targetAid] = this.clearCrossCoursePromptFields({ ...base });
+    const outBlob: PromptManagerSettingsBlob = {
+      ...(targetBlob ?? {}),
+      v: 1,
+      configs: existingConfigs,
+      resourceLinkAssignmentMap: targetBlob?.resourceLinkAssignmentMap ?? {},
+      updatedAt: new Date().toISOString(),
+    };
+    await writePromptManagerSettingsBlobToCanvas(this.canvas, {
+      courseId: ctx.courseId,
+      domainOverride,
+      token,
+      blob: outBlob,
+    });
+    appendLtiLog('prompt-import', 'importSinglePromptAssignmentFromSourceAssignment', {
+      courseId: ctx.courseId,
+      sourceKey,
+      targetAssignmentId: targetAid,
+    });
+    return { imported: true, sourceKey, targetAssignmentId: targetAid };
   }
 
   /** Teacher: scan for TRUE+WAY-style assignment titles and merge default Prompt Manager fields. */

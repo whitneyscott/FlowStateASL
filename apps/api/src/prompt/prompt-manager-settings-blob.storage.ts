@@ -33,6 +33,19 @@ export function extractPromptManagerSettingsBlobFromCanvasContent(raw: string): 
   return null;
 }
 
+/** Read a Prompt Manager settings blob from any Canvas assignment description (e.g. orphan "Settings" assignment). */
+export async function readPromptManagerSettingsBlobFromCanvasAssignmentDescription(
+  canvas: CanvasService,
+  courseId: string,
+  assignmentId: string,
+  domainOverride: string | undefined,
+  token: string,
+): Promise<PromptManagerSettingsBlob | null> {
+  const assignment = await canvas.getAssignment(courseId, assignmentId, domainOverride, token);
+  const raw = assignment?.description?.trim() ?? '';
+  return extractPromptManagerSettingsBlobFromCanvasContent(raw);
+}
+
 export async function ensurePromptManagerSettingsAssignmentId(
   canvas: CanvasService,
   courseId: string,

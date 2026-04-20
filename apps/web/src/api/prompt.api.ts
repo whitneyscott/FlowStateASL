@@ -602,10 +602,44 @@ export async function exportPromptManagerSettingsBlob(): Promise<Record<string, 
   return fetchJsonWithOAuthRedirect<Record<string, unknown>>(`${base}/settings-blob/export`);
 }
 
+export interface CanvasAssignmentBriefForImport {
+  id: string;
+  name: string;
+}
+
+export async function getCanvasAssignmentsForImport(): Promise<{
+  allAssignments: CanvasAssignmentBriefForImport[];
+  settingsTitleCandidates: CanvasAssignmentBriefForImport[];
+}> {
+  return fetchJsonWithOAuthRedirect(`${base}/canvas-assignments-for-import`);
+}
+
+export async function getAssignmentImportOptions(sourceSettingsAssignmentId: string): Promise<{
+  prioritizedAssignments: CanvasAssignmentBriefForImport[];
+  otherAssignments: CanvasAssignmentBriefForImport[];
+  sourceConfigCount: number;
+}> {
+  const q = new URLSearchParams({ sourceSettingsAssignmentId: sourceSettingsAssignmentId.trim() });
+  return fetchJsonWithOAuthRedirect(`${base}/settings-blob/assignment-import-options?${q.toString()}`);
+}
+
+export async function importSinglePromptAssignment(body: {
+  sourceSettingsAssignmentId: string;
+  targetAssignmentId: string;
+  dryRun?: boolean;
+}): Promise<Record<string, unknown>> {
+  return fetchJsonWithOAuthRedirect(`${base}/settings-blob/import-one-assignment`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
 export async function importPromptManagerSettingsBlob(body: {
   mode: 'merge' | 'replace_selected';
   blob?: Record<string, unknown>;
   sourceCourseId?: string;
+  sourceAssignmentId?: string;
   assignmentIdMap?: Record<string, string>;
   replaceSourceAssignmentIds?: string[];
   dryRun?: boolean;

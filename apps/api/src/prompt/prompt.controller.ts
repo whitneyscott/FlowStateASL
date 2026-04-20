@@ -9,6 +9,7 @@ import {
   Param,
   Post,
   Put,
+  Query,
   Req,
   Res,
   UseGuards,
@@ -33,6 +34,7 @@ import { getOAuth401Body } from '../common/utils/oauth-401.util';
 import { PromptService } from './prompt.service';
 import { PutPromptConfigDto } from './dto/prompt-config.dto';
 import { ImportPromptManagerBlobDto } from './dto/import-prompt-manager-blob.dto';
+import type { ImportSinglePromptAssignmentDto } from './dto/import-single-prompt-assignment.dto';
 import { VerifyAccessDto } from './dto/verify-access.dto';
 import { SavePromptDto } from './dto/save-prompt.dto';
 import { SubmitPromptDto } from './dto/submit-prompt.dto';
@@ -562,6 +564,40 @@ export class PromptController {
     }
   }
 
+  @Get('canvas-assignments-for-import')
+  @UseGuards(TeacherRoleGuard)
+  async getCanvasAssignmentsForImport(@Req() req: Request, @Res() res: Response) {
+    const ctx = this.getCtx(req);
+    try {
+      const result = await this.prompt.getCanvasAssignmentsForImport(ctx);
+      return res.json(result);
+    } catch (err) {
+      if (err instanceof CanvasTokenExpiredError) {
+        return res.status(401).json(getOAuth401Body(req));
+      }
+      throw err;
+    }
+  }
+
+  @Get('settings-blob/assignment-import-options')
+  @UseGuards(TeacherRoleGuard)
+  async getAssignmentImportOptions(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Query('sourceSettingsAssignmentId') sourceSettingsAssignmentId?: string,
+  ) {
+    const ctx = this.getCtx(req);
+    try {
+      const result = await this.prompt.getAssignmentImportOptionsForImport(ctx, sourceSettingsAssignmentId ?? '');
+      return res.json(result);
+    } catch (err) {
+      if (err instanceof CanvasTokenExpiredError) {
+        return res.status(401).json(getOAuth401Body(req));
+      }
+      throw err;
+    }
+  }
+
   @Post('settings-blob/import')
   @HttpCode(HttpStatus.OK)
   @UseGuards(TeacherRoleGuard)
@@ -569,6 +605,26 @@ export class PromptController {
     const ctx = this.getCtx(req);
     try {
       const result = await this.prompt.importPromptManagerSettingsBlob(ctx, dto);
+      return res.json(result);
+    } catch (err) {
+      if (err instanceof CanvasTokenExpiredError) {
+        return res.status(401).json(getOAuth401Body(req));
+      }
+      throw err;
+    }
+  }
+
+  @Post('settings-blob/import-one-assignment')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(TeacherRoleGuard)
+  async importOnePromptAssignment(
+    @Req() req: Request,
+    @Body() dto: ImportSinglePromptAssignmentDto,
+    @Res() res: Response,
+  ) {
+    const ctx = this.getCtx(req);
+    try {
+      const result = await this.prompt.importSinglePromptAssignmentFromSourceAssignment(ctx, dto);
       return res.json(result);
     } catch (err) {
       if (err instanceof CanvasTokenExpiredError) {
