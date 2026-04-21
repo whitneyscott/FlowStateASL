@@ -800,8 +800,17 @@ export class PromptController {
   async getConfiguredAssignments(@Req() req: Request, @Res() res: Response) {
     appendLtiLog('viewer', 'GET configured-assignments');
     const ctx = this.getCtx(req);
+    appendLtiLog('prompt-import-trace', 'GET /prompt/configured-assignments REQUEST', {
+      courseId: ctx.courseId,
+      resourceLinkId: ctx.resourceLinkId ?? '(none)',
+      assignmentId: ctx.assignmentId ?? '(none)',
+    });
     try {
       const list = await this.prompt.getConfiguredAssignments(ctx);
+      appendLtiLog('prompt-import-trace', 'GET /prompt/configured-assignments RESPONSE', {
+        count: list.length,
+        assignmentIds: list.map((a) => a.id).slice(0, 50),
+      });
       return res.json(list);
     } catch (err) {
       if (err instanceof CanvasTokenExpiredError) {

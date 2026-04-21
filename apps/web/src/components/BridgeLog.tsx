@@ -123,6 +123,18 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
     } else {
       newLines.push(...stv);
     }
+    newLines.push('');
+    newLines.push('--- Prompt Import / Config trace (tags prompt-import-trace, prompt-import) ---');
+    const imp = ltiLog.filter(
+      (line) => line.includes('] [prompt-import-trace] ') || line.includes('] [prompt-import] '),
+    );
+    if (imp.length === 0) {
+      newLines.push(
+        '(no prompt-import trace lines yet — run a single-assignment import or open teacher config load flows)',
+      );
+    } else {
+      newLines.push(...imp.slice(-200));
+    }
     setLines(newLines);
   }, [ltiLog, debugVersion]);
 

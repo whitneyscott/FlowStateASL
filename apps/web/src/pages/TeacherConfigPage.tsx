@@ -178,6 +178,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     const gen = ++assignmentsLoadGenRef.current;
     assignmentsPendingRef.current++;
     console.log('[TeacherConfig] loadAssignments CALLING /api/prompt/configured-assignments');
+    console.log('[TeacherConfig] loadAssignments START', { gen });
     setLoadingAssignments(true);
     try {
       setLastFunction('GET /api/prompt/configured-assignments');
@@ -185,6 +186,11 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       if (gen === assignmentsLoadGenRef.current) {
         setLastApiResult('GET /api/prompt/configured-assignments', 200, true);
         console.log('[TeacherConfig] getConfiguredAssignments response:', list);
+        console.log('[TeacherConfig] loadAssignments APPLY', {
+          gen,
+          count: Array.isArray(list) ? list.length : 0,
+          assignmentIds: Array.isArray(list) ? list.map((a) => a.id).slice(0, 20) : [],
+        });
         setConfiguredAssignments(list ?? []);
       }
     } catch (e) {
