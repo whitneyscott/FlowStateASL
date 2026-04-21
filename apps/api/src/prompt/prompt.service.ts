@@ -3800,12 +3800,14 @@ export class PromptService {
 
   /**
    * When importing into Prompt Manager, prefer the Canvas assignment's student-facing description as
-   * `instructions` — unless the description is (or embeds) Prompt Manager JSON blob data.
+   * `instructions`.
+   *
+   * Important: when Canvas explicitly returns an empty string, we preserve that and clear any
+   * inherited/source instructions so imported config matches the actual assignment description.
    */
   private canvasDescriptionForInstructionsImport(description: string | null | undefined): string | undefined {
-    const t = (description ?? '').trim();
-    if (!t) return undefined;
-    return t;
+    if (typeof description !== 'string') return undefined;
+    return description.trim();
   }
 
   /**
