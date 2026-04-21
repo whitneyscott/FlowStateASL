@@ -1169,7 +1169,12 @@ export class PromptService {
     // Hydrate key assignment-backed fields directly from Canvas so UI reflects current assignment state.
     // Keep blob values as fallback when Canvas read is unavailable.
     try {
-      const assignment = await this.canvas.getAssignment(ctx.courseId, assignmentId, domainOverride, token);
+      const { assignment, tokenSource } = await this.getAssignmentForImportHydration(
+        ctx,
+        assignmentId,
+        domainOverride,
+        token,
+      );
       if (assignment) {
         const hydrated: PromptConfigJson = {
           ...(config ?? { minutes: 5, prompts: [], accessCode: '' }),
@@ -1187,6 +1192,13 @@ export class PromptService {
           ...(assignment.linkedRubricId ? { rubricId: assignment.linkedRubricId } : {}),
         };
         if (!hydrated.promptMode) hydrated.promptMode = 'text';
+        appendLtiLog('prompt', 'getConfig: assignment hydration source', {
+          assignmentId,
+          tokenSource,
+          hasDescription: typeof assignment.description === 'string',
+          descriptionLength: typeof assignment.description === 'string' ? assignment.description.length : 0,
+          linkedRubricId: assignment.linkedRubricId ?? '(none)',
+        });
         return { ...hydrated, resolvedAssignmentId: assignmentId };
       }
     } catch (err) {
