@@ -3831,6 +3831,52 @@ export class PromptService {
     return next;
   }
 
+  /**
+   * Import hydration must not silently miss assignment descriptions.
+   * Try the effective token first, then fall back to the course-stored teacher token when different.
+   */
+  private async getAssignmentForImportHydration(
+    ctx: LtiContext,
+    assignmentId: string,
+    domainOverride: string | undefined,
+    effectiveToken: string,
+  ): Promise<{
+    assignment: Awaited<ReturnType<CanvasService['getAssignment']>> | null;
+    tokenSource: 'effective' | 'course_stored' | 'none';
+  }> {
+    const primary = await this.canvas.getAssignment(
+      ctx.courseId,
+      assignmentId,
+      domainOverride,
+      effectiveToken,
+    );
+    if (primary) return { assignment: primary, tokenSource: 'effective' };
+
+    const courseStoredToken = await this.courseSettings.getCourseStoredCanvasToken(ctx.courseId);
+    if (courseStoredToken?.trim() && courseStoredToken !== effectiveToken) {
+      try {
+        const fallback = await this.canvas.getAssignment(
+          ctx.courseId,
+          assignmentId,
+          domainOverride,
+          courseStoredToken,
+        );
+        if (fallback) {
+          appendLtiLog('prompt-import', 'import hydration: assignment read via course-stored token fallback', {
+            assignmentId,
+          });
+          return { assignment: fallback, tokenSource: 'course_stored' };
+        }
+      } catch (e) {
+        appendLtiLog('prompt-import', 'import hydration: course-stored token fallback read failed', {
+          assignmentId,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    }
+    return { assignment: null, tokenSource: 'none' };
+  }
+
   /** Teacher: full Prompt Manager settings blob for backup / cross-course import. */
   async exportPromptManagerSettingsBlob(ctx: LtiContext): Promise<PromptManagerSettingsBlob> {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
@@ -4031,10 +4077,26 @@ export class PromptService {
     }
 
     const importedAssignmentIds = Object.keys(remappedConfigs).filter((id) => targetIds.has(id));
+    const instructionHydrationFailures: Array<{ assignmentId: string; reason: string }> = [];
     await Promise.all(
       importedAssignmentIds.map(async (aid) => {
         try {
-          const assign = await this.canvas.getAssignment(ctx.courseId, aid, domainOverride, token);
+          const { assignment: assign } = await this.getAssignmentForImportHydration(
+            ctx,
+            aid,
+            domainOverride,
+            token,
+          );
+          if (!assign) {
+            instructionHydrationFailures.push({
+              assignmentId: aid,
+              reason: 'assignment_unreadable',
+            });
+            appendLtiLog('prompt-import', 'importPromptManagerSettingsBlob: assignment unreadable; instructions hydration skipped', {
+              assignmentId: aid,
+            });
+            return;
+          }
           if (mergedConfigs[aid]) {
             mergedConfigs[aid] = this.applyCanvasAssignmentImportHydration(mergedConfigs[aid], assign);
           }
@@ -4116,6 +4178,7 @@ export class PromptService {
     return {
       imported: Object.keys(remappedConfigs).length,
       staleAssignmentIds,
+      ...(instructionHydrationFailures.length > 0 ? { instructionHydrationFailures } : {}),
       ...(submissionTypeUpdateFailures.length > 0 ? { submissionTypeUpdateFailures } : {}),
       ...(sourceAssignmentTrim
         ? { removedSourceSettingsAssignment, ...(removeSourceAssignmentError ? { removeSourceAssignmentError } : {}) }
@@ -4318,13 +4381,28 @@ export class PromptService {
     }
     merged.moduleId = moduleIdTrim;
     try {
-      const targetAssign = await this.canvas.getAssignment(ctx.courseId, targetAid, domainOverride, token);
+      const { assignment: targetAssign, tokenSource } = await this.getAssignmentForImportHydration(
+        ctx,
+        targetAid,
+        domainOverride,
+        token,
+      );
+      if (!targetAssign) {
+        throw new BadRequestException(
+          'Could not read the target assignment from Canvas, so assignment description could not be imported into Instructions. Re-authorize Canvas token and retry.',
+        );
+      }
       merged = this.applyCanvasAssignmentImportHydration(merged, targetAssign);
+      appendLtiLog('prompt-import', 'importSinglePromptAssignmentFromSourceAssignment: instructions hydrated from assignment description', {
+        targetAssignmentId: targetAid,
+        tokenSource,
+      });
     } catch (e) {
       appendLtiLog('prompt-import', 'importSinglePromptAssignmentFromSourceAssignment: Canvas hydration skipped', {
         targetAssignmentId: targetAid,
         error: e instanceof Error ? e.message : String(e),
       });
+      throw e;
     }
     existingConfigs[targetAid] = merged;
 
