@@ -1199,6 +1199,16 @@ export class PromptService {
           descriptionLength: typeof assignment.description === 'string' ? assignment.description.length : 0,
           linkedRubricId: assignment.linkedRubricId ?? '(none)',
         });
+        appendLtiLog('prompt', 'getConfig: response fields after hydration', {
+          assignmentId,
+          response: {
+            assignmentName: hydrated.assignmentName ?? '(none)',
+            pointsPossible: hydrated.pointsPossible ?? '(none)',
+            allowedAttempts: hydrated.allowedAttempts ?? '(none)',
+            instructionsLen: typeof hydrated.instructions === 'string' ? hydrated.instructions.length : 0,
+            rubricId: hydrated.rubricId ?? '(none)',
+          },
+        });
         return { ...hydrated, resolvedAssignmentId: assignmentId };
       }
     } catch (err) {
@@ -3840,6 +3850,22 @@ export class PromptService {
     if (linkedRubricId) {
       next = { ...next, rubricId: linkedRubricId };
     }
+    appendLtiLog('prompt-import', 'applyCanvasAssignmentImportHydration', {
+      assignmentSnapshot: {
+        name: assign.name ?? '(none)',
+        pointsPossible: assign.points_possible ?? '(none)',
+        allowedAttempts: assign.allowed_attempts ?? '(none)',
+        descriptionLen: typeof assign.description === 'string' ? assign.description.length : 0,
+        linkedRubricId: assign.linkedRubricId ?? '(none)',
+      },
+      resultingConfig: {
+        assignmentName: next.assignmentName ?? '(none)',
+        pointsPossible: next.pointsPossible ?? '(none)',
+        allowedAttempts: next.allowedAttempts ?? '(none)',
+        instructionsLen: typeof next.instructions === 'string' ? next.instructions.length : 0,
+        rubricId: next.rubricId ?? '(none)',
+      },
+    });
     return next;
   }
 
@@ -4111,6 +4137,19 @@ export class PromptService {
           }
           if (mergedConfigs[aid]) {
             mergedConfigs[aid] = this.applyCanvasAssignmentImportHydration(mergedConfigs[aid], assign);
+            appendLtiLog('prompt-import', 'importPromptManagerSettingsBlob: hydrated assignment config', {
+              assignmentId: aid,
+              hydratedConfig: {
+                assignmentName: mergedConfigs[aid].assignmentName ?? '(none)',
+                pointsPossible: mergedConfigs[aid].pointsPossible ?? '(none)',
+                allowedAttempts: mergedConfigs[aid].allowedAttempts ?? '(none)',
+                instructionsLen:
+                  typeof mergedConfigs[aid].instructions === 'string'
+                    ? mergedConfigs[aid].instructions.length
+                    : 0,
+                rubricId: mergedConfigs[aid].rubricId ?? '(none)',
+              },
+            });
           }
         } catch (e) {
           appendLtiLog('prompt-import', 'importPromptManagerSettingsBlob: Canvas hydration skipped', {
@@ -4128,6 +4167,21 @@ export class PromptService {
       resourceLinkAssignmentMap: {},
       updatedAt: new Date().toISOString(),
     };
+    appendLtiLog('prompt-import', 'importPromptManagerSettingsBlob: about to write blob', {
+      importedCount: importedAssignmentIds.length,
+      blobConfigCount: Object.keys(outBlob.configs ?? {}).length,
+      sampleImportedConfigs: importedAssignmentIds.slice(0, 10).map((aid) => {
+        const c = outBlob.configs?.[aid] ?? {};
+        return {
+          assignmentId: aid,
+          assignmentName: c.assignmentName ?? '(none)',
+          pointsPossible: c.pointsPossible ?? '(none)',
+          allowedAttempts: c.allowedAttempts ?? '(none)',
+          instructionsLen: typeof c.instructions === 'string' ? c.instructions.length : 0,
+          rubricId: c.rubricId ?? '(none)',
+        };
+      }),
+    });
 
     await writePromptManagerSettingsBlobToCanvas(this.canvas, {
       courseId: ctx.courseId,
@@ -4408,6 +4462,13 @@ export class PromptService {
       appendLtiLog('prompt-import', 'importSinglePromptAssignmentFromSourceAssignment: instructions hydrated from assignment description', {
         targetAssignmentId: targetAid,
         tokenSource,
+        hydratedConfig: {
+          assignmentName: merged.assignmentName ?? '(none)',
+          pointsPossible: merged.pointsPossible ?? '(none)',
+          allowedAttempts: merged.allowedAttempts ?? '(none)',
+          instructionsLen: typeof merged.instructions === 'string' ? merged.instructions.length : 0,
+          rubricId: merged.rubricId ?? '(none)',
+        },
       });
     } catch (e) {
       appendLtiLog('prompt-import', 'importSinglePromptAssignmentFromSourceAssignment: Canvas hydration skipped', {
@@ -4425,6 +4486,20 @@ export class PromptService {
       resourceLinkAssignmentMap: targetBlob?.resourceLinkAssignmentMap ?? {},
       updatedAt: new Date().toISOString(),
     };
+    appendLtiLog('prompt-import', 'importSinglePromptAssignmentFromSourceAssignment: about to write blob', {
+      targetAssignmentId: targetAid,
+      blobConfigCount: Object.keys(outBlob.configs ?? {}).length,
+      targetConfig: {
+        assignmentName: outBlob.configs?.[targetAid]?.assignmentName ?? '(none)',
+        pointsPossible: outBlob.configs?.[targetAid]?.pointsPossible ?? '(none)',
+        allowedAttempts: outBlob.configs?.[targetAid]?.allowedAttempts ?? '(none)',
+        instructionsLen:
+          typeof outBlob.configs?.[targetAid]?.instructions === 'string'
+            ? outBlob.configs[targetAid].instructions!.length
+            : 0,
+        rubricId: outBlob.configs?.[targetAid]?.rubricId ?? '(none)',
+      },
+    });
     try {
       await this.canvas.ensureAssignmentExpressSubmissionTypes(ctx.courseId, targetAid, domainOverride, token);
     } catch (e) {

@@ -173,7 +173,23 @@ function withAssignmentId(url: string, assignmentId?: string | null): string {
 }
 
 export async function getPromptConfig(assignmentId?: string | null): Promise<PromptConfig | null> {
-  return fetchJsonWithOAuthRedirect<PromptConfig | null>(withAssignmentId(base + '/config', assignmentId));
+  const url = withAssignmentId(base + '/config', assignmentId);
+  appendBridgeLog('prompt-import-trace', 'getPromptConfig REQUEST', {
+    url,
+    assignmentId: assignmentId ?? null,
+  });
+  const data = await fetchJsonWithOAuthRedirect<PromptConfig | null>(url);
+  appendBridgeLog('prompt-import-trace', 'getPromptConfig RESPONSE', {
+    assignmentId: assignmentId ?? null,
+    resolvedAssignmentId: data?.resolvedAssignmentId ?? null,
+    assignmentName: data?.assignmentName ?? null,
+    pointsPossible: data?.pointsPossible ?? null,
+    allowedAttempts: data?.allowedAttempts ?? null,
+    rubricId: data?.rubricId ?? null,
+    instructionsLen: typeof data?.instructions === 'string' ? data.instructions.length : 0,
+    promptMode: data?.promptMode ?? null,
+  });
+  return data;
 }
 
 export async function putPromptConfig(
@@ -635,11 +651,19 @@ export async function importSinglePromptAssignment(body: {
   moduleId?: string;
   dryRun?: boolean;
 }): Promise<Record<string, unknown>> {
-  return fetchJsonWithOAuthRedirect(`${base}/settings-blob/import-one-assignment`, {
+  appendBridgeLog('prompt-import-trace', 'importSinglePromptAssignment REQUEST', {
+    sourceSettingsAssignmentId: body.sourceSettingsAssignmentId,
+    targetAssignmentId: body.targetAssignmentId,
+    moduleId: body.moduleId ?? null,
+    dryRun: body.dryRun ?? false,
+  });
+  const result = await fetchJsonWithOAuthRedirect<Record<string, unknown>>(`${base}/settings-blob/import-one-assignment`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
+  appendBridgeLog('prompt-import-trace', 'importSinglePromptAssignment RESPONSE', result);
+  return result;
 }
 
 export async function importPromptManagerSettingsBlob(body: {

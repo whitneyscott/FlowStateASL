@@ -248,8 +248,19 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setLoading(true);
     setError(null);
     try {
+      console.log('[TeacherConfig] load START', { requestedAssignmentId: id, overrideId: overrideId ?? null });
       setLastFunction('GET /api/prompt/config');
       const data = await promptApi.getPromptConfig(id);
+      console.log('[TeacherConfig] load RESPONSE /api/prompt/config', {
+        requestedAssignmentId: id,
+        resolvedAssignmentId: data?.resolvedAssignmentId ?? null,
+        assignmentName: data?.assignmentName ?? null,
+        pointsPossible: data?.pointsPossible ?? null,
+        allowedAttempts: data?.allowedAttempts ?? null,
+        rubricId: data?.rubricId ?? null,
+        instructionsLen: typeof data?.instructions === 'string' ? data.instructions.length : 0,
+        promptMode: data?.promptMode ?? null,
+      });
       setLastApiResult('GET /api/prompt/config', 200, true);
       setConfig(data ?? null);
       if (data) {
@@ -269,6 +280,15 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         setInstructions(data.instructions ?? '');
         setSignToVoiceRequired(data.signToVoiceRequired === true);
         setPromptMode(data.promptMode ?? 'text');
+        console.log('[TeacherConfig] load APPLY STATE', {
+          assignmentId: id,
+          assignmentName: data.assignmentName ?? null,
+          pointsPossible: data.pointsPossible ?? null,
+          allowedAttempts: data.allowedAttempts ?? null,
+          rubricId: data.rubricId ?? null,
+          instructionsLen: typeof data.instructions === 'string' ? data.instructions.length : 0,
+          promptMode: data.promptMode ?? null,
+        });
         if (data.promptMode === 'youtube' && data.youtubePromptConfig?.videoId) {
           const vid = data.youtubePromptConfig.videoId;
           const yc = data.youtubePromptConfig;
@@ -1101,11 +1121,20 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setImportModalBusy(true);
     setImportModalMessage(null);
     try {
+      console.log('[TeacherConfig] importSingle START', {
+        sourceSettingsAssignmentId: sid,
+        targetAssignmentId: tid,
+        moduleIdFromPicker: mid || null,
+        moduleIdFromCanvas: canvasModule || null,
+      });
       await promptApi.importSinglePromptAssignment({
         sourceSettingsAssignmentId: sid,
         targetAssignmentId: tid,
         ...(mid ? { moduleId: mid } : {}),
         dryRun: false,
+      });
+      console.log('[TeacherConfig] importSingle SUCCESS', {
+        targetAssignmentId: tid,
       });
       await loadAssignments();
       await load(tid);
