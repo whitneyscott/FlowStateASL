@@ -1913,10 +1913,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                 {' Import in progress…'}
               </p>
             )}
-            <p className="prompter-hint">
-              Select one Canvas assignment to import. The selected assignment is the <strong>source</strong>.
-              The destination is always this course&apos;s Prompt Manager Settings assignment for the active tool.
-            </p>
+            <p className="prompter-hint">Select one Canvas assignment to import.</p>
             <label className="prompter-settings-label">Source assignment</label>
             <select
               className="prompter-settings-input"
