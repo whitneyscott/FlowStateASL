@@ -20,6 +20,11 @@ export interface PromptManagerSettingsBlob {
 export const PROMPT_MANAGER_SETTINGS_ASSIGNMENT_TITLE = 'Prompt Manager Settings';
 export const PROMPT_MANAGER_SETTINGS_ANNOUNCEMENT_TITLE = 'ASL Express Prompt Manager Settings';
 
+/** When the settings assignment exists but the description is empty or not JSON, reads use this as a safe prior. */
+function emptySettingsAssignmentReadFallback(): PromptManagerSettingsBlob {
+  return { v: 1, configs: {}, updatedAt: new Date().toISOString() };
+}
+
 /** Extract JSON from Canvas assignment description or announcement body (may be HTML-wrapped). */
 export function extractPromptManagerSettingsBlobFromCanvasContent(raw: string): PromptManagerSettingsBlob | null {
   const trimmed = raw?.trim();
@@ -116,20 +121,31 @@ export async function readPromptManagerSettingsBlobFromCanvas(
     });
     const raw = assignment?.description?.trim() ?? '';
     const blob = extractPromptManagerSettingsBlobFromCanvasContent(raw);
-    const configCount =
-      blob?.configs && typeof blob.configs === 'object' ? Object.keys(blob.configs).length : 0;
-    const mapKeys = Object.keys(blob?.resourceLinkAssignmentMap ?? {}).length;
-    const idListLen = Array.isArray(blob?.configuredAssignmentIds) ? blob.configuredAssignmentIds.length : 0;
-    const isThinIndex = configCount === 0 && (mapKeys > 0 || idListLen > 0);
-    appendLtiLog('prompt-decks', 'readPromptManagerSettingsBlobFromCanvas: after extract (assignment)', {
-      courseId,
-      source: 'assignment_description',
-      blobParsed: !!blob,
-      configCount,
-      isThinIndex,
-    });
-    if (blob && (configCount > 0 || isThinIndex)) return blob;
-    assignmentBlob = blob;
+    if (!blob) {
+      // Empty or non-JSON description: still a readable "no index" state. Returning null made
+      // writePromptManagerSettingsBlobToCanvas safety-abort because prior looked unreadable.
+      appendLtiLog('prompt-decks', 'readPromptManagerSettingsBlobFromCanvas: settings description empty or unparseable; empty index', {
+        courseId,
+        settingsAssignmentId,
+        hadRaw: Boolean((raw ?? '').length),
+      });
+      assignmentBlob = emptySettingsAssignmentReadFallback();
+    } else {
+      const configCount =
+        blob.configs && typeof blob.configs === 'object' ? Object.keys(blob.configs).length : 0;
+      const mapKeys = Object.keys(blob.resourceLinkAssignmentMap ?? {}).length;
+      const idListLen = Array.isArray(blob.configuredAssignmentIds) ? blob.configuredAssignmentIds.length : 0;
+      const isThinIndex = configCount === 0 && (mapKeys > 0 || idListLen > 0);
+      appendLtiLog('prompt-decks', 'readPromptManagerSettingsBlobFromCanvas: after extract (assignment)', {
+        courseId,
+        source: 'assignment_description',
+        blobParsed: true,
+        configCount,
+        isThinIndex,
+      });
+      if (configCount > 0 || isThinIndex) return blob;
+      assignmentBlob = blob;
+    }
   }
   const ann = await canvas.findSettingsAnnouncementByTitle(
     courseId,
@@ -247,17 +263,23 @@ export async function writePromptManagerSettingsBlobToCanvas(
           'Fix the read path (token, permissions, or Canvas availability) before retrying.',
       );
     }
-    if (!priorReadableBlob || !isPlainConfigsMap(priorReadableBlob.configs)) {
+    if (priorReadableBlob == null) {
+      appendLtiLog('prompt', 'writePromptManagerSettingsBlobToCanvas: prior read null; treating as empty index', {
+        courseId,
+        settingsAssignmentId: existingSettingsAssignmentId,
+      });
+      priorReadableBlob = emptySettingsAssignmentReadFallback();
+    }
+    if (!isPlainConfigsMap(priorReadableBlob.configs)) {
       appendLtiLog('prompt', 'writePromptManagerSettingsBlobToCanvas: SAFETY ABORT unreadable prior blob', {
         courseId,
         settingsAssignmentId: existingSettingsAssignmentId,
-        readReturnedNull: priorReadableBlob == null,
-        configsType: priorReadableBlob ? typeof priorReadableBlob.configs : 'n/a',
+        configsType: typeof priorReadableBlob.configs,
         configsIsArray: Array.isArray(priorReadableBlob?.configs),
       });
       throw new Error(
         'SAFETY ABORT: Refusing to write Prompt Manager Settings — ' +
-          'existing blob read returned null or invalid `configs`. ' +
+          'existing blob read returned invalid `configs` shape. ' +
           'This write would destroy all configured assignment settings. ' +
           'Fix the read path before attempting any write.',
       );
