@@ -1118,7 +1118,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     const mid = importModuleId.trim();
     const canvasModule = (importPartition?.targetCanvasModuleId ?? '').toString().trim();
     if (!sid || !tid) {
-      setImportModalMessage('Select both source settings assignment and target assignment.');
+      setImportModalMessage('Select both source assignment and target assignment.');
       return;
     }
     if (!mid && !canvasModule) {
@@ -2040,24 +2040,40 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
               className="prompter-settings-input"
               value={importSourceAssignmentId}
               onChange={(e) => setImportSourceAssignmentId(e.target.value)}
-              disabled={importModalBusy || !(importCanvasBrief?.settingsTitleCandidates.length ?? 0)}
+              disabled={
+                importModalBusy ||
+                !(
+                  importModalTab === 'single'
+                    ? (importCanvasBrief?.allAssignments.length ?? 0)
+                    : (importCanvasBrief?.settingsTitleCandidates.length ?? 0)
+                )
+              }
             >
               <option value="">
-                {importCanvasBrief?.settingsTitleCandidates.length
-                  ? '— Select source —'
-                  : '— No assignments with "Settings" in the name —'}
+                {importModalTab === 'single'
+                  ? importCanvasBrief?.allAssignments.length
+                    ? '— Select source assignment —'
+                    : '— No assignments found in this course —'
+                  : importCanvasBrief?.settingsTitleCandidates.length
+                    ? '— Select source settings assignment —'
+                    : '— No assignments with "Settings" in the name —'}
               </option>
-              {(importCanvasBrief?.settingsTitleCandidates ?? []).map((a) => (
+              {(importModalTab === 'single'
+                ? importCanvasBrief?.allAssignments ?? []
+                : importCanvasBrief?.settingsTitleCandidates ?? []
+              ).map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.name}
                 </option>
               ))}
             </select>
-            {!importCanvasBrief?.settingsTitleCandidates.length && importCanvasBrief && (
+            {!importCanvasBrief?.settingsTitleCandidates.length &&
+              importCanvasBrief &&
+              importModalTab !== 'single' && (
               <p className="prompter-hint">
                 No Prompt Manager settings source was found in this course.
               </p>
-            )}
+              )}
             {importModalTab === 'wholesale' && (
               <>
                 <p className="prompter-hint">
@@ -2110,7 +2126,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                 </select>
                 {importPartition && (
                   <p className="prompter-hint">
-                    If no saved settings are found for the selected assignment, your current settings are kept.
+                    If saved Prompt Manager settings are unavailable for this source, assignment details are imported directly from Canvas.
                   </p>
                 )}
                 <label className="prompter-settings-label">

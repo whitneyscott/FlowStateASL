@@ -4351,14 +4351,14 @@ export class PromptService {
         assignmentName: string;
         requiresModuleId: boolean;
         detectedCanvasModuleId: string | null;
-        strategy: 'from_source' | 'kept_existing' | 'created_defaults';
+        strategy: 'from_source' | 'from_source_assignment' | 'kept_existing' | 'created_defaults';
       }
     | {
         imported: true;
         sourceKey: string | null;
         targetAssignmentId: string;
         moduleId: string;
-        strategy: 'from_source' | 'kept_existing' | 'created_defaults';
+        strategy: 'from_source' | 'from_source_assignment' | 'kept_existing' | 'created_defaults';
       }
   > {
     const sourceAid = (dto.sourceSettingsAssignmentId ?? '').trim();
@@ -4381,10 +4381,16 @@ export class PromptService {
     const { blob: sourceBlob } = repairPromptManagerSettingsBlobFromUnknown(rawSource ?? {});
     const sourceConfigs = sourceBlob.configs ?? {};
     const targetList = await this.canvas.listAssignmentsBrief(ctx.courseId, domainOverride, token);
+    const sourceRow = targetList.find((a) => a.id === sourceAid);
+    if (!sourceRow) {
+      throw new BadRequestException('Source assignment not found in this course');
+    }
     const targetRow = targetList.find((a) => a.id === targetAid);
     if (!targetRow) {
       throw new BadRequestException('Target assignment not found in this course');
     }
+    const { assignment: sourceAssign, tokenSource: sourceAssignTokenSource } =
+      await this.getAssignmentForImportHydration(ctx, sourceAid, domainOverride, token);
     const targetBlob = await readPromptManagerSettingsBlobFromCanvas(this.canvas, ctx.courseId, domainOverride, token);
     const priorTarget = targetBlob?.configs?.[targetAid];
     const priorExists =
@@ -4394,10 +4400,15 @@ export class PromptService {
       !Array.isArray(priorTarget) &&
       Object.keys(priorTarget as object).length > 0;
 
-    const sourceKey = this.findSourceConfigKeyForTargetAssignment(sourceConfigs, targetAid, targetRow.name);
+    const sourceKeyFromSourceId =
+      sourceConfigs[sourceAid] !== undefined ? sourceAid : undefined;
+    const sourceKey =
+      sourceKeyFromSourceId ??
+      this.findSourceConfigKeyForTargetAssignment(sourceConfigs, targetAid, targetRow.name);
     const base = sourceKey ? sourceConfigs[sourceKey] : undefined;
-    const resolveStrategy = (): 'from_source' | 'kept_existing' | 'created_defaults' => {
+    const resolveStrategy = (): 'from_source' | 'from_source_assignment' | 'kept_existing' | 'created_defaults' => {
       if (sourceKey && base) return 'from_source';
+      if (sourceAssign) return 'from_source_assignment';
       if (priorExists) return 'kept_existing';
       return 'created_defaults';
     };
@@ -4433,6 +4444,33 @@ export class PromptService {
     let merged: PromptConfigJson;
     if (sourceKey && base) {
       merged = this.clearCrossCoursePromptFields({ ...base });
+    } else if (sourceAssign) {
+      // Primary single-import path: seed config from the selected source assignment details.
+      merged = await this.buildDefaultPromptConfigForCanvasAssignment(
+        ctx.courseId,
+        sourceAid,
+        sourceRow.name,
+        moduleIdTrim,
+        domainOverride,
+        token,
+      );
+      merged = this.applyCanvasAssignmentImportHydration(merged, sourceAssign);
+      appendLtiLog(
+        'prompt-import',
+        'importSinglePromptAssignmentFromSourceAssignment: using source assignment details',
+        {
+          sourceAssignmentId: sourceAid,
+          sourceTokenSource: sourceAssignTokenSource,
+          hydratedConfig: {
+            assignmentName: merged.assignmentName ?? '(none)',
+            pointsPossible: merged.pointsPossible ?? '(none)',
+            allowedAttempts: merged.allowedAttempts ?? '(none)',
+            instructionsLen:
+              typeof merged.instructions === 'string' ? merged.instructions.length : 0,
+            rubricId: merged.rubricId ?? '(none)',
+          },
+        },
+      );
     } else if (priorExists) {
       merged = { ...(priorTarget as PromptConfigJson) };
     } else {
@@ -4446,36 +4484,39 @@ export class PromptService {
       );
     }
     merged.moduleId = moduleIdTrim;
-    try {
-      const { assignment: targetAssign, tokenSource } = await this.getAssignmentForImportHydration(
-        ctx,
-        targetAid,
-        domainOverride,
-        token,
-      );
-      if (!targetAssign) {
-        throw new BadRequestException(
-          'Could not read the target assignment from Canvas, so assignment description could not be imported into Instructions. Re-authorize Canvas token and retry.',
+    if (strategy === 'from_source') {
+      // Legacy/source-blob path: still hydrate from target assignment so target-side Canvas metadata wins.
+      try {
+        const { assignment: targetAssign, tokenSource } = await this.getAssignmentForImportHydration(
+          ctx,
+          targetAid,
+          domainOverride,
+          token,
         );
+        if (!targetAssign) {
+          throw new BadRequestException(
+            'Could not read the target assignment from Canvas, so assignment description could not be imported into Instructions. Re-authorize Canvas token and retry.',
+          );
+        }
+        merged = this.applyCanvasAssignmentImportHydration(merged, targetAssign);
+        appendLtiLog('prompt-import', 'importSinglePromptAssignmentFromSourceAssignment: instructions hydrated from assignment description', {
+          targetAssignmentId: targetAid,
+          tokenSource,
+          hydratedConfig: {
+            assignmentName: merged.assignmentName ?? '(none)',
+            pointsPossible: merged.pointsPossible ?? '(none)',
+            allowedAttempts: merged.allowedAttempts ?? '(none)',
+            instructionsLen: typeof merged.instructions === 'string' ? merged.instructions.length : 0,
+            rubricId: merged.rubricId ?? '(none)',
+          },
+        });
+      } catch (e) {
+        appendLtiLog('prompt-import', 'importSinglePromptAssignmentFromSourceAssignment: Canvas hydration skipped', {
+          targetAssignmentId: targetAid,
+          error: e instanceof Error ? e.message : String(e),
+        });
+        throw e;
       }
-      merged = this.applyCanvasAssignmentImportHydration(merged, targetAssign);
-      appendLtiLog('prompt-import', 'importSinglePromptAssignmentFromSourceAssignment: instructions hydrated from assignment description', {
-        targetAssignmentId: targetAid,
-        tokenSource,
-        hydratedConfig: {
-          assignmentName: merged.assignmentName ?? '(none)',
-          pointsPossible: merged.pointsPossible ?? '(none)',
-          allowedAttempts: merged.allowedAttempts ?? '(none)',
-          instructionsLen: typeof merged.instructions === 'string' ? merged.instructions.length : 0,
-          rubricId: merged.rubricId ?? '(none)',
-        },
-      });
-    } catch (e) {
-      appendLtiLog('prompt-import', 'importSinglePromptAssignmentFromSourceAssignment: Canvas hydration skipped', {
-        targetAssignmentId: targetAid,
-        error: e instanceof Error ? e.message : String(e),
-      });
-      throw e;
     }
     existingConfigs[targetAid] = merged;
 
