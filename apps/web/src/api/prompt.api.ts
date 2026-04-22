@@ -535,13 +535,7 @@ export async function getMySubmission(assignmentId?: string | null): Promise<Pro
 }
 
 export async function getConfiguredAssignments(): Promise<ConfiguredAssignment[]> {
-  appendBridgeLog('prompt-import-trace', 'getConfiguredAssignments REQUEST', {});
-  const list = await fetchJsonWithOAuthRedirect<ConfiguredAssignment[]>(base + '/configured-assignments');
-  appendBridgeLog('prompt-import-trace', 'getConfiguredAssignments RESPONSE', {
-    count: Array.isArray(list) ? list.length : 0,
-    assignmentIds: Array.isArray(list) ? list.map((a) => a.id).slice(0, 20) : [],
-  });
-  return list;
+  return fetchJsonWithOAuthRedirect<ConfiguredAssignment[]>(base + '/configured-assignments');
 }
 
 export async function getAssignmentGroups(): Promise<CanvasAssignmentGroup[]> {

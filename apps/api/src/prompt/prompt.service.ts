@@ -3497,10 +3497,6 @@ export class PromptService {
     const blob = await this.readPromptManagerSettingsBlob(ctx.courseId, domainOverride, token);
     const configs = blob?.configs ?? {};
     const assignmentIds = Object.keys(configs).filter(Boolean);
-    appendLtiLog('prompt-import-trace', 'getConfiguredAssignments: blob snapshot', {
-      configCount: assignmentIds.length,
-      assignmentIds: assignmentIds.slice(0, 50),
-    });
     const result: Array<{ id: string; name: string; submissionCount: number; ungradedCount: number }> = [];
     let assignmentNamesById: Map<string, string> | null = null;
     try {
@@ -3545,10 +3541,6 @@ export class PromptService {
       const ungradedCount = withFiles.filter((s) => s.workflow_state !== 'graded').length;
       result.push({ id: aid, name, submissionCount, ungradedCount });
     }
-    appendLtiLog('prompt-import-trace', 'getConfiguredAssignments: computed result', {
-      count: result.length,
-      assignmentIds: result.map((a) => a.id).slice(0, 50),
-    });
     result.sort((a, b) => a.name.localeCompare(b.name));
     appendLtiLog('viewer', 'getConfiguredAssignments', {
       count: result.length,

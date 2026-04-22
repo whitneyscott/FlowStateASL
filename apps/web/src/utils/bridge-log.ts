@@ -39,7 +39,11 @@ export function readBridgeClientFallbackLines(): string[] {
 }
 
 /** Tags mirrored from server `appendLtiLog(scope, …)` for the Bridge debug panel. */
-const BRIDGE_LTI_LOG_SCOPES = ['webm-prompt', 'sign-to-voice', 'prompt-import-trace', 'prompt-import'] as const;
+const BRIDGE_LTI_LOG_SCOPES = [
+  'webm-prompt',
+  'sign-to-voice',
+  'prompt-import-trace',
+] as const;
 
 export function ltiLogLineMatchesBridgeFilter(line: string): boolean {
   return BRIDGE_LTI_LOG_SCOPES.some((scope) => line.includes(`] [${scope}] `));

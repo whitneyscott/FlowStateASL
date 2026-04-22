@@ -178,7 +178,6 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     const gen = ++assignmentsLoadGenRef.current;
     assignmentsPendingRef.current++;
     console.log('[TeacherConfig] loadAssignments CALLING /api/prompt/configured-assignments');
-    console.log('[TeacherConfig] loadAssignments START', { gen });
     setLoadingAssignments(true);
     try {
       setLastFunction('GET /api/prompt/configured-assignments');
@@ -186,17 +185,21 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       if (gen === assignmentsLoadGenRef.current) {
         setLastApiResult('GET /api/prompt/configured-assignments', 200, true);
         console.log('[TeacherConfig] getConfiguredAssignments response:', list);
-        console.log('[TeacherConfig] loadAssignments APPLY', {
-          gen,
-          count: Array.isArray(list) ? list.length : 0,
-          assignmentIds: Array.isArray(list) ? list.map((a) => a.id).slice(0, 20) : [],
+        setConfiguredAssignments((prev) => {
+          const next = list ?? [];
+          if (next.length === 0 && prev.length > 0) {
+            console.warn('[TeacherConfig] preserving prior configuredAssignments due transient empty response', {
+              previousCount: prev.length,
+            });
+            return prev;
+          }
+          return next;
         });
-        setConfiguredAssignments(list ?? []);
       }
     } catch (e) {
       if (gen === assignmentsLoadGenRef.current) {
         if (e instanceof promptApi.NeedsManualTokenError) setShowManualTokenModal(true);
-        setConfiguredAssignments([]);
+        console.warn('[TeacherConfig] loadAssignments error, preserving prior configuredAssignments', e);
       }
     } finally {
       assignmentsPendingRef.current = Math.max(0, assignmentsPendingRef.current - 1);
