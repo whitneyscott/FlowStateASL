@@ -812,6 +812,63 @@ export class CanvasService {
     return undefined;
   }
 
+  /**
+   * Fallback rubric-id lookup for assignments when assignment payload omits rubric/rubric_association.
+   * Uses course rubrics with assignment associations and matches by assignment id.
+   */
+  private async linkedRubricIdFromRubricAssociations(
+    courseId: string,
+    assignmentId: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<string | undefined> {
+    const base = this.getBaseUrl(domainOverride);
+    const aid = Number.parseInt(String(assignmentId), 10);
+    if (!Number.isFinite(aid) || aid <= 0) return undefined;
+    let page = 1;
+    const perPage = 100;
+    while (true) {
+      const url = `${base}/api/v1/courses/${courseId}/rubrics?per_page=${perPage}&page=${page}&include[]=assignment_associations`;
+      const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
+      const rawBody = await res.text();
+      if (!res.ok) {
+        if (res.status === 401) throw new CanvasTokenExpiredError(401);
+        appendLtiLog('canvas', 'linkedRubricIdFromRubricAssociations failed', {
+          courseId,
+          assignmentId,
+          status: res.status,
+          bodyPreview: rawBody.slice(0, 300),
+        });
+        return undefined;
+      }
+      const list = (() => {
+        try {
+          return JSON.parse(rawBody) as Array<Record<string, unknown>>;
+        } catch {
+          return [];
+        }
+      })();
+      for (const r of list) {
+        const rid = Number.parseInt(String(r.id ?? ''), 10);
+        if (!Number.isFinite(rid) || rid <= 0) continue;
+        const associations = (r as { associations?: unknown }).associations;
+        if (!Array.isArray(associations)) continue;
+        for (const assoc of associations) {
+          if (!assoc || typeof assoc !== 'object') continue;
+          const rec = assoc as Record<string, unknown>;
+          const associationType = String(rec.association_type ?? '').trim();
+          const associationId = Number.parseInt(String(rec.association_id ?? ''), 10);
+          if (associationType === 'Assignment' && associationId === aid) {
+            return String(rid);
+          }
+        }
+      }
+      if (list.length < perPage) break;
+      page++;
+    }
+    return undefined;
+  }
+
   /** Paginated list of assignment id + name (e.g. import / remap). */
   async listAssignmentsBrief(
     courseId: string,
@@ -1084,7 +1141,22 @@ export class CanvasService {
       throw new CanvasAssignmentApiError(courseId, assignmentId, res.status, detail || res.statusText);
     }
     const data = (await res.json()) as Record<string, unknown>;
-    const linkedRubricId = this.linkedRubricIdFromAssignmentPayload(data);
+    let linkedRubricId = this.linkedRubricIdFromAssignmentPayload(data);
+    if (!linkedRubricId) {
+      linkedRubricId = await this.linkedRubricIdFromRubricAssociations(
+        courseId,
+        assignmentId,
+        domainOverride,
+        tokenOverride,
+      );
+      if (linkedRubricId) {
+        appendLtiLog('canvas', 'getAssignment: linkedRubricId resolved via rubric associations fallback', {
+          courseId,
+          assignmentId,
+          linkedRubricId,
+        });
+      }
+    }
     const name = typeof data.name === 'string' ? data.name : undefined;
     const description = typeof data.description === 'string' ? data.description : undefined;
     const points_possible =
