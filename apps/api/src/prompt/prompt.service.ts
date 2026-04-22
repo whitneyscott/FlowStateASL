@@ -3889,8 +3889,19 @@ export class PromptService {
     const base = fetched ?? {};
     const name =
       (row?.name ?? '').trim() || (typeof base.name === 'string' ? base.name.trim() : '') || undefined;
+    // For import hydration, prefer the direct assignment GET description when present.
+    // Assignment list rows can occasionally carry empty/trimmed descriptions.
+    const fetchedDescription =
+      typeof base.description === 'string' ? base.description : undefined;
+    const rowDescription =
+      row && typeof row.description === 'string' ? row.description : undefined;
     const description =
-      row && typeof row.description === 'string' ? row.description : base.description;
+      fetchedDescription !== undefined &&
+      fetchedDescription.trim().length > 0
+        ? fetchedDescription
+        : rowDescription !== undefined
+          ? rowDescription
+          : fetchedDescription;
     const rubricFromRow = (row?.linkedRubricId ?? '').trim();
     const linkedRubricId = rubricFromRow || base.linkedRubricId;
     const points_possible =
