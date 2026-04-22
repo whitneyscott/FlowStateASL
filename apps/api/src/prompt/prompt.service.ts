@@ -1250,6 +1250,10 @@ export class PromptService {
       );
       if (assignment) {
         const canvasRid = (assignment.linkedRubricId ?? '').trim();
+        const configRid =
+          config?.rubricId != null && String(config.rubricId).trim() ? String(config.rubricId).trim() : '';
+        // Prefer Canvas (current link); fall back to description embed (e.g. numeric id sanitized, or if Canvas payload omitted rubric).
+        const effectiveRubricId = canvasRid || configRid;
         const hydrated: PromptConfigJson = {
           ...(config ?? { minutes: 5, prompts: [], accessCode: '' }),
           ...(assignment.name ? { assignmentName: String(assignment.name) } : {}),
@@ -1262,8 +1266,8 @@ export class PromptService {
             : config?.allowedAttempts == null
               ? { allowedAttempts: 1 }
               : {}),
-          // Surface Canvas-attached rubric id when present on assignment payload; labels come from course rubrics list.
-          ...(canvasRid ? { rubricId: canvasRid } : {}),
+          // Surface Canvas-attached rubric id; embed fallback when GET omits rubric (see also sanitize numeric rubricId).
+          ...(effectiveRubricId ? { rubricId: effectiveRubricId } : {}),
         };
         if (!hydrated.promptMode) hydrated.promptMode = 'text';
         appendLtiLog('prompt', 'getConfig: assignment hydration source', {

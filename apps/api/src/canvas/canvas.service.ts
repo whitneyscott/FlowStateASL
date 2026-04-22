@@ -800,6 +800,9 @@ export class CanvasService {
         }
       }
     }
+    const topRid = (data as { rubric_id?: unknown }).rubric_id;
+    const fromTop = coerceId(topRid);
+    if (fromTop) return fromTop;
     const rubric = data.rubric;
     if (rubric && typeof rubric === 'object' && !Array.isArray(rubric)) {
       const rid = coerceId((rubric as { id?: unknown }).id);
@@ -849,17 +852,24 @@ export class CanvasService {
         }
       })();
       for (const r of list) {
-        const rid = Number.parseInt(String(r.id ?? ''), 10);
-        if (!Number.isFinite(rid) || rid <= 0) continue;
-        const associations = (r as { associations?: unknown }).associations;
-        if (!Array.isArray(associations)) continue;
+        const rubricRow = r as {
+          id?: unknown;
+          associations?: unknown;
+          /** Present when include[]=assignment_associations (same shape as associations). */
+          assignment_associations?: unknown;
+        };
+        const rubricRid = Number.parseInt(String(rubricRow.id ?? ''), 10);
+        if (!Number.isFinite(rubricRid) || rubricRid <= 0) continue;
+        const a1 = Array.isArray(rubricRow.associations) ? rubricRow.associations : [];
+        const a2 = Array.isArray(rubricRow.assignment_associations) ? rubricRow.assignment_associations : [];
+        const associations = [...a1, ...a2];
         for (const assoc of associations) {
           if (!assoc || typeof assoc !== 'object') continue;
           const rec = assoc as Record<string, unknown>;
-          const associationType = String(rec.association_type ?? '').trim();
+          const associationType = String(rec.association_type ?? '').trim().toLowerCase();
           const associationId = Number.parseInt(String(rec.association_id ?? ''), 10);
-          if (associationType === 'Assignment' && associationId === aid) {
-            return String(rid);
+          if (associationType === 'assignment' && associationId === aid) {
+            return String(rubricRid);
           }
         }
       }

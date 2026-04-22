@@ -17,7 +17,14 @@ export function sanitizePromptConfigJson(input: unknown): PromptConfigJson {
   str('assignmentName');
   str('assignmentGroupId');
   str('moduleId');
-  str('rubricId');
+  if (rec.rubricId != null) {
+    if (typeof rec.rubricId === 'string' && rec.rubricId.trim()) {
+      (out as { rubricId?: string }).rubricId = rec.rubricId.trim();
+    } else {
+      const n = Number(rec.rubricId);
+      if (Number.isFinite(n) && n > 0) (out as { rubricId?: string }).rubricId = String(Math.floor(n));
+    }
+  }
   str('instructions');
   str('dueAt');
   str('unlockAt');
