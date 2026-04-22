@@ -837,7 +837,7 @@ export class CanvasService {
 
   /**
    * Course assignment list with fields needed for Prompt Manager import (instructions + rubric).
-   * Uses Canvas index with `include[]=rubric` so rubric template id is available without N+1 GETs.
+   * Uses Canvas index with `include[]=rubric_association` so rubric template id is available without N+1 GETs.
    */
   async listAssignmentsForPromptImport(
     courseId: string,
@@ -867,7 +867,7 @@ export class CanvasService {
     let page = 1;
     const perPage = 100;
     while (true) {
-      const url = `${base}/api/v1/courses/${courseId}/assignments?per_page=${perPage}&page=${page}&include[]=rubric`;
+      const url = `${base}/api/v1/courses/${courseId}/assignments?per_page=${perPage}&page=${page}&include[]=rubric_association`;
       const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
       const rawBody = await res.text();
       if (!res.ok) {
@@ -1041,12 +1041,12 @@ export class CanvasService {
     /** Canvas-allowed submission types, e.g. online_upload, online_text_entry */
     submission_types?: string[];
     /**
-     * Course rubric template id from `include[]=rubric` / rubric_association payload (Prompt Manager / grading UI).
+     * Course rubric template id from `include[]=rubric_association` (Prompt Manager / grading UI).
      */
     linkedRubricId?: string;
   } | null> {
     const base = this.getBaseUrl(domainOverride);
-    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}?include[]=rubric`;
+    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}?include[]=rubric_association`;
     const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
     if (!res.ok) {
       if (res.status === 401) throw new CanvasTokenExpiredError(401);

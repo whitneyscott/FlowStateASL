@@ -3842,7 +3842,7 @@ export class PromptService {
   }
 
   /**
-   * Prefer fields from the course assignment index (`listAssignmentsForPromptImport`, include[]=rubric)
+   * Prefer fields from the course assignment index (`listAssignmentsForPromptImport`, include[]=rubric_association)
    * over a single-assignment GET so import uses the same payload as the teacher's first fetch.
    */
   private mergeCourseAssignmentListRowWithFetchedAssignment(
