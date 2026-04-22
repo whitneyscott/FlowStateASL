@@ -167,10 +167,18 @@ export function repairPromptManagerSettingsBlobFromUnknown(input: unknown): {
     }
     if (Object.keys(m).length > 0) resourceLinkAssignmentMap = m;
   }
+  let configuredAssignmentIds: string[] | undefined;
+  const cids = o.configuredAssignmentIds;
+  if (Array.isArray(cids)) {
+    const ids = cids.map((x) => String(x ?? '').trim()).filter((id) => /^\d+$/.test(id));
+    if (ids.length > 0) configuredAssignmentIds = [...new Set(ids)];
+  }
+
   const blob: PromptManagerSettingsBlob = {
     v: 1,
     configs,
     ...(resourceLinkAssignmentMap ? { resourceLinkAssignmentMap } : {}),
+    ...(configuredAssignmentIds ? { configuredAssignmentIds } : {}),
     updatedAt: new Date().toISOString(),
   };
   return { blob, notes };

@@ -1,12 +1,19 @@
 import { appendLtiLog } from '../common/last-error.store';
 import type { CanvasService } from '../canvas/canvas.service';
 import type { PromptConfigJson } from './dto/prompt-config.dto';
+import { mergeAssignmentDescriptionWithEmbeds, parseAssignmentDescriptionForPromptManager } from './assignment-description-embed.util';
 import { repairPromptManagerSettingsBlobFromUnknown } from './prompt-settings-blob-repair.util';
 
 export interface PromptManagerSettingsBlob {
   v?: number;
+  /**
+   * Legacy monolithic per-assignment configs. After per-assignment migration, this is empty
+   * and each assignment stores config in `assignment.description` ASL embed divs.
+   */
   configs?: Record<string, PromptConfigJson>;
   resourceLinkAssignmentMap?: Record<string, string>;
+  /** Denormalized list of assignment ids with embed-based PM config (thin course index). */
+  configuredAssignmentIds?: string[];
   updatedAt?: string;
 }
 
@@ -111,13 +118,17 @@ export async function readPromptManagerSettingsBlobFromCanvas(
     const blob = extractPromptManagerSettingsBlobFromCanvasContent(raw);
     const configCount =
       blob?.configs && typeof blob.configs === 'object' ? Object.keys(blob.configs).length : 0;
+    const mapKeys = Object.keys(blob?.resourceLinkAssignmentMap ?? {}).length;
+    const idListLen = Array.isArray(blob?.configuredAssignmentIds) ? blob.configuredAssignmentIds.length : 0;
+    const isThinIndex = configCount === 0 && (mapKeys > 0 || idListLen > 0);
     appendLtiLog('prompt-decks', 'readPromptManagerSettingsBlobFromCanvas: after extract (assignment)', {
       courseId,
       source: 'assignment_description',
       blobParsed: !!blob,
       configCount,
+      isThinIndex,
     });
-    if (blob && configCount > 0) return blob;
+    if (blob && (configCount > 0 || isThinIndex)) return blob;
     assignmentBlob = blob;
   }
   const ann = await canvas.findSettingsAnnouncementByTitle(
@@ -135,19 +146,56 @@ export async function readPromptManagerSettingsBlobFromCanvas(
     const annBlob = extractPromptManagerSettingsBlobFromCanvasContent(ann.message);
     const annConfigCount =
       annBlob?.configs && typeof annBlob.configs === 'object' ? Object.keys(annBlob.configs).length : 0;
+    const annMapKeys = Object.keys(annBlob?.resourceLinkAssignmentMap ?? {}).length;
+    const annIdLen = Array.isArray(annBlob?.configuredAssignmentIds) ? annBlob.configuredAssignmentIds.length : 0;
+    const annThin = annConfigCount === 0 && (annMapKeys > 0 || annIdLen > 0);
     appendLtiLog('prompt-decks', 'readPromptManagerSettingsBlobFromCanvas: after extract (announcement)', {
       courseId,
       source: 'announcement',
       blobParsed: !!annBlob,
       configCount: annConfigCount,
     });
-    if (annBlob && annConfigCount > 0) {
-      // Recovery path: prefer non-empty announcement blob when assignment blob is empty/corrupt.
+    if (annBlob && (annConfigCount > 0 || annThin)) {
       return annBlob;
     }
     if (annBlob) return annBlob;
   }
   return assignmentBlob;
+}
+
+/**
+ * If the course index is thin (no `configs` in the settings JSON), rebuild a monolithic `configs` map
+ * from each `configuredAssignmentId` by reading that assignment’s description embeds. Used for
+ * export and cross-course import of migrated courses.
+ */
+export async function readPromptManagerSettingsBlobWithEmbedsResolved(
+  canvas: CanvasService,
+  courseId: string,
+  domainOverride: string | undefined,
+  token: string,
+): Promise<PromptManagerSettingsBlob | null> {
+  const base = await readPromptManagerSettingsBlobFromCanvas(canvas, courseId, domainOverride, token);
+  if (!base) return null;
+  if (Object.keys(base.configs ?? {}).length > 0) return base;
+  const ids = base.configuredAssignmentIds;
+  if (!Array.isArray(ids) || ids.length === 0) return base;
+  const configs: Record<string, PromptConfigJson> = {};
+  for (const aid of ids) {
+    if (!/^\d+$/.test(String(aid))) continue;
+    try {
+      const a = await canvas.getAssignment(courseId, String(aid), domainOverride, token);
+      const d = a?.description;
+      if (typeof d !== 'string' || !d.trim()) continue;
+      const p = parseAssignmentDescriptionForPromptManager(d);
+      if (p.config) {
+        configs[String(aid)] = { ...p.config, instructions: p.visibleHtml };
+      }
+    } catch {
+      /* skip unreadable assignment */
+    }
+  }
+  if (Object.keys(configs).length === 0) return base;
+  return { ...base, v: base.v ?? 1, configs };
 }
 
 function isPlainConfigsMap(configs: unknown): configs is Record<string, PromptConfigJson> {
@@ -278,4 +326,73 @@ export async function writePromptManagerSettingsBlobToCanvas(
       error: String(annErr),
     });
   }
+}
+
+/**
+ * When the course still has a monolithic `configs` map in the Prompt Manager Settings JSON,
+ * copy each entry into the corresponding assignment `description` as ASL hidden embeds, then
+ * write a thin index (empty `configs`, `configuredAssignmentIds` populated). Idempotent for
+ * already-migrated courses: no-op when `configs` is empty.
+ */
+export async function migrateMonolithicPromptBlobToPerAssignmentEmbeds(
+  canvas: CanvasService,
+  courseId: string,
+  domainOverride: string | undefined,
+  token: string,
+): Promise<{ migrated: boolean; assignmentCount: number }> {
+  const prior = await readPromptManagerSettingsBlobFromCanvas(canvas, courseId, domainOverride, token);
+  const keys = prior?.configs && typeof prior.configs === 'object' ? Object.keys(prior.configs) : [];
+  if (!prior || keys.length === 0) {
+    return { migrated: false, assignmentCount: 0 };
+  }
+  let n = 0;
+  for (const aid of keys) {
+    const cfg = prior.configs![aid];
+    if (!cfg) continue;
+    const assign = await canvas.getAssignment(courseId, aid, domainOverride, token);
+    const desc = typeof assign?.description === 'string' ? assign.description : '';
+    const merged = mergeAssignmentDescriptionWithEmbeds(desc, cfg, cfg.prompts);
+    try {
+      await canvas.updateAssignment(
+        courseId,
+        aid,
+        { description: merged },
+        domainOverride,
+        token,
+      );
+      n += 1;
+    } catch (err) {
+      appendLtiLog('prompt', 'migrateMonolithicPromptBlob: per-assignment PUT failed (skipping id)', {
+        courseId,
+        aid,
+        error: String(err),
+      });
+    }
+  }
+  const configuredIds = [
+    ...new Set([
+      ...keys,
+      ...((Array.isArray(prior.configuredAssignmentIds) ? prior.configuredAssignmentIds : []).map(String)),
+    ]),
+  ];
+  const thin: PromptManagerSettingsBlob = {
+    v: 1,
+    configs: {},
+    resourceLinkAssignmentMap: prior.resourceLinkAssignmentMap,
+    configuredAssignmentIds: configuredIds,
+    updatedAt: new Date().toISOString(),
+  };
+  await writePromptManagerSettingsBlobToCanvas(canvas, {
+    courseId,
+    domainOverride,
+    token,
+    blob: thin,
+    allowConfigShrink: true,
+  });
+  appendLtiLog('prompt', 'migrateMonolithicPromptBlob: course index thinned', {
+    courseId,
+    assignmentsWritten: n,
+    keyCount: keys.length,
+  });
+  return { migrated: true, assignmentCount: n };
 }
