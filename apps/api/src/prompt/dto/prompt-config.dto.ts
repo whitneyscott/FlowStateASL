@@ -74,6 +74,7 @@ export class PutPromptConfigDto {
   moduleId?: string;
   pointsPossible?: number;
   rubricId?: string;
+  /** Legacy/blob-only; not set from Canvas assignment APIs. */
   rubricTitle?: string;
   rubricPointsPossible?: number;
   instructions?: string;
