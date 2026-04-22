@@ -621,6 +621,12 @@ export async function exportPromptManagerSettingsBlob(): Promise<Record<string, 
 export interface CanvasAssignmentBriefForImport {
   id: string;
   name: string;
+  /** Present when loaded via course list with `include[]=rubric`. */
+  description?: string;
+  linkedRubricId?: string;
+  pointsPossible?: number;
+  allowedAttempts?: number;
+  assignmentGroupId?: string;
 }
 
 export async function getCanvasAssignmentsForImport(): Promise<{

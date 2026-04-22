@@ -752,6 +752,48 @@ export class CanvasService {
     return null;
   }
 
+  /**
+   * Normalize a Canvas rubric template id from assignment JSON (show or index).
+   * Canvas may expose associations as an object, array, or embed rubric id on `rubric`.
+   */
+  private linkedRubricIdFromAssignmentPayload(data: Record<string, unknown>): string | undefined {
+    const coerceId = (v: unknown): string | undefined => {
+      if (v == null) return undefined;
+      const s = `${v}`.trim();
+      if (!s) return undefined;
+      const n = Number(s);
+      if (!Number.isFinite(n)) return undefined;
+      const floored = Math.floor(n);
+      if (floored <= 0) return undefined;
+      return String(floored);
+    };
+
+    const assoc = data.rubric_association;
+    if (assoc && typeof assoc === 'object') {
+      if (!Array.isArray(assoc)) {
+        const rid = coerceId((assoc as { rubric_id?: unknown }).rubric_id);
+        if (rid) return rid;
+      } else {
+        for (const item of assoc) {
+          if (item && typeof item === 'object') {
+            const rid = coerceId((item as { rubric_id?: unknown }).rubric_id);
+            if (rid) return rid;
+          }
+        }
+      }
+    }
+    const rubric = data.rubric;
+    if (rubric && typeof rubric === 'object' && !Array.isArray(rubric)) {
+      const rid = coerceId((rubric as { id?: unknown }).id);
+      if (rid) return rid;
+    }
+    if (Array.isArray(rubric) && rubric[0] && typeof rubric[0] === 'object') {
+      const rid = coerceId((rubric[0] as { id?: unknown }).id);
+      if (rid) return rid;
+    }
+    return undefined;
+  }
+
   /** Paginated list of assignment id + name (e.g. import / remap). */
   async listAssignmentsBrief(
     courseId: string,
@@ -786,6 +828,92 @@ export class CanvasService {
         if (a?.id != null) {
           out.push({ id: String(a.id), name: String(a.name ?? '') });
         }
+      }
+      if (list.length < perPage) break;
+      page++;
+    }
+    return out;
+  }
+
+  /**
+   * Course assignment list with fields needed for Prompt Manager import (instructions + rubric).
+   * Uses Canvas index with `include[]=rubric` so rubric template id is available without N+1 GETs.
+   */
+  async listAssignmentsForPromptImport(
+    courseId: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<
+    Array<{
+      id: string;
+      name: string;
+      description?: string;
+      linkedRubricId?: string;
+      pointsPossible?: number;
+      allowedAttempts?: number;
+      assignmentGroupId?: string;
+    }>
+  > {
+    const base = this.getBaseUrl(domainOverride);
+    const out: Array<{
+      id: string;
+      name: string;
+      description?: string;
+      linkedRubricId?: string;
+      pointsPossible?: number;
+      allowedAttempts?: number;
+      assignmentGroupId?: string;
+    }> = [];
+    let page = 1;
+    const perPage = 100;
+    while (true) {
+      const url = `${base}/api/v1/courses/${courseId}/assignments?per_page=${perPage}&page=${page}&include[]=rubric`;
+      const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
+      const rawBody = await res.text();
+      if (!res.ok) {
+        if (res.status === 401) throw new CanvasTokenExpiredError(401);
+        appendLtiLog('canvas', 'listAssignmentsForPromptImport failed', {
+          status: res.status,
+          bodyPreview: rawBody.slice(0, 200),
+        });
+        throw new Error(`Canvas list assignments (import) failed: ${res.status} ${rawBody.slice(0, 400)}`);
+      }
+      const data = (() => {
+        try {
+          return JSON.parse(rawBody) as Array<Record<string, unknown>>;
+        } catch {
+          return [];
+        }
+      })();
+      const list = data ?? [];
+      for (const raw of list) {
+        const idRaw = raw.id;
+        if (idRaw == null) continue;
+        const id = String(idRaw);
+        const name = String(raw.name ?? '');
+        const row: Record<string, unknown> = raw;
+        const linkedRubricId = this.linkedRubricIdFromAssignmentPayload(row);
+        const description = typeof raw.description === 'string' ? raw.description : undefined;
+        const pointsRaw = raw.points_possible;
+        const pointsPossible =
+          pointsRaw != null && Number.isFinite(Number(pointsRaw)) ? Number(pointsRaw) : undefined;
+        const attemptsRaw = raw.allowed_attempts;
+        const allowedAttempts =
+          attemptsRaw != null && Number.isFinite(Number(attemptsRaw)) ? Number(attemptsRaw) : undefined;
+        const groupRaw = raw.assignment_group_id;
+        const assignmentGroupId =
+          groupRaw != null && `${groupRaw}`.trim() !== '' && Number.isFinite(Number(groupRaw))
+            ? String(Math.floor(Number(groupRaw)))
+            : undefined;
+        out.push({
+          id,
+          name,
+          ...(typeof description === 'string' ? { description } : {}),
+          ...(linkedRubricId ? { linkedRubricId } : {}),
+          ...(pointsPossible != null ? { pointsPossible } : {}),
+          ...(allowedAttempts != null ? { allowedAttempts } : {}),
+          ...(assignmentGroupId ? { assignmentGroupId } : {}),
+        });
       }
       if (list.length < perPage) break;
       page++;
@@ -913,41 +1041,45 @@ export class CanvasService {
     /** Canvas-allowed submission types, e.g. online_upload, online_text_entry */
     submission_types?: string[];
     /**
-     * Course rubric template id from `include[]=rubric_association` (for Prompt Manager / grading UI).
-     * Present when a rubric is attached to the assignment in Canvas.
+     * Course rubric template id from `include[]=rubric` / rubric_association payload (Prompt Manager / grading UI).
      */
     linkedRubricId?: string;
   } | null> {
     const base = this.getBaseUrl(domainOverride);
-    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}?include[]=rubric_association`;
+    const url = `${base}/api/v1/courses/${courseId}/assignments/${assignmentId}?include[]=rubric`;
     const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
     if (!res.ok) {
       if (res.status === 401) throw new CanvasTokenExpiredError(401);
       return null;
     }
-    const data = (await res.json()) as {
-      name?: string;
-      description?: string;
-      points_possible?: number;
-      rubric?: Array<unknown>;
-      assignment_group_id?: number;
-      allowed_attempts?: number;
-      submission_types?: string[];
-      rubric_association?: { rubric_id?: number | string } | null;
-    };
-    const rawAssocRid = data.rubric_association?.rubric_id;
-    const linkedRubricId =
-      rawAssocRid != null && `${rawAssocRid}`.trim() !== '' && Number.isFinite(Number(rawAssocRid))
-        ? String(Math.floor(Number(rawAssocRid)))
+    const data = (await res.json()) as Record<string, unknown>;
+    const linkedRubricId = this.linkedRubricIdFromAssignmentPayload(data);
+    const name = typeof data.name === 'string' ? data.name : undefined;
+    const description = typeof data.description === 'string' ? data.description : undefined;
+    const points_possible =
+      data.points_possible != null && Number.isFinite(Number(data.points_possible))
+        ? Number(data.points_possible)
         : undefined;
+    const rubric = data.rubric;
+    const assignment_group_id =
+      data.assignment_group_id != null && Number.isFinite(Number(data.assignment_group_id))
+        ? Math.floor(Number(data.assignment_group_id))
+        : undefined;
+    const allowed_attempts =
+      data.allowed_attempts != null && Number.isFinite(Number(data.allowed_attempts))
+        ? Number(data.allowed_attempts)
+        : undefined;
+    const submission_types = Array.isArray(data.submission_types)
+      ? (data.submission_types as string[])
+      : undefined;
     return {
-      name: data.name,
-      description: data.description,
-      points_possible: data.points_possible,
-      rubric: data.rubric,
-      assignment_group_id: data.assignment_group_id,
-      allowed_attempts: data.allowed_attempts,
-      submission_types: Array.isArray(data.submission_types) ? data.submission_types : undefined,
+      ...(name ? { name } : {}),
+      ...(description !== undefined ? { description } : {}),
+      ...(points_possible != null ? { points_possible } : {}),
+      ...(Array.isArray(rubric) ? { rubric } : rubric ? { rubric: rubric as unknown[] } : {}),
+      ...(assignment_group_id != null ? { assignment_group_id } : {}),
+      ...(allowed_attempts != null ? { allowed_attempts } : {}),
+      ...(submission_types ? { submission_types } : {}),
       ...(linkedRubricId ? { linkedRubricId } : {}),
     };
   }
