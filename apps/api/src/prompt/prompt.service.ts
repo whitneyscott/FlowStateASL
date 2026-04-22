@@ -1189,7 +1189,7 @@ export class PromptService {
             : config?.allowedAttempts == null
               ? { allowedAttempts: 1 }
               : {}),
-          // Surface Canvas-attached rubric id (from rubric_association); teacher labels come from course rubrics list.
+          // Surface Canvas-attached rubric id when present on assignment payload; labels come from course rubrics list.
           ...(canvasRid ? { rubricId: canvasRid } : {}),
         };
         if (!hydrated.promptMode) hydrated.promptMode = 'text';
@@ -1418,7 +1418,30 @@ export class PromptService {
       }
     }
 
-    const blob = await this.readPromptManagerSettingsBlob(ctx.courseId, domainOverride, token);
+    let blob = await this.readPromptManagerSettingsBlob(ctx.courseId, domainOverride, token);
+    const initialConfigCount = Object.keys(blob?.configs ?? {}).length;
+    if (!blob || initialConfigCount === 0) {
+      const teacherTok = await this.courseSettings.getCourseStoredCanvasToken(ctx.courseId);
+      if (teacherTok?.trim() && teacherTok !== token) {
+        try {
+          const alt = await this.readPromptManagerSettingsBlob(ctx.courseId, domainOverride, teacherTok);
+          const altCount = Object.keys(alt?.configs ?? {}).length;
+          if (alt && altCount > initialConfigCount) {
+            blob = alt;
+            appendLtiLog('prompt', 'putConfig: merged against Prompt Manager blob from course-stored teacher token', {
+              assignmentId,
+              priorConfigCount: initialConfigCount,
+              altConfigCount: altCount,
+            });
+          }
+        } catch (e) {
+          appendLtiLog('prompt', 'putConfig: course-stored teacher token blob read failed (non-fatal)', {
+            assignmentId,
+            error: String(e),
+          });
+        }
+      }
+    }
     const configs = { ...(blob?.configs ?? {}), [assignmentId]: merged };
     // Read → merge → write: never overwrite entire blob; preserve existing fields.
     const payload: PromptManagerSettingsBlob = {
@@ -3845,7 +3868,7 @@ export class PromptService {
   }
 
   /**
-   * Prefer fields from the course assignment index (`listAssignmentsForPromptImport`, include[]=rubric_association)
+   * Prefer fields from the course assignment index (`listAssignmentsForPromptImport`)
    * over a single-assignment GET so import uses the same payload as the teacher's first fetch.
    */
   private mergeCourseAssignmentListRowWithFetchedAssignment(

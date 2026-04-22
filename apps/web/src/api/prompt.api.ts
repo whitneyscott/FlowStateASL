@@ -621,7 +621,7 @@ export async function exportPromptManagerSettingsBlob(): Promise<Record<string, 
 export interface CanvasAssignmentBriefForImport {
   id: string;
   name: string;
-  /** Present when loaded via course list with `include[]=rubric_association`. */
+  /** Present when Canvas includes a linked rubric on the assignment list payload. */
   description?: string;
   linkedRubricId?: string;
   pointsPossible?: number;
