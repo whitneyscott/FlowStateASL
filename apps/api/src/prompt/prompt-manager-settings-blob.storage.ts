@@ -150,6 +150,10 @@ export async function readPromptManagerSettingsBlobFromCanvas(
   return assignmentBlob;
 }
 
+function isPlainConfigsMap(configs: unknown): configs is Record<string, PromptConfigJson> {
+  return configs != null && typeof configs === 'object' && !Array.isArray(configs);
+}
+
 export async function writePromptManagerSettingsBlobToCanvas(
   canvas: CanvasService,
   args: {
@@ -166,25 +170,67 @@ export async function writePromptManagerSettingsBlobToCanvas(
   const { courseId, domainOverride, token, blob } = args;
   const syncAnnouncement = args.syncAnnouncement !== false;
   const allowConfigShrink = args.allowConfigShrink === true;
+
   const existingSettingsAssignmentId = await canvas.findAssignmentByTitle(
     courseId,
     PROMPT_MANAGER_SETTINGS_ASSIGNMENT_TITLE,
     domainOverride,
     token,
   );
-  let existingConfigCount = 0;
+
+  /**
+   * Production safety: never persist when we could not read a valid prior `configs` map from Canvas
+   * while a Prompt Manager Settings assignment already exists (avoids `{ ...null?.configs, [id]: x }` wipes).
+   */
+  let priorReadableBlob: PromptManagerSettingsBlob | null = null;
   if (existingSettingsAssignmentId) {
-    const existingAssignment = await canvas.getAssignment(
+    try {
+      priorReadableBlob = await readPromptManagerSettingsBlobFromCanvas(canvas, courseId, domainOverride, token);
+    } catch (err) {
+      appendLtiLog('prompt', 'writePromptManagerSettingsBlobToCanvas: SAFETY ABORT prior read threw', {
+        courseId,
+        settingsAssignmentId: existingSettingsAssignmentId,
+        error: String(err),
+      });
+      throw new Error(
+        'SAFETY ABORT: Refusing to write Prompt Manager Settings — ' +
+          'reading the existing blob from Canvas failed with an exception. ' +
+          'This write could destroy all configured assignment settings. ' +
+          'Fix the read path (token, permissions, or Canvas availability) before retrying.',
+      );
+    }
+    if (!priorReadableBlob || !isPlainConfigsMap(priorReadableBlob.configs)) {
+      appendLtiLog('prompt', 'writePromptManagerSettingsBlobToCanvas: SAFETY ABORT unreadable prior blob', {
+        courseId,
+        settingsAssignmentId: existingSettingsAssignmentId,
+        readReturnedNull: priorReadableBlob == null,
+        configsType: priorReadableBlob ? typeof priorReadableBlob.configs : 'n/a',
+        configsIsArray: Array.isArray(priorReadableBlob?.configs),
+      });
+      throw new Error(
+        'SAFETY ABORT: Refusing to write Prompt Manager Settings — ' +
+          'existing blob read returned null or invalid `configs`. ' +
+          'This write would destroy all configured assignment settings. ' +
+          'Fix the read path before attempting any write.',
+      );
+    }
+  } else if (!isPlainConfigsMap(blob.configs)) {
+    appendLtiLog('prompt', 'writePromptManagerSettingsBlobToCanvas: SAFETY ABORT invalid incoming configs', {
       courseId,
-      existingSettingsAssignmentId,
-      domainOverride,
-      token,
+      reason: 'bootstrap_requires_plain_configs_object',
+      configsType: typeof blob.configs,
+      configsIsArray: Array.isArray(blob.configs),
+    });
+    throw new Error(
+      'SAFETY ABORT: Refusing to write Prompt Manager Settings — ' +
+        'incoming blob is missing a plain object `configs` map (first write / bootstrap).',
     );
-    const existingBlob = extractPromptManagerSettingsBlobFromCanvasContent(
-      existingAssignment?.description?.trim() ?? '',
-    );
-    existingConfigCount = Object.keys(existingBlob?.configs ?? {}).length;
   }
+
+  const existingConfigCount =
+    priorReadableBlob && isPlainConfigsMap(priorReadableBlob.configs)
+      ? Object.keys(priorReadableBlob.configs).length
+      : 0;
   const incomingConfigCount = Object.keys(blob?.configs ?? {}).length;
   if (!allowConfigShrink && existingConfigCount > 0 && incomingConfigCount < existingConfigCount) {
     appendLtiLog('prompt', 'writePromptManagerSettingsBlobToCanvas: blocked shrink write', {
@@ -196,6 +242,7 @@ export async function writePromptManagerSettingsBlobToCanvas(
       `Refusing to overwrite Prompt Manager settings with fewer configs (${incomingConfigCount} < ${existingConfigCount}).`,
     );
   }
+
   const settingsAssignmentId =
     existingSettingsAssignmentId ??
     (await ensurePromptManagerSettingsAssignmentId(

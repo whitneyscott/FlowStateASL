@@ -27,6 +27,24 @@ export class CanvasTokenExpiredError extends Error {
   }
 }
 
+/**
+ * Raised when GET /courses/:course_id/assignments/:id fails for any reason other than 404 or 401.
+ * Callers must not treat this as “assignment missing” — retry or fix tokens/permissions.
+ */
+export class CanvasAssignmentApiError extends Error {
+  constructor(
+    public readonly courseId: string,
+    public readonly assignmentId: string,
+    public readonly httpStatus: number,
+    detail: string,
+  ) {
+    super(
+      `Canvas get assignment failed (${httpStatus}) for course ${courseId} assignment ${assignmentId}: ${detail}`,
+    );
+    this.name = 'CanvasAssignmentApiError';
+  }
+}
+
 @Injectable()
 export class CanvasService {
   private readonly circuitState = new Map<string, { failures: number; openUntil: number }>();
@@ -1049,7 +1067,21 @@ export class CanvasService {
     const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
     if (!res.ok) {
       if (res.status === 401) throw new CanvasTokenExpiredError(401);
-      return null;
+      const detail = (await res.text().catch(() => '')).trim().slice(0, 800);
+      if (res.status === 404) {
+        appendLtiLog('canvas', 'getAssignment: assignment not found (404)', {
+          courseId,
+          assignmentId,
+        });
+        return null;
+      }
+      appendLtiLog('canvas', 'getAssignment: Canvas API error (non-404)', {
+        courseId,
+        assignmentId,
+        httpStatus: res.status,
+        bodyPreview: detail.slice(0, 400),
+      });
+      throw new CanvasAssignmentApiError(courseId, assignmentId, res.status, detail || res.statusText);
     }
     const data = (await res.json()) as Record<string, unknown>;
     const linkedRubricId = this.linkedRubricIdFromAssignmentPayload(data);
