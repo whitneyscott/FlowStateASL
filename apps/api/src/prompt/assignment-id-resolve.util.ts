@@ -1,4 +1,13 @@
-export type CanvasAssignmentBrief = { id: string; name: string };
+export type CanvasAssignmentBrief = {
+  id: string;
+  name: string;
+  /** Present when loaded via course assignment list with import fields. */
+  description?: string;
+  linkedRubricId?: string;
+  pointsPossible?: number;
+  allowedAttempts?: number;
+  assignmentGroupId?: string;
+};
 
 export type ResolveAssignmentIdResult =
   | { status: 'matched'; newId: string }

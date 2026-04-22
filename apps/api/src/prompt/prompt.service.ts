@@ -4424,10 +4424,10 @@ export class PromptService {
         strategy: 'from_source' | 'from_source_assignment' | 'kept_existing' | 'created_defaults';
       }
   > {
-    const sourceAid = (dto.sourceSettingsAssignmentId ?? '').trim();
-    const targetAid = (dto.targetAssignmentId ?? '').trim();
-    if (!sourceAid || !targetAid) {
-      throw new BadRequestException('sourceSettingsAssignmentId and targetAssignmentId are required');
+    const sourceAid = (dto.sourceAssignmentId ?? dto.sourceSettingsAssignmentId ?? '').trim();
+    const targetAid = (dto.targetAssignmentId ?? '').trim() || sourceAid;
+    if (!sourceAid) {
+      throw new BadRequestException('sourceAssignmentId is required');
     }
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
     if (!token) {

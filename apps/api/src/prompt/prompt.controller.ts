@@ -646,9 +646,13 @@ export class PromptController {
     @Res() res: Response,
   ) {
     const ctx = this.getCtx(req);
+    const resolvedSourceAssignmentId =
+      (dto.sourceAssignmentId ?? dto.sourceSettingsAssignmentId ?? '').trim() || '(none)';
+    const resolvedTargetAssignmentId =
+      (dto.targetAssignmentId ?? '').trim() || resolvedSourceAssignmentId;
     appendLtiLog('prompt-import-trace', 'POST /prompt/settings-blob/import-one-assignment REQUEST', {
-      sourceSettingsAssignmentId: dto.sourceSettingsAssignmentId ?? '(none)',
-      targetAssignmentId: dto.targetAssignmentId ?? '(none)',
+      sourceAssignmentId: resolvedSourceAssignmentId,
+      targetAssignmentId: resolvedTargetAssignmentId,
       moduleId: dto.moduleId ?? '(none)',
       dryRun: dto.dryRun === true,
       courseId: ctx.courseId,

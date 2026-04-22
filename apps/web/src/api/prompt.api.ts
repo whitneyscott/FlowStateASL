@@ -652,14 +652,16 @@ export async function getAssignmentImportOptions(
 }
 
 export async function importSinglePromptAssignment(body: {
-  sourceSettingsAssignmentId: string;
-  targetAssignmentId: string;
+  sourceAssignmentId: string;
+  targetAssignmentId?: string;
   moduleId?: string;
   dryRun?: boolean;
 }): Promise<Record<string, unknown>> {
+  const resolvedTargetAssignmentId =
+    (body.targetAssignmentId ?? '').trim() || body.sourceAssignmentId.trim();
   appendBridgeLog('prompt-import-trace', 'importSinglePromptAssignment REQUEST', {
-    sourceSettingsAssignmentId: body.sourceSettingsAssignmentId,
-    targetAssignmentId: body.targetAssignmentId,
+    sourceAssignmentId: body.sourceAssignmentId,
+    targetAssignmentId: resolvedTargetAssignmentId,
     moduleId: body.moduleId ?? null,
     dryRun: body.dryRun ?? false,
   });
