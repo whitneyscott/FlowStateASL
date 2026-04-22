@@ -37,6 +37,77 @@ interface TeacherConfigPageProps {
   context: LtiContext | null;
 }
 
+interface ImportConflictRow {
+  oldId: string;
+  name: string;
+  candidates: promptApi.CanvasAssignmentBriefForImport[];
+}
+
+interface ImportUnmatchedRow {
+  oldId: string;
+  name: string;
+}
+
+interface ImportConflictResolutionState {
+  conflicts: ImportConflictRow[];
+  unmatched: ImportUnmatchedRow[];
+  partialMap: Record<string, string>;
+  selectedOldIds: string[];
+  selectedMap: Record<string, string>;
+}
+
+function parseImportConflictPayload(payload: unknown): {
+  conflicts: ImportConflictRow[];
+  unmatched: ImportUnmatchedRow[];
+  partialMap: Record<string, string>;
+} {
+  if (!payload || typeof payload !== 'object') {
+    return { conflicts: [], unmatched: [], partialMap: {} };
+  }
+  const source = payload as {
+    conflicts?: Array<{ oldId?: unknown; name?: unknown; candidates?: Array<{ id?: unknown; name?: unknown }> }>;
+    unmatched?: Array<{ oldId?: unknown; name?: unknown }>;
+    partialMap?: Record<string, unknown>;
+  };
+
+  const conflicts: ImportConflictRow[] = (source.conflicts ?? [])
+    .map((row) => {
+      const oldId = typeof row.oldId === 'string' ? row.oldId.trim() : '';
+      const name = typeof row.name === 'string' ? row.name.trim() : '';
+      const candidates = (row.candidates ?? [])
+        .map((c) => {
+          const id = typeof c.id === 'string' ? c.id.trim() : '';
+          const candidateName = typeof c.name === 'string' ? c.name.trim() : '';
+          if (!id || !candidateName) return null;
+          return { id, name: candidateName };
+        })
+        .filter((c): c is promptApi.CanvasAssignmentBriefForImport => Boolean(c));
+      if (!oldId || !name || candidates.length === 0) return null;
+      return { oldId, name, candidates };
+    })
+    .filter((row): row is ImportConflictRow => Boolean(row));
+
+  const unmatched: ImportUnmatchedRow[] = (source.unmatched ?? [])
+    .map((row) => {
+      const oldId = typeof row.oldId === 'string' ? row.oldId.trim() : '';
+      const name = typeof row.name === 'string' ? row.name.trim() : '';
+      if (!oldId) return null;
+      return { oldId, name };
+    })
+    .filter((row): row is ImportUnmatchedRow => Boolean(row));
+
+  const partialMap: Record<string, string> = {};
+  if (source.partialMap && typeof source.partialMap === 'object') {
+    for (const [k, v] of Object.entries(source.partialMap)) {
+      const key = k.trim();
+      const val = typeof v === 'string' ? v.trim() : '';
+      if (key && val) partialMap[key] = val;
+    }
+  }
+
+  return { conflicts, unmatched, partialMap };
+}
+
 export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const { setLastFunction, setLastApiResult, setLastApiError } = useDebug();
   const navigate = useNavigate();
@@ -110,6 +181,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const [importModalBusy, setImportModalBusy] = useState(false);
   const [importModalMessage, setImportModalMessage] = useState<string | null>(null);
   const [importModuleId, setImportModuleId] = useState('');
+  const [importConflictResolution, setImportConflictResolution] =
+    useState<ImportConflictResolutionState | null>(null);
 
   // Deck mode state
   const [promptMode, setPromptMode] = useState<'text' | 'decks' | 'youtube'>('text');
@@ -1052,6 +1125,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setImportModalMessage(null);
     setImportModalBusy(true);
     setImportPartition(null);
+    setImportConflictResolution(null);
     setImportTargetAssignmentId('');
     setImportModuleId('');
     try {
@@ -1076,6 +1150,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setImportModalOpen(false);
     setImportModalMessage(null);
     setImportModuleId('');
+    setImportConflictResolution(null);
   }, []);
 
   const handleImportModalWholesaleMerge = useCallback(async () => {
@@ -1087,6 +1162,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     }
     setImportModalBusy(true);
     setImportModalMessage(null);
+    setImportConflictResolution(null);
     try {
       await promptApi.importPromptManagerSettingsBlob({
         mode: 'merge',
@@ -1101,7 +1177,26 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       setImportModalOpen(false);
     } catch (e) {
       if (e instanceof promptApi.ImportPromptConflictError) {
-        setImportModalMessage('Some assignments could not be matched. Make sure assignment names match in both courses and try again.');
+        const parsed = parseImportConflictPayload(e.payload);
+        if (parsed.conflicts.length > 0 || parsed.unmatched.length > 0) {
+          const selectedMap = Object.fromEntries(
+            parsed.conflicts.map((c) => [c.oldId, c.candidates[0]?.id ?? '']),
+          );
+          setImportConflictResolution({
+            conflicts: parsed.conflicts,
+            unmatched: parsed.unmatched,
+            partialMap: parsed.partialMap,
+            selectedOldIds: parsed.conflicts.map((c) => c.oldId),
+            selectedMap,
+          });
+          setImportModalMessage(
+            'Duplicate assignment names were found. Select which duplicates to import, then run import again.',
+          );
+        } else {
+          setImportModalMessage(
+            'Some assignments could not be matched. Make sure assignment names match in both courses and try again.',
+          );
+        }
       } else {
         setImportModalMessage(e instanceof Error ? e.message : String(e));
       }
@@ -1110,6 +1205,70 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       setImportModalBusy(false);
     }
   }, [teacher, hasLti, importSourceAssignmentId, loadAssignments, assignmentId, load]);
+
+  const handleImportModalWholesaleConflictResolution = useCallback(async () => {
+    if (!teacher || !hasLti) return;
+    const sid = importSourceAssignmentId.trim();
+    if (!sid || !importConflictResolution) return;
+    const selectedSet = new Set(importConflictResolution.selectedOldIds);
+    const assignmentIdMap = { ...importConflictResolution.partialMap };
+    for (const conflict of importConflictResolution.conflicts) {
+      if (!selectedSet.has(conflict.oldId)) continue;
+      const mappedId = importConflictResolution.selectedMap[conflict.oldId]?.trim() ?? '';
+      if (mappedId) assignmentIdMap[conflict.oldId] = mappedId;
+    }
+    const skipSourceAssignmentIds = [
+      ...importConflictResolution.unmatched.map((u) => u.oldId),
+      ...importConflictResolution.conflicts
+        .filter((c) => !selectedSet.has(c.oldId))
+        .map((c) => c.oldId),
+    ];
+
+    setImportModalBusy(true);
+    setImportModalMessage(null);
+    try {
+      await promptApi.importPromptManagerSettingsBlob({
+        mode: 'merge',
+        sourceAssignmentId: sid,
+        assignmentIdMap,
+        skipSourceAssignmentIds,
+        dryRun: false,
+      });
+      await loadAssignments();
+      if (assignmentId) {
+        await load(assignmentId);
+      }
+      setImportInfo('Selected assignment settings were imported.');
+      setImportModalOpen(false);
+      setImportConflictResolution(null);
+    } catch (e) {
+      if (e instanceof promptApi.ImportPromptConflictError) {
+        const parsed = parseImportConflictPayload(e.payload);
+        if (parsed.conflicts.length > 0 || parsed.unmatched.length > 0) {
+          const selectedMap = Object.fromEntries(
+            parsed.conflicts.map((c) => [c.oldId, c.candidates[0]?.id ?? '']),
+          );
+          setImportConflictResolution({
+            conflicts: parsed.conflicts,
+            unmatched: parsed.unmatched,
+            partialMap: parsed.partialMap,
+            selectedOldIds: parsed.conflicts.map((c) => c.oldId),
+            selectedMap,
+          });
+          setImportModalMessage(
+            'Some duplicates still need resolution. Review selections and try again.',
+          );
+        } else {
+          setImportModalMessage(e.message);
+        }
+      } else {
+        setImportModalMessage(e instanceof Error ? e.message : String(e));
+      }
+      if (e instanceof promptApi.NeedsManualTokenError) setShowManualTokenModal(true);
+    } finally {
+      setImportModalBusy(false);
+    }
+  }, [teacher, hasLti, importSourceAssignmentId, importConflictResolution, loadAssignments, assignmentId, load]);
 
   const handleImportModalSingleMerge = useCallback(async () => {
     if (!teacher || !hasLti) return;
@@ -2029,6 +2188,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                 onClick={() => {
                   setImportModalTab('single');
                   setImportModuleId((m) => (m.trim() ? m : moduleId.trim()));
+                  setImportConflictResolution(null);
                 }}
                 disabled={importModalBusy}
               >
@@ -2039,7 +2199,10 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
             <select
               className="prompter-settings-input"
               value={importSourceAssignmentId}
-              onChange={(e) => setImportSourceAssignmentId(e.target.value)}
+              onChange={(e) => {
+                setImportSourceAssignmentId(e.target.value);
+                setImportConflictResolution(null);
+              }}
               disabled={
                 importModalBusy ||
                 !(
@@ -2079,6 +2242,112 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                 <p className="prompter-hint">
                   This copies all saved Prompt Manager settings into this course.
                 </p>
+                {importConflictResolution && (
+                  <div style={{ border: '1px solid rgba(0,0,0,0.15)', borderRadius: 8, padding: 10, marginBottom: 10 }}>
+                    <p className="prompter-hint" style={{ marginTop: 0 }}>
+                      Duplicate assignment names were found. Choose which duplicates to import and map each source to a
+                      target assignment.
+                    </p>
+                    <div className="prompter-settings-actions-row prompter-settings-actions-row-mb-sm">
+                      <button
+                        type="button"
+                        className="prompter-btn-secondary"
+                        disabled={importModalBusy}
+                        onClick={() => {
+                          setImportConflictResolution((prev) => {
+                            if (!prev) return prev;
+                            return { ...prev, selectedOldIds: prev.conflicts.map((c) => c.oldId) };
+                          });
+                        }}
+                      >
+                        Select all
+                      </button>
+                      <button
+                        type="button"
+                        className="prompter-btn-secondary"
+                        disabled={importModalBusy}
+                        onClick={() => {
+                          setImportConflictResolution((prev) => {
+                            if (!prev) return prev;
+                            return { ...prev, selectedOldIds: [] };
+                          });
+                        }}
+                      >
+                        Clear all
+                      </button>
+                    </div>
+                    {importConflictResolution.conflicts.map((conflict) => {
+                      const included = importConflictResolution.selectedOldIds.includes(conflict.oldId);
+                      const selectedTarget = importConflictResolution.selectedMap[conflict.oldId] ?? '';
+                      return (
+                        <div key={conflict.oldId} style={{ marginBottom: 8 }}>
+                          <label className="prompter-settings-label prompter-settings-label-block" htmlFor={`dup-${conflict.oldId}`}>
+                            <input
+                              id={`dup-${conflict.oldId}`}
+                              type="checkbox"
+                              checked={included}
+                              disabled={importModalBusy}
+                              onChange={(e) => {
+                                const checked = e.target.checked;
+                                setImportConflictResolution((prev) => {
+                                  if (!prev) return prev;
+                                  const set = new Set(prev.selectedOldIds);
+                                  if (checked) set.add(conflict.oldId);
+                                  else set.delete(conflict.oldId);
+                                  return { ...prev, selectedOldIds: Array.from(set) };
+                                });
+                              }}
+                            />{' '}
+                            Import <strong>{conflict.name}</strong>
+                          </label>
+                          <select
+                            className="prompter-settings-input"
+                            value={selectedTarget}
+                            disabled={importModalBusy || !included}
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              setImportConflictResolution((prev) => {
+                                if (!prev) return prev;
+                                return {
+                                  ...prev,
+                                  selectedMap: { ...prev.selectedMap, [conflict.oldId]: value },
+                                };
+                              });
+                            }}
+                          >
+                            {conflict.candidates.map((candidate) => (
+                              <option key={candidate.id} value={candidate.id}>
+                                {candidate.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      );
+                    })}
+                    {importConflictResolution.unmatched.length > 0 && (
+                      <p className="prompter-hint">
+                        {importConflictResolution.unmatched.length} assignment(s) have no match and will be skipped.
+                      </p>
+                    )}
+                    <div className="prompter-settings-actions-row">
+                      <button
+                        type="button"
+                        className="prompter-btn-ready"
+                        disabled={importModalBusy || importConflictResolution.selectedOldIds.length === 0}
+                        onClick={() => void handleImportModalWholesaleConflictResolution()}
+                      >
+                        {importModalBusy ? (
+                          <>
+                            <span className="prompter-inline-spinner" />
+                            Importing selected duplicates…
+                          </>
+                        ) : (
+                          'Import selected duplicates'
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                )}
                 <div className="prompter-settings-actions-row">
                   <button
                     type="button"
