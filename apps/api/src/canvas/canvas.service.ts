@@ -753,8 +753,8 @@ export class CanvasService {
   }
 
   /**
-   * Normalize a Canvas rubric template id from assignment JSON (show or index).
-   * Canvas may expose associations as an object, array, or embed rubric id on `rubric`.
+   * Course rubric template id from assignment JSON when `include[]=rubric_association` is used.
+   * Prefer `rubric_association.rubric_id` (object or array); title/points come from course rubrics list or `getRubric`.
    */
   private linkedRubricIdFromAssignmentPayload(data: Record<string, unknown>): string | undefined {
     const coerceId = (v: unknown): string | undefined => {
@@ -781,15 +781,6 @@ export class CanvasService {
           }
         }
       }
-    }
-    const rubric = data.rubric;
-    if (rubric && typeof rubric === 'object' && !Array.isArray(rubric)) {
-      const rid = coerceId((rubric as { id?: unknown }).id);
-      if (rid) return rid;
-    }
-    if (Array.isArray(rubric) && rubric[0] && typeof rubric[0] === 'object') {
-      const rid = coerceId((rubric[0] as { id?: unknown }).id);
-      if (rid) return rid;
     }
     return undefined;
   }
@@ -836,8 +827,8 @@ export class CanvasService {
   }
 
   /**
-   * Course assignment list with fields needed for Prompt Manager import (instructions + rubric).
-   * Uses Canvas index with `include[]=rubric_association` so rubric template id is available without N+1 GETs.
+   * Course assignment list with fields needed for Prompt Manager import (instructions + linked rubric id).
+   * Uses `include[]=rubric_association` (lightweight); match `linkedRubricId` to course rubrics for labels.
    */
   async listAssignmentsForPromptImport(
     courseId: string,
@@ -1040,9 +1031,7 @@ export class CanvasService {
     allowed_attempts?: number;
     /** Canvas-allowed submission types, e.g. online_upload, online_text_entry */
     submission_types?: string[];
-    /**
-     * Course rubric template id from `include[]=rubric_association` (Prompt Manager / grading UI).
-     */
+    /** Course rubric template id from `rubric_association` (Prompt Manager / grading uses `getRubric` when needed). */
     linkedRubricId?: string;
   } | null> {
     const base = this.getBaseUrl(domainOverride);

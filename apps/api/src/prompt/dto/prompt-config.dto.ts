@@ -46,6 +46,9 @@ export interface PromptConfigJson {
   moduleId?: string;
   pointsPossible?: number;
   rubricId?: string;
+  /** Optional legacy/blob-only display hints; not populated from assignment API (use course rubrics list). */
+  rubricTitle?: string;
+  rubricPointsPossible?: number;
   instructions?: string;
   dueAt?: string;
   unlockAt?: string;
@@ -71,6 +74,8 @@ export class PutPromptConfigDto {
   moduleId?: string;
   pointsPossible?: number;
   rubricId?: string;
+  rubricTitle?: string;
+  rubricPointsPossible?: number;
   instructions?: string;
   dueAt?: string;
   unlockAt?: string;

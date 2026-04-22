@@ -269,7 +269,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         setAccessCode(data.accessCode ?? '');
         setModuleId(data.moduleId ?? '');
         setAssignmentGroupId(data.assignmentGroupId ?? '');
-        setRubricId(data.rubricId ?? '');
+        setRubricId((data.rubricId ?? '').trim());
         setAssignmentName(data.assignmentName ?? '');
         setPointsPossible(Math.max(0, Math.round(Number(data.pointsPossible ?? 10) || 10)));
         setDueAt(data.dueAt ?? '');
@@ -459,6 +459,16 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       setLoading(false);
     }
   }, [teacher, hasLti, assignmentId, load, loadModules, loadAssignmentGroups, loadRubrics]);
+
+  /** Align stored rubric id with GET /rubrics ids so the select matches a real course rubric option. */
+  useEffect(() => {
+    const rid = rubricId.trim();
+    if (!rid || rubrics.length === 0) return;
+    const hit = rubrics.find((r) => String(r.id) === rid);
+    if (hit && String(hit.id) !== rubricId) {
+      setRubricId(String(hit.id));
+    }
+  }, [rubrics, rubricId]);
 
   const { hubCurricula: deckPickerCurricula, hubUnits: deckPickerUnits, hubSections: deckPickerSections, filteredPlaylists: deckPickerPlaylists } =
     useMemo(
@@ -1130,13 +1140,15 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     </div>
   );
 
-  const rubricKnownInList = rubricId && rubrics.some((r) => String(r.id) === rubricId);
+  const rubricInCourseList =
+    !!rubricId.trim() && rubrics.length > 0 && rubrics.some((r) => String(r.id) === rubricId.trim());
 
   const rubricSelector = (
     <div className="prompter-settings-section">
       <label className="prompter-settings-label"><strong>Rubric (optional):</strong></label>
       <p className="prompter-hint">
         Matches the rubric attached to this assignment in Canvas when one is set (including after import).
+        Labels come from the course rubrics list.
       </p>
       <select
         className="prompter-settings-input"
@@ -1144,17 +1156,18 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         onChange={(e) => setRubricId(e.target.value)}
       >
         <option value="">— No Rubric —</option>
-        {rubricId && !rubricKnownInList ? (
-          <option value={rubricId}>
-            Attached rubric (name unavailable)
-          </option>
-        ) : null}
         {rubrics.map((r) => (
           <option key={r.id} value={String(r.id)}>
             {r.title} ({r.pointsPossible} pts)
           </option>
         ))}
       </select>
+      {rubricId.trim() && rubrics.length > 0 && !rubricInCourseList ? (
+        <p className="prompter-hint" style={{ marginTop: 6 }}>
+          Configured rubric id {rubricId.trim()} was not found in the course rubrics list. It may have been deleted
+          or the list may still be loading.
+        </p>
+      ) : null}
     </div>
   );
 

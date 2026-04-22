@@ -1176,6 +1176,7 @@ export class PromptService {
         token,
       );
       if (assignment) {
+        const canvasRid = (assignment.linkedRubricId ?? '').trim();
         const hydrated: PromptConfigJson = {
           ...(config ?? { minutes: 5, prompts: [], accessCode: '' }),
           ...(assignment.name ? { assignmentName: String(assignment.name) } : {}),
@@ -1188,8 +1189,8 @@ export class PromptService {
             : config?.allowedAttempts == null
               ? { allowedAttempts: 1 }
               : {}),
-          // Surface Canvas-attached rubric in config + teacher UI even when the settings blob omits rubricId.
-          ...(assignment.linkedRubricId ? { rubricId: assignment.linkedRubricId } : {}),
+          // Surface Canvas-attached rubric id (from rubric_association); teacher labels come from course rubrics list.
+          ...(canvasRid ? { rubricId: canvasRid } : {}),
         };
         if (!hydrated.promptMode) hydrated.promptMode = 'text';
         appendLtiLog('prompt', 'getConfig: assignment hydration source', {
@@ -3825,6 +3826,8 @@ export class PromptService {
     delete n.moduleId;
     delete n.assignmentGroupId;
     delete n.rubricId;
+    delete n.rubricTitle;
+    delete n.rubricPointsPossible;
     delete n.resolvedAssignmentId;
     return n;
   }
