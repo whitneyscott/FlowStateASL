@@ -467,13 +467,13 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     }
   }, [teacher, hasLti, assignmentId, load, loadModules, loadAssignmentGroups, loadRubrics]);
 
-  /** Align stored rubric id with GET /rubrics ids so the select matches a real course rubric option. */
+  /** Normalize rubric id string if the course list uses the same id with different formatting. */
   useEffect(() => {
     const rid = rubricId.trim();
     if (!rid || rubrics.length === 0) return;
-    const hit = rubrics.find((r) => String(r.id) === rid);
-    if (hit && String(hit.id) !== rubricId) {
-      setRubricId(String(hit.id));
+    const hit = rubrics.find((r) => r.id === rid);
+    if (hit && hit.id !== rubricId) {
+      setRubricId(hit.id);
     }
   }, [rubrics, rubricId]);
 
@@ -1177,8 +1177,10 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     </div>
   );
 
-  const rubricInCourseList =
-    !!rubricId.trim() && rubrics.length > 0 && rubrics.some((r) => String(r.id) === rubricId.trim());
+  const rubricIdTrim = rubricId.trim();
+  const rubricInCourseList = !!rubricIdTrim && rubrics.some((r) => r.id === rubricIdTrim);
+  /** Config/assignment rubric id does not match any loaded course rubric option (yet or at all). */
+  const rubricOrphanFromAssignment = !!rubricIdTrim && !rubricInCourseList;
 
   const rubricSelector = (
     <div className="prompter-settings-section">
@@ -1193,16 +1195,21 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         onChange={(e) => setRubricId(e.target.value)}
       >
         <option value="">— No Rubric —</option>
+        {rubricOrphanFromAssignment ? (
+          <option value={rubricIdTrim} key={`rubric-from-assignment-${rubricIdTrim}`}>
+            Attached on assignment (id {rubricIdTrim})
+          </option>
+        ) : null}
         {rubrics.map((r) => (
-          <option key={r.id} value={String(r.id)}>
+          <option key={r.id} value={r.id}>
             {r.title} ({r.pointsPossible} pts)
           </option>
         ))}
       </select>
-      {rubricId.trim() && rubrics.length > 0 && !rubricInCourseList ? (
+      {rubricOrphanFromAssignment && rubrics.length > 0 ? (
         <p className="prompter-hint" style={{ marginTop: 6 }}>
-          Configured rubric id {rubricId.trim()} was not found in the course rubrics list. It may have been deleted
-          or the list may still be loading.
+          This rubric id is on the assignment in Canvas but was not returned in the course rubrics list (unusual). You
+          can keep it or pick another rubric; Save updates the assignment link.
         </p>
       ) : null}
     </div>

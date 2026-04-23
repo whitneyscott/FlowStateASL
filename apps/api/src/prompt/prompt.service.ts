@@ -3772,7 +3772,7 @@ export class PromptService {
   }
 
   /** Teacher only. Returns course rubrics for teacher config. */
-  async getRubrics(ctx: LtiContext): Promise<Array<{ id: number; title: string; pointsPossible: number }>> {
+  async getRubrics(ctx: LtiContext): Promise<Array<{ id: string; title: string; pointsPossible: number }>> {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
     if (!token) return [];
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));

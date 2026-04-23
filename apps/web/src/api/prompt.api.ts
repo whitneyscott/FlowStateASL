@@ -147,7 +147,8 @@ export interface CanvasAssignmentGroup {
 }
 
 export interface CanvasRubric {
-  id: number;
+  /** Canvas rubric id (string to match assignment-linked ids and avoid select mismatch). */
+  id: string;
   title: string;
   pointsPossible: number;
 }

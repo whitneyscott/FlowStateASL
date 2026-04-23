@@ -1233,28 +1233,41 @@ export class CanvasService {
     }));
   }
 
-  /** List course rubrics for teacher config. */
+  /** List course rubrics for teacher config (all pages; Canvas default per_page would miss rubrics past the first page). */
   async listRubrics(
     courseId: string,
     domainOverride?: string,
     tokenOverride?: string | null,
-  ): Promise<Array<{ id: number; title: string; pointsPossible: number }>> {
+  ): Promise<Array<{ id: string; title: string; pointsPossible: number }>> {
     const base = this.getBaseUrl(domainOverride);
-    const url = `${base}/api/v1/courses/${courseId}/rubrics?per_page=100`;
-    const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
-    if (!res.ok) {
-      if (res.status === 401) throw new CanvasTokenExpiredError(401);
-      const text = await res.text();
-      throw new Error(`Canvas list rubrics failed: ${res.status} ${text}`);
-    }
-    const data = (await res.json()) as Array<{ id: number; title?: string; points_possible?: number }>;
-    return Array.isArray(data)
-      ? data.map((r) => ({
-          id: r.id,
+    const perPage = 100;
+    let page = 1;
+    const out: Array<{ id: string; title: string; pointsPossible: number }> = [];
+    while (true) {
+      const url = `${base}/api/v1/courses/${courseId}/rubrics?per_page=${perPage}&page=${page}`;
+      const res = await fetch(url, { headers: this.getAuthHeaders(tokenOverride) });
+      if (!res.ok) {
+        if (res.status === 401) throw new CanvasTokenExpiredError(401);
+        const text = await res.text();
+        throw new Error(`Canvas list rubrics failed: ${res.status} ${text}`);
+      }
+      const data = (await res.json()) as Array<{ id?: number | string; title?: string; points_possible?: number }>;
+      if (!Array.isArray(data) || data.length === 0) break;
+      for (const r of data) {
+        if (r.id == null) continue;
+        const id = String(r.id).trim();
+        if (!id) continue;
+        out.push({
+          id,
           title: r.title ?? '',
-          pointsPossible: r.points_possible ?? 0,
-        }))
-      : [];
+          pointsPossible:
+            r.points_possible != null && Number.isFinite(Number(r.points_possible)) ? Number(r.points_possible) : 0,
+        });
+      }
+      if (data.length < perPage) break;
+      page++;
+    }
+    return out;
   }
 
   /** Update assignment (name, description, points, dates, group, etc.).
