@@ -75,8 +75,8 @@ flowchart LR
 
 ## Implementation todos
 
-1. Revert/remove mux/re-upload migration; restore metadata + legacy fallback resolution + TeacherViewer legacy parsers.
+1. **Done:** No mux/re-upload migration in repo; metadata + body + comment resolution + client fallbacks aligned with sections B/C/F.
 2. **Done:** Server-side comment parsing in `resolvePromptRowFromWebmMetadata` (metadata → body → comments); client parsers remain fallback-only.
-3. Forward path: human-readable submission body on submit; no machine JSON; audit no machine prompt writes to comments.
-4. Optional: status + confirm-delete machine JSON comments only (`teacherConfirmed`); enforce safe preconditions in API/copy.
-5. Import: non-blocking hint only.
+3. **Done:** Forward path: `submit` writes human-readable body only (`submission-human-readable-body.util.ts`); upload keeps `PROMPT_DATA` mux only; no new machine JSON in comments (existing code paths already avoided student prompt JSON comments on upload).
+4. **Done:** Teacher-gated machine-prompt comment cleanup: `GET /api/prompt/grading/machine-prompt-comments/status`, `POST .../delete` with `teacherConfirmed`; TeacherViewer panel + preconditions.
+5. **Done:** Import success copy in Teacher Config: non-blocking hint only (no auto cleanup / mux).

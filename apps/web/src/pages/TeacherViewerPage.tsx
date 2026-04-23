@@ -589,6 +589,12 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   const [teacherStimulusCaptions, setTeacherStimulusCaptions] = useState(false);
   const [studentStimulusCaptions, setStudentStimulusCaptions] = useState(false);
   const [youtubeStimulusRuntimeError, setYoutubeStimulusRuntimeError] = useState<string | null>(null);
+  const [machineCleanupStatus, setMachineCleanupStatus] = useState<promptApi.MachinePromptCommentCleanupStatus | null>(
+    null,
+  );
+  const [machineCleanupLoading, setMachineCleanupLoading] = useState(false);
+  const [machineCleanupActionError, setMachineCleanupActionError] = useState<string | null>(null);
+  const [machineCleanupConfirmed, setMachineCleanupConfirmed] = useState(false);
 
   const isDev = typeof window !== 'undefined' && /^(localhost|127\.0\.0\.1)$/.test(window.location.hostname);
   const teacher = context && isTeacher(context.roles);
@@ -640,6 +646,34 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   useEffect(() => {
     setCaptionHelpOpen(false);
   }, [current?.userId, assignmentId]);
+
+  useEffect(() => {
+    setMachineCleanupConfirmed(false);
+    setMachineCleanupActionError(null);
+  }, [current?.userId]);
+
+  useEffect(() => {
+    if (!gradingMode || !teacher || !assignmentId || !current?.userId) {
+      setMachineCleanupStatus(null);
+      return;
+    }
+    let cancelled = false;
+    setMachineCleanupLoading(true);
+    void promptApi
+      .getMachinePromptCommentCleanupStatus(current.userId, assignmentId)
+      .then((s) => {
+        if (!cancelled) setMachineCleanupStatus(s);
+      })
+      .catch(() => {
+        if (!cancelled) setMachineCleanupStatus(null);
+      })
+      .finally(() => {
+        if (!cancelled) setMachineCleanupLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [gradingMode, teacher, assignmentId, current?.userId]);
 
   const youtubeStimulusForGrading = useMemo(
     () => parseYoutubeMediaStimulusFromComments(current?.submissionComments),
@@ -763,6 +797,21 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
       setLoading(false);
     }
   }, [teacher, assignmentId, setLastFunction, setLastApiResult, setLastApiError]);
+
+  const deleteMachinePromptComments = useCallback(async () => {
+    if (!gradingMode || !assignmentId || !current?.userId || !machineCleanupConfirmed) return;
+    setMachineCleanupActionError(null);
+    try {
+      await promptApi.deleteMachinePromptSubmissionComments(
+        { userId: current.userId, teacherConfirmed: true },
+        assignmentId,
+      );
+      setMachineCleanupStatus(null);
+      await loadTeacher();
+    } catch (e) {
+      setMachineCleanupActionError(e instanceof Error ? e.message : String(e));
+    }
+  }, [gradingMode, assignmentId, current?.userId, machineCleanupConfirmed, loadTeacher]);
 
   const loadStudent = useCallback(async () => {
     if (!assignmentId || !context) {
@@ -1659,6 +1708,63 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
           className="prompter-viewer-sidebar"
           id="viewer-sidebar-left"
         >
+          {gradingMode &&
+            teacher &&
+            (machineCleanupLoading ||
+              (machineCleanupStatus && machineCleanupStatus.machinePromptCommentCandidates.length > 0)) && (
+              <div className="prompter-viewer-rubric-container" style={{ marginBottom: 12 }}>
+                <div className="prompter-viewer-feedback-title">Student-visible prompt comments</div>
+                {machineCleanupLoading ? (
+                  <p className="prompter-hint">Checking submission comments…</p>
+                ) : machineCleanupStatus && machineCleanupStatus.machinePromptCommentCandidates.length > 0 ? (
+                  <>
+                    <p className="prompter-hint">{machineCleanupStatus.hint}</p>
+                    <ul className="prompter-hint" style={{ paddingLeft: 18, margin: '8px 0' }}>
+                      {machineCleanupStatus.machinePromptCommentCandidates.map((c) => (
+                        <li key={c.id} style={{ wordBreak: 'break-word' }}>
+                          <code>#{c.id}</code> {c.preview}
+                          {c.preview.length >= 120 ? '…' : ''}
+                        </li>
+                      ))}
+                    </ul>
+                    {machineCleanupStatus.wouldLosePromptIfAllMachineCommentsRemoved ? (
+                      <p className="prompter-info-message">
+                        Cleanup is blocked: the prompt may only exist in these comments. Keep legacy JSON on the submission
+                        body or ensure the video includes prompt metadata first.
+                      </p>
+                    ) : (
+                      <>
+                        <label className="prompter-hint" style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                          <input
+                            type="checkbox"
+                            checked={machineCleanupConfirmed}
+                            onChange={(e) => setMachineCleanupConfirmed(e.target.checked)}
+                          />
+                          <span>
+                            I confirmed the prompt still displays correctly in this viewer without relying on these
+                            comments.
+                          </span>
+                        </label>
+                        {machineCleanupActionError ? (
+                          <p className="prompter-info-message" role="alert">
+                            {machineCleanupActionError}
+                          </p>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="prompter-btn-secondary"
+                          style={{ marginTop: 8 }}
+                          disabled={!machineCleanupConfirmed}
+                          onClick={() => void deleteMachinePromptComments()}
+                        >
+                          Delete machine prompt comments in Canvas
+                        </button>
+                      </>
+                    )}
+                  </>
+                ) : null}
+              </div>
+            )}
           {rubric.length > 0 && (
             <div className="prompter-viewer-rubric-container">
               <div className="prompter-viewer-feedback-title">Rubric</div>

@@ -472,6 +472,38 @@ export async function deleteComment(
   }));
 }
 
+export interface MachinePromptCommentCleanupStatus {
+  userId: string;
+  hasSubmissionVideo: boolean;
+  bodyLooksLikeLegacyMachineJson: boolean;
+  machinePromptCommentCandidates: Array<{ id: number; preview: string }>;
+  wouldLosePromptIfAllMachineCommentsRemoved: boolean;
+  hint: string;
+}
+
+export async function getMachinePromptCommentCleanupStatus(
+  userId: string,
+  assignmentId?: string | null,
+): Promise<MachinePromptCommentCleanupStatus> {
+  const path = withAssignmentId(
+    `${base}/grading/machine-prompt-comments/status?userId=${encodeURIComponent(userId)}`,
+    assignmentId,
+  );
+  return fetchJsonWithOAuthRedirect<MachinePromptCommentCleanupStatus>(path);
+}
+
+export async function deleteMachinePromptSubmissionComments(
+  dto: { userId: string; teacherConfirmed: boolean; commentIds?: number[] },
+  assignmentId?: string | null,
+): Promise<{ ok: boolean; deletedIds: number[] }> {
+  const url = withAssignmentId(`${base}/grading/machine-prompt-comments/delete`, assignmentId);
+  return fetchJsonWithOAuthRedirect<{ ok: boolean; deletedIds: number[] }>(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dto),
+  });
+}
+
 export async function resetAttempt(userId: string, assignmentId?: string | null): Promise<void> {
   await fetch(withAssignmentId(base + '/reset-attempt', assignmentId), apiInit({
     method: 'POST',

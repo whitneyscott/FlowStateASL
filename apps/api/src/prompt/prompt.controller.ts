@@ -44,6 +44,7 @@ import {
   EditCommentDto,
   DeleteCommentDto,
 } from './dto/comment.dto';
+import { DeleteMachinePromptCommentsDto } from './dto/machine-prompt-comment-cleanup.dto';
 import { ResetAttemptDto } from './dto/reset-attempt.dto';
 import { LtiDeepLinkFileStore } from '../lti/lti-deep-link-file.store';
 import { appendLtiLog } from '../common/last-error.store';
@@ -762,6 +763,45 @@ export class PromptController {
     const ctx = this.getCtxWithAssignment(req);
     await this.prompt.deleteComment(ctx, dto.userId, dto.commentId);
     return { ok: true };
+  }
+
+  @Get('grading/machine-prompt-comments/status')
+  @UseGuards(TeacherRoleGuard)
+  async machinePromptCommentsStatus(@Req() req: Request, @Res() res: Response) {
+    const q = req.query as { userId?: string };
+    const userId = (q.userId ?? '').toString().trim();
+    if (!userId) throw new BadRequestException('userId query parameter is required');
+    const ctx = this.getCtxWithAssignment(req);
+    try {
+      const result = await this.prompt.getMachinePromptCommentCleanupStatus(ctx, userId);
+      return res.json(result);
+    } catch (err) {
+      if (err instanceof CanvasTokenExpiredError) {
+        return res.status(401).json(getOAuth401Body(req));
+      }
+      throw err;
+    }
+  }
+
+  @Post('grading/machine-prompt-comments/delete')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(TeacherRoleGuard)
+  async machinePromptCommentsDelete(@Req() req: Request, @Res() res: Response, @Body() dto: DeleteMachinePromptCommentsDto) {
+    const userId = (dto.userId ?? '').toString().trim();
+    if (!userId) throw new BadRequestException('userId is required');
+    const ctx = this.getCtxWithAssignment(req);
+    try {
+      const { deletedIds } = await this.prompt.deleteMachinePromptSubmissionComments(ctx, userId, {
+        teacherConfirmed: !!dto.teacherConfirmed,
+        commentIds: dto.commentIds,
+      });
+      return res.json({ ok: true, deletedIds });
+    } catch (err) {
+      if (err instanceof CanvasTokenExpiredError) {
+        return res.status(401).json(getOAuth401Body(req));
+      }
+      throw err;
+    }
   }
 
   @Post('reset-attempt')

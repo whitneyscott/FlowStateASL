@@ -1051,7 +1051,9 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       });
       await loadAssignments();
       await load(sid);
-      setImportInfo('Assignment settings were imported.');
+      setImportInfo(
+        'Assignment settings were imported. For older student work, open Grading and confirm prompts still display (legacy data may live in submission comments until you clean it up there). Nothing was auto-deleted or remuxed.',
+      );
       setImportModalOpen(false);
       setAssignmentActionMode('edit');
       setConfigAssignValue(sid);

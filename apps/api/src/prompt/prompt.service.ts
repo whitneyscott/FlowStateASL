@@ -48,6 +48,11 @@ import {
   muxWebmWithPromptDataTag,
   writeBufferToTempWebmFile,
 } from './webm-prompt-metadata.util';
+import { isMachinePromptJsonComment } from './machine-prompt-comment.util';
+import {
+  buildHumanReadableSubmissionBodyText,
+  humanSubmissionBodyToPromptHtml,
+} from './submission-human-readable-body.util';
 import { randomUUID } from 'crypto';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -2256,36 +2261,15 @@ export class PromptService {
     appendLtiLog('prompt-submit', 'submit: got assignmentId', { assignmentId });
     let sanitizedDeckTimeline = this.sanitizeDeckTimelineInput(deckTimeline);
     sanitizedDeckTimeline = await this.enrichDeckTimelineVideoIds(ctx, sanitizedDeckTimeline);
-    const deckDerived =
-      sanitizedDeckTimeline?.length && sanitizedDeckTimeline.length > 0
-        ? this.buildPromptHtmlFromDeckTimeline(sanitizedDeckTimeline).trim()
-        : '';
-    const bodyPayload: Record<string, unknown> = {
-      submittedAt: new Date().toISOString(),
-    };
-    if (sanitizedDeckTimeline?.length) {
-      bodyPayload.deckTimeline = sanitizedDeckTimeline;
-    } else if (snap) {
-      bodyPayload.promptSnapshotHtml = snap;
-    }
-    const bodyString = JSON.stringify(bodyPayload);
-    // #region agent log
-    try {
-      const dbg = JSON.parse(bodyString) as Record<string, unknown>;
-      appendLtiLog('agent-debug', 'submit: Canvas body JSON before writeSubmissionBody (Bridge)', {
-        hypothesisId: 'H2',
-        keys: Object.keys(dbg),
-        hasBothFields: !!(dbg.promptSnapshotHtml && dbg.deckTimeline),
-        deckRowCount: Array.isArray(dbg.deckTimeline) ? dbg.deckTimeline.length : 0,
-        firstDeckRowKeys:
-          Array.isArray(dbg.deckTimeline) && dbg.deckTimeline[0]
-            ? Object.keys(dbg.deckTimeline[0] as object)
-            : [],
-      });
-    } catch {
-      /* ignore */
-    }
-    // #endregion
+    const bodyString = buildHumanReadableSubmissionBodyText({
+      deckTimeline: sanitizedDeckTimeline,
+      promptSnapshotHtml: snap || undefined,
+    });
+    appendLtiLog('prompt-submit', 'submit: human-readable Canvas body', {
+      assignmentId,
+      deckRows: sanitizedDeckTimeline?.length ?? 0,
+      bodyChars: bodyString.length,
+    });
     const ctxWithToken: LtiContext = { ...ctx, canvasAccessToken: token };
     await this.canvas.writeSubmissionBody(ctxWithToken, assignmentId, bodyString, token);
 
@@ -2295,7 +2279,10 @@ export class PromptService {
     });
   }
 
-  /** Recover prompt HTML from submission body JSON (same shape as submit writeSubmissionBody). */
+  /**
+   * Recover prompt HTML from submission body: legacy machine JSON, or human-readable text
+   * from the forward `submit` path.
+   */
   private extractPromptHtmlFromSubmissionBody(body: string | undefined): string | undefined {
     const raw = (body ?? '').trim();
     if (!raw) return undefined;
@@ -2313,7 +2300,9 @@ export class PromptService {
       const snap = String(parsed.promptSnapshotHtml ?? '').trim();
       if (snap) return snap;
     } catch {
-      /* ignore */
+      if (raw.startsWith('{')) return undefined;
+      const asHtml = humanSubmissionBodyToPromptHtml(raw);
+      return asHtml.trim() ? asHtml : undefined;
     }
     return undefined;
   }
@@ -3524,6 +3513,159 @@ export class PromptService {
       domainOverride,
       token,
     );
+  }
+
+  /** Teacher-only: inspect legacy machine JSON comments for student-visible cleanup (no auto-delete). */
+  async getMachinePromptCommentCleanupStatus(
+    ctx: LtiContext,
+    userId: string,
+  ): Promise<{
+    userId: string;
+    hasSubmissionVideo: boolean;
+    bodyLooksLikeLegacyMachineJson: boolean;
+    machinePromptCommentCandidates: Array<{ id: number; preview: string }>;
+    wouldLosePromptIfAllMachineCommentsRemoved: boolean;
+    hint: string;
+  }> {
+    const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
+    if (!token) throw new Error('Canvas OAuth token required');
+    const assignmentId = await this.getPrompterAssignmentId(ctx);
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
+    const sub = await this.canvas.getSubmissionFull(
+      ctx.courseId,
+      assignmentId,
+      userId,
+      domainOverride,
+      token,
+    );
+    if (!sub) throw new BadRequestException('Submission not found');
+    const canvasVideoUrlRaw = getVideoUrlFromCanvasSubmission(sub);
+    const hasSubmissionVideo = !!(canvasVideoUrlRaw && String(canvasVideoUrlRaw).trim());
+    const body = typeof sub.body === 'string' ? sub.body : undefined;
+    let bodyLooksLikeLegacyMachineJson = false;
+    const rawBody = (body ?? '').trim();
+    if (rawBody.startsWith('{')) {
+      try {
+        const p = JSON.parse(rawBody) as Record<string, unknown>;
+        bodyLooksLikeLegacyMachineJson = !!(
+          (Array.isArray(p.deckTimeline) && p.deckTimeline.length > 0) ||
+          (typeof p.promptSnapshotHtml === 'string' && p.promptSnapshotHtml.trim().length > 0) ||
+          p.fsaslKind != null
+        );
+      } catch {
+        bodyLooksLikeLegacyMachineJson = false;
+      }
+    }
+    const comments =
+      sub.submission_comments
+        ?.filter((c) => c.id != null && c.comment != null)
+        .map((c) => ({ id: c.id!, comment: c.comment! })) ?? [];
+    const machinePromptCommentCandidates = comments
+      .filter((c) => isMachinePromptJsonComment(c.comment))
+      .map((c) => ({
+        id: c.id,
+        preview: (c.comment ?? '').trim().slice(0, 120),
+      }));
+    let promptsFallbackDuration: number | null = null;
+    try {
+      const cfg = await this.getConfig(ctx);
+      promptsFallbackDuration = this.totalDurationSecondsFromStoredPromptBanks(cfg);
+    } catch {
+      promptsFallbackDuration = null;
+    }
+    const fullMerge = this.mergeBodyCommentAssignmentFallback(body, comments, promptsFallbackDuration);
+    const withoutMachineComments = comments.filter((c) => !isMachinePromptJsonComment(c.comment));
+    const withoutMachine = this.mergeBodyCommentAssignmentFallback(
+      body,
+      withoutMachineComments,
+      promptsFallbackDuration,
+    );
+    const fullHas = (fullMerge.promptHtml ?? '').trim().length > 0;
+    const withoutHas = (withoutMachine.promptHtml ?? '').trim().length > 0;
+    const wouldLosePromptIfAllMachineCommentsRemoved = !hasSubmissionVideo && fullHas && !withoutHas;
+    const hint =
+      'You may delete only comments that look like machine prompt JSON (never [mm:ss] teacher feedback). Open this submission in the grading viewer first and confirm the prompt still displays. Usually safe when legacy JSON remains on the submission body or the video includes prompt metadata (PROMPT_DATA).';
+    return {
+      userId,
+      hasSubmissionVideo,
+      bodyLooksLikeLegacyMachineJson,
+      machinePromptCommentCandidates,
+      wouldLosePromptIfAllMachineCommentsRemoved,
+      hint,
+    };
+  }
+
+  /**
+   * Teacher-only: remove machine prompt JSON comments after explicit confirmation.
+   * Refuses if removal would leave no body/comment fallback prompt while the submission has no video.
+   */
+  async deleteMachinePromptSubmissionComments(
+    ctx: LtiContext,
+    userId: string,
+    options: { teacherConfirmed: boolean; commentIds?: number[] },
+  ): Promise<{ deletedIds: number[] }> {
+    if (!options.teacherConfirmed) {
+      throw new BadRequestException('teacherConfirmed must be true');
+    }
+    const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
+    if (!token) throw new Error('Canvas OAuth token required');
+    const assignmentId = await this.getPrompterAssignmentId(ctx);
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
+    const sub = await this.canvas.getSubmissionFull(
+      ctx.courseId,
+      assignmentId,
+      userId,
+      domainOverride,
+      token,
+    );
+    if (!sub) throw new BadRequestException('Submission not found');
+    const canvasVideoUrlRaw = getVideoUrlFromCanvasSubmission(sub);
+    const hasSubmissionVideo = !!(canvasVideoUrlRaw && String(canvasVideoUrlRaw).trim());
+    const body = typeof sub.body === 'string' ? sub.body : undefined;
+    const comments =
+      sub.submission_comments
+        ?.filter((c) => c.id != null && c.comment != null)
+        .map((c) => ({ id: c.id!, comment: c.comment! })) ?? [];
+    const candidates = comments.filter((c) => isMachinePromptJsonComment(c.comment));
+    let toDelete = candidates;
+    if (options.commentIds?.length) {
+      const want = new Set(options.commentIds);
+      toDelete = candidates.filter((c) => want.has(c.id));
+    }
+    if (toDelete.length === 0) return { deletedIds: [] };
+
+    let promptsFallbackDuration: number | null = null;
+    try {
+      const cfg = await this.getConfig(ctx);
+      promptsFallbackDuration = this.totalDurationSecondsFromStoredPromptBanks(cfg);
+    } catch {
+      promptsFallbackDuration = null;
+    }
+    const fullMerge = this.mergeBodyCommentAssignmentFallback(body, comments, promptsFallbackDuration);
+    const removeSet = new Set(toDelete.map((c) => c.id));
+    const afterComments = comments.filter((c) => !removeSet.has(c.id));
+    const afterMerge = this.mergeBodyCommentAssignmentFallback(body, afterComments, promptsFallbackDuration);
+    const fullHas = (fullMerge.promptHtml ?? '').trim().length > 0;
+    const afterHas = (afterMerge.promptHtml ?? '').trim().length > 0;
+    if (!hasSubmissionVideo && fullHas && !afterHas) {
+      throw new BadRequestException(
+        'Refusing delete: the prompt may only exist in these machine comments. Ensure legacy JSON remains on the submission body or attach a video with prompt metadata before deleting.',
+      );
+    }
+
+    const deletedIds: number[] = [];
+    for (const c of toDelete) {
+      await this.canvas.deleteSubmissionComment(
+        ctx.courseId,
+        assignmentId,
+        userId,
+        String(c.id),
+        domainOverride,
+        token,
+      );
+      deletedIds.push(c.id);
+    }
+    return { deletedIds };
   }
 
   async resetAttempt(ctx: LtiContext, userId: string): Promise<void> {
