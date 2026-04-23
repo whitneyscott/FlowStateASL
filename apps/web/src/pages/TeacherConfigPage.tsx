@@ -477,6 +477,43 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     }
   }, [rubrics, rubricId]);
 
+  /** Bridge: trace rubric <select> matching (strict vs string compare, option values vs state). */
+  useEffect(() => {
+    const ridTrim = rubricId.trim();
+    const maxRows = 40;
+    const rows = rubrics.slice(0, maxRows).map((r, i) => ({
+      i,
+      optionValue: r.id,
+      optionValueType: typeof r.id,
+      strictEq: r.id === ridTrim,
+      stringEq: String(r.id) === ridTrim,
+      trimStringEq: String(r.id).trim() === ridTrim,
+    }));
+    const matchStrict = rubrics.findIndex((r) => r.id === ridTrim);
+    const matchString = rubrics.findIndex((r) => String(r.id) === ridTrim);
+    const inListStrict = matchStrict >= 0;
+    const orphan = !!ridTrim && !inListStrict;
+    const optionValuesForSelect = [
+      '',
+      ...(orphan ? [ridTrim] : []),
+      ...rubrics.map((r) => r.id),
+    ];
+    const valueInOptions = optionValuesForSelect.some((v) => v === rubricId);
+    appendBridgeLog('teacher-config-assignment', 'rubric dropdown: match trace', {
+      selectValueProp: rubricId,
+      selectValueLen: rubricId.length,
+      configuredTrimmed: ridTrim,
+      rubricsCount: rubrics.length,
+      matchIndexStrict: matchStrict,
+      matchIndexString: matchString,
+      inCourseListStrict: inListStrict,
+      willRenderOrphanOption: orphan,
+      valueWouldMatchAnOption: valueInOptions,
+      sampleComparisons: rows,
+      sampleTruncated: rubrics.length > maxRows,
+    });
+  }, [rubrics, rubricId]);
+
   const { hubCurricula: deckPickerCurricula, hubUnits: deckPickerUnits, hubSections: deckPickerSections, filteredPlaylists: deckPickerPlaylists } =
     useMemo(
       () => computeDeckHubFilters(deckHierarchyPlaylists, deckFilterCurricula, deckFilterUnits, deckFilterSections),
