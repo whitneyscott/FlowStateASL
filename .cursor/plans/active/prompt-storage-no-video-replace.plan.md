@@ -16,9 +16,11 @@
 ## B. Grading / viewer resolution (new + legacy)
 
 - **Primary:** read from WebM `PROMPT_DATA` when the tag is present and valid.
-- **Fallback (must remain):** when metadata is missing or insufficient, continue to use:
-  - **Server:** body-based (and if needed, comment-based) parsing—e.g. `extractPromptHtmlFromSubmissionBody` / `computeAssignmentFallbackPromptRow`-style behavior in [`PromptService`](../../apps/api/src/prompt/prompt.service.ts) so `getSubmissions` / `getMySubmission` are **metadata-first, then body/comments**, not metadata-only.
-  - **Client:** keep **`getPromptFromComments`**, **`parseDeckTimelineFromSubmissionComments`**, **`resolveDeckTimeline`**, **`parseYoutubeMediaStimulusFromComments`**, and body-based deck parsing in [`TeacherViewerPage.tsx`](../../apps/web/src/pages/TeacherViewerPage.tsx).
+- **Unified resolution chain (server is canonical):** [`resolvePromptRowFromWebmMetadata`](../../apps/api/src/prompt/prompt.service.ts) must apply **the same ordered sources for `promptHtml` and duration** regardless of where the prompt was originally stored:
+  1. **WebM metadata** (full or partial fields, with gaps filled from the next layers).
+  2. **Submission body** (legacy JSON: `promptSnapshotHtml`, `deckTimeline`, `durationSeconds`, etc.).
+  3. **Submission comments** (same JSON shapes and the same legacy heuristics as the client: forward scan for JSON prompt/deck, then “Prompt used:” / markup tail—aligned with [`TeacherViewerPage.tsx`](../../apps/web/src/pages/TeacherViewerPage.tsx) `getPromptFromComments` / latest-comment duration+deck hints).
+- **Client:** keep **`getPromptFromComments`**, **`parseDeckTimelineFromSubmissionComments`**, **`resolveDeckTimeline`**, **`parseYoutubeMediaStimulusFromComments`**, and body-based deck parsing as **defensive fallback** only; the API must not rely on the client to supply prompt text that the server could have resolved.
 
 ## C. Legacy submissions — no video mutation
 
@@ -74,6 +76,7 @@ flowchart LR
 ## Implementation todos
 
 1. Revert/remove mux/re-upload migration; restore metadata + legacy fallback resolution + TeacherViewer legacy parsers.
-2. Forward path: human-readable submission body on submit; no machine JSON; audit no machine prompt writes to comments.
-3. Optional: status + confirm-delete machine JSON comments only (`teacherConfirmed`); enforce safe preconditions in API/copy.
-4. Import: non-blocking hint only.
+2. **Done:** Server-side comment parsing in `resolvePromptRowFromWebmMetadata` (metadata → body → comments); client parsers remain fallback-only.
+3. Forward path: human-readable submission body on submit; no machine JSON; audit no machine prompt writes to comments.
+4. Optional: status + confirm-delete machine JSON comments only (`teacherConfirmed`); enforce safe preconditions in API/copy.
+5. Import: non-blocking hint only.

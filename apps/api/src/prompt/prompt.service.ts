@@ -2360,19 +2360,6 @@ export class PromptService {
     return { promptHtml, videoDurationSeconds };
   }
 
-  /** Classify prompt shape from submission body JSON only (prompt snapshot for grading comes from WebM metadata). */
-  private classifyAssignmentPromptKindFromBody(body: string | undefined): 'deck' | 'body' | 'none' {
-    const raw = (body ?? '').trim();
-    if (!raw) return 'none';
-    try {
-      const parsed = JSON.parse(raw) as { deckTimeline?: unknown };
-      if (Array.isArray(parsed.deckTimeline) && parsed.deckTimeline.length > 0) return 'deck';
-    } catch {
-      return 'none';
-    }
-    return this.extractPromptHtmlFromSubmissionBody(body) ? 'body' : 'none';
-  }
-
   /**
    * When WebM `PROMPT_DATA` is unavailable, use submission body JSON + assignment prompt-bank duration hints only.
    */
@@ -2419,6 +2406,160 @@ export class PromptService {
     return { promptHtml, videoDurationSeconds, durationSource };
   }
 
+  /**
+   * Legacy machine JSON in submission comments (same shapes as body). Forward scan matches
+   * TeacherViewer `getPromptFromComments` JSON pass; tail pass matches legacy “Prompt used:” / markup.
+   */
+  private extractPromptHtmlFromSubmissionComments(
+    comments: Array<{ comment: string }> | undefined,
+  ): string | undefined {
+    if (!comments?.length) return undefined;
+    for (const c of comments) {
+      const txt = (c.comment ?? '').trim();
+      if (!txt) continue;
+      try {
+        const parsed = JSON.parse(txt) as { promptSnapshotHtml?: unknown; deckTimeline?: unknown };
+        const snap = String(parsed.promptSnapshotHtml ?? '').trim();
+        if (snap) return snap;
+        const deck = this.sanitizeDeckTimelineInput(
+          Array.isArray(parsed.deckTimeline)
+            ? (parsed.deckTimeline as Array<{ title?: unknown; startSec?: unknown; videoId?: unknown }>)
+            : undefined,
+        );
+        if (deck?.length) {
+          const html = this.buildPromptHtmlFromDeckTimeline(deck).trim();
+          if (html) return html;
+        }
+      } catch {
+        /* not JSON */
+      }
+    }
+    let lastIdx = -1;
+    for (let i = 0; i < comments.length; i++) {
+      const txt = (comments[i].comment ?? '').trim();
+      const isLegacy = /^Prompt used:/i.test(txt);
+      const hasMarkup = txt.includes('<') && txt.includes('>');
+      if (isLegacy || hasMarkup) lastIdx = i;
+    }
+    if (lastIdx >= 0) {
+      const raw = (comments[lastIdx].comment ?? '').trim();
+      return /^Prompt used:/i.test(raw) ? raw.replace(/^Prompt used:\s*/i, '').trim() : raw;
+    }
+    return undefined;
+  }
+
+  /** Duration / deck hints from JSON comments; newest comment wins (multi-attempt), aligned with client deck comment order. */
+  private computeCommentDerivedDurationRow(comments: Array<{ comment: string }> | undefined): {
+    videoDurationSeconds: number | null;
+    durationSource: 'submission' | 'unknown';
+  } {
+    let videoDurationSeconds: number | null = null;
+    let durationSource: 'submission' | 'unknown' = 'unknown';
+    if (!comments?.length) return { videoDurationSeconds, durationSource };
+    for (let i = comments.length - 1; i >= 0; i--) {
+      const txt = (comments[i]?.comment ?? '').trim();
+      if (!txt) continue;
+      try {
+        const parsed = JSON.parse(txt) as { durationSeconds?: unknown; deckTimeline?: unknown };
+        const d = Number(parsed.durationSeconds);
+        if (Number.isFinite(d) && d > 0) {
+          videoDurationSeconds = Math.round(d * 1000) / 1000;
+          durationSource = 'submission';
+          break;
+        }
+        const deck = this.sanitizeDeckTimelineInput(
+          Array.isArray(parsed.deckTimeline)
+            ? (parsed.deckTimeline as Array<{ title?: unknown; startSec?: unknown; videoId?: unknown }>)
+            : undefined,
+        );
+        if (deck?.length) {
+          const est = this.estimateDurationFromDeckTimelineEntries(deck);
+          if (est != null) {
+            videoDurationSeconds = est;
+            durationSource = 'submission';
+            break;
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    return { videoDurationSeconds, durationSource };
+  }
+
+  /**
+   * Ordered fallback: body then comments, then assignment prompt-bank duration. Used when WebM is absent
+   * or when WebM supplies only partial fields.
+   */
+  private mergeBodyCommentAssignmentFallback(
+    body: string | undefined,
+    comments: Array<{ comment: string }> | undefined,
+    promptsFallbackDuration: number | null,
+  ): {
+    promptHtml?: string;
+    videoDurationSeconds: number | null;
+    durationSource: 'submission' | 'prompts' | 'unknown';
+  } {
+    const bodyPart = this.computeAssignmentFallbackPromptRow(body, null);
+    const commentPrompt = this.extractPromptHtmlFromSubmissionComments(comments);
+    const commentDur = this.computeCommentDerivedDurationRow(comments);
+    let promptHtml = bodyPart.promptHtml ?? commentPrompt;
+    let videoDurationSeconds = bodyPart.videoDurationSeconds ?? commentDur.videoDurationSeconds;
+    let durationSource: 'submission' | 'prompts' | 'unknown' =
+      bodyPart.videoDurationSeconds != null
+        ? bodyPart.durationSource
+        : commentDur.videoDurationSeconds != null
+          ? commentDur.durationSource
+          : 'unknown';
+    if (videoDurationSeconds == null && promptsFallbackDuration != null) {
+      videoDurationSeconds = promptsFallbackDuration;
+      durationSource = 'prompts';
+    }
+    return { promptHtml, videoDurationSeconds, durationSource };
+  }
+
+  /** Log line: where non-WebM prompt labeling comes from (body vs comments). */
+  private classifyGradingViewerPromptSource(
+    body: string | undefined,
+    comments: Array<{ comment: string }> | undefined,
+    metadataResolution: 'webm_metadata' | 'assignment_fallback',
+  ):
+    | 'webm_metadata'
+    | 'submission_body_deck_timeline'
+    | 'submission_body'
+    | 'submission_comments_deck_timeline'
+    | 'submission_comments'
+    | 'none' {
+    if (metadataResolution === 'webm_metadata') return 'webm_metadata';
+    const rawBody = (body ?? '').trim();
+    if (rawBody) {
+      try {
+        const parsed = JSON.parse(rawBody) as { deckTimeline?: unknown };
+        if (Array.isArray(parsed.deckTimeline) && parsed.deckTimeline.length > 0) {
+          return 'submission_body_deck_timeline';
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    if (this.extractPromptHtmlFromSubmissionBody(body)?.trim()) return 'submission_body';
+    if (!comments?.length) return 'none';
+    for (let i = comments.length - 1; i >= 0; i--) {
+      const txt = (comments[i]?.comment ?? '').trim();
+      if (!txt) continue;
+      try {
+        const parsed = JSON.parse(txt) as { deckTimeline?: unknown };
+        if (Array.isArray(parsed.deckTimeline) && parsed.deckTimeline.length > 0) {
+          return 'submission_comments_deck_timeline';
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    if (this.extractPromptHtmlFromSubmissionComments(comments)?.trim()) return 'submission_comments';
+    return 'none';
+  }
+
   private static readonly PROMPT_DATA_DECODE_MAX_UTF8 = 512_000;
 
   private async resolvePromptRowFromWebmMetadata(args: {
@@ -2427,6 +2568,7 @@ export class PromptService {
     token: string;
     canvasVideoUrl: string | undefined;
     body: string | undefined;
+    submissionComments?: Array<{ comment: string }>;
     promptsFallbackDuration: number | null;
   }): Promise<{
     promptHtml?: string;
@@ -2435,7 +2577,11 @@ export class PromptService {
     metadataPromptResolution: 'webm_metadata' | 'assignment_fallback';
     captionsVtt?: string;
   }> {
-    const derived = this.computeAssignmentFallbackPromptRow(args.body, args.promptsFallbackDuration);
+    const merged = this.mergeBodyCommentAssignmentFallback(
+      args.body,
+      args.submissionComments,
+      args.promptsFallbackDuration,
+    );
     const fallback = (captionsVtt?: string): {
       promptHtml?: string;
       videoDurationSeconds: number | null;
@@ -2443,9 +2589,9 @@ export class PromptService {
       metadataPromptResolution: 'assignment_fallback';
       captionsVtt?: string;
     } => ({
-      promptHtml: derived.promptHtml,
-      videoDurationSeconds: derived.videoDurationSeconds,
-      durationSource: derived.durationSource,
+      promptHtml: merged.promptHtml,
+      videoDurationSeconds: merged.videoDurationSeconds,
+      durationSource: merged.durationSource,
       metadataPromptResolution: 'assignment_fallback',
       ...(captionsVtt ? { captionsVtt } : {}),
     });
@@ -2568,11 +2714,11 @@ export class PromptService {
       appendLtiLog('webm-prompt', 'PROMPT_SOURCE: webm_metadata', { userId: args.userId });
 
       return {
-        promptHtml: hasPromptHtml ? fromTag.promptHtml : derived.promptHtml,
+        promptHtml: hasPromptHtml ? fromTag.promptHtml : merged.promptHtml,
         videoDurationSeconds: hasDuration
           ? (fromTag.videoDurationSeconds as number)
-          : derived.videoDurationSeconds,
-        durationSource: hasDuration ? 'submission' : derived.durationSource,
+          : merged.videoDurationSeconds,
+        durationSource: hasDuration ? 'submission' : merged.durationSource,
         metadataPromptResolution: 'webm_metadata',
         ...(captionsVtt ? { captionsVtt } : {}),
       };
@@ -3213,19 +3359,14 @@ export class PromptService {
           token,
           canvasVideoUrl: canvasVideoUrlRaw,
           body: typeof row.body === 'string' ? row.body : undefined,
+          submissionComments: row.submissionComments,
           promptsFallbackDuration,
         });
-        const kind = this.classifyAssignmentPromptKindFromBody(
+        const viewerSource = this.classifyGradingViewerPromptSource(
           typeof row.body === 'string' ? row.body : undefined,
+          row.submissionComments,
+          resolved.metadataPromptResolution,
         );
-        const viewerSource =
-          resolved.metadataPromptResolution === 'webm_metadata'
-            ? 'webm_metadata'
-            : kind === 'deck'
-              ? 'submission_body_deck_timeline'
-              : kind === 'body'
-                ? 'submission_body'
-                : 'none';
         appendLtiLog('viewer', 'getSubmissions: prompt source selected', {
           userId: row.userId,
           assignmentId,
@@ -3459,19 +3600,14 @@ export class PromptService {
       token,
       canvasVideoUrl: canvasVideoUrlRaw,
       body: typeof sub.body === 'string' ? sub.body : undefined,
+      submissionComments: mappedComments,
       promptsFallbackDuration,
     });
-    const kind = this.classifyAssignmentPromptKindFromBody(
+    const viewerSource = this.classifyGradingViewerPromptSource(
       typeof sub.body === 'string' ? sub.body : undefined,
+      mappedComments,
+      resolved.metadataPromptResolution,
     );
-    const viewerSource =
-      resolved.metadataPromptResolution === 'webm_metadata'
-        ? 'webm_metadata'
-        : kind === 'deck'
-          ? 'submission_body_deck_timeline'
-          : kind === 'body'
-            ? 'submission_body'
-            : 'none';
     appendLtiLog('viewer', 'getMySubmission: prompt source selected', {
       userId,
       assignmentId,
