@@ -51,7 +51,7 @@ function appendViewerBridgeLog(message: string, extra?: Record<string, unknown>)
 /** Populated after getSubmissions (background warm, concurrency-limited). */
 type PrefetchedGradingMedia = Pick<
   promptApi.PromptSubmission,
-  'captionsVtt' | 'promptHtml' | 'videoDurationSeconds' | 'durationSource'
+  'captionsVtt' | 'promptHtml' | 'videoDurationSeconds' | 'durationSource' | 'mediaStimulus'
 >;
 
 /** Deck submissions: real boundaries from the student recorder (seconds from recording start). */
@@ -119,48 +119,6 @@ function resolveDeckTimeline(
   const fromComments = parseDeckTimelineFromSubmissionComments(comments);
   if (fromComments.length > 0) return fromComments;
   return parseDeckTimelineFromBody(body);
-}
-
-/** From post-upload JSON submission comment (latest wins). */
-interface YoutubeMediaStimulusGrading {
-  kind: 'youtube';
-  videoId: string;
-  clipStartSec: number;
-  clipEndSec: number;
-  label?: string;
-}
-
-function parseYoutubeMediaStimulusFromComments(
-  comments: Array<{ comment?: string }> | undefined,
-): YoutubeMediaStimulusGrading | null {
-  if (!comments?.length) return null;
-  for (let i = comments.length - 1; i >= 0; i--) {
-    const txt = (comments[i].comment ?? '').trim();
-    if (!txt || txt[0] !== '{') continue;
-    try {
-      const parsed = JSON.parse(txt) as { mediaStimulus?: unknown };
-      const ms = parsed.mediaStimulus;
-      if (!ms || typeof ms !== 'object') continue;
-      const o = ms as Record<string, unknown>;
-      if (o.kind !== 'youtube') continue;
-      const videoId = String(o.videoId ?? '').trim();
-      if (!/^[\w-]{6,20}$/.test(videoId)) continue;
-      const clipStartSec = Math.max(0, Math.floor(Number(o.clipStartSec)));
-      const clipEndSec = Math.floor(Number(o.clipEndSec));
-      if (!Number.isFinite(clipEndSec) || clipEndSec <= clipStartSec) continue;
-      const labelRaw = String(o.label ?? '').trim();
-      return {
-        kind: 'youtube',
-        videoId,
-        clipStartSec: Number.isFinite(clipStartSec) ? clipStartSec : 0,
-        clipEndSec,
-        ...(labelRaw ? { label: labelRaw.slice(0, 500) } : {}),
-      };
-    } catch {
-      continue;
-    }
-  }
-  return null;
 }
 
 function activeDeckPromptAt(t: number, segments: DeckTimelineEntry[]): DeckTimelineEntry | null {
@@ -620,6 +578,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
           promptHtml: row.promptHtml,
           videoDurationSeconds: row.videoDurationSeconds ?? null,
           durationSource: row.durationSource,
+          mediaStimulus: row.mediaStimulus,
         };
         if (!cancelled) {
           setGradingPrefetchByUserId((prev) => {
@@ -675,10 +634,11 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     };
   }, [gradingMode, teacher, assignmentId, current?.userId]);
 
-  const youtubeStimulusForGrading = useMemo(
-    () => parseYoutubeMediaStimulusFromComments(current?.submissionComments),
-    [current?.submissionComments],
-  );
+  const youtubeStimulusForGrading = useMemo(() => {
+    if (!gradingMode || !current?.userId) return current?.mediaStimulus ?? undefined;
+    const pf = gradingPrefetchByUserId.get(current.userId);
+    return pf?.mediaStimulus ?? current?.mediaStimulus;
+  }, [gradingMode, current?.userId, current?.mediaStimulus, gradingPrefetchByUserId]);
 
   const youtubeDualLayout =
     !!youtubeStimulusForGrading && !!current?.videoUrl;

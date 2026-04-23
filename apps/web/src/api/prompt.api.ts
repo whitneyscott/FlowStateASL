@@ -400,6 +400,8 @@ export interface PromptSubmission {
   allowedAttempts?: number;
   /** Embedded sign-to-voice WebVTT from submission WebM (grading). */
   captionsVtt?: string;
+  /** YouTube (etc.) stimulus: server resolves WebM PROMPT_DATA, then body, then comments. */
+  mediaStimulus?: MediaStimulusPayload;
 }
 
 export async function getSubmissionCount(assignmentId?: string | null): Promise<number> {

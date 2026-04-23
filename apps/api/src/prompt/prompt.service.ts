@@ -2480,6 +2480,54 @@ export class PromptService {
    * Ordered fallback: body then comments, then assignment prompt-bank duration. Used when WebM is absent
    * or when WebM supplies only partial fields.
    */
+  private extractYoutubeMediaStimulusFromSubmissionBody(body: string | undefined) {
+    const raw = (body ?? '').trim();
+    if (!raw || raw[0] !== '{') return undefined;
+    try {
+      const parsed = JSON.parse(raw) as { mediaStimulus?: unknown };
+      return this.sanitizeMediaStimulusInput(parsed.mediaStimulus);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Latest JSON comment with valid `mediaStimulus` (newest-first; same validation as `sanitizeMediaStimulusInput`). */
+  private extractYoutubeMediaStimulusFromSubmissionComments(comments: Array<{ comment: string }> | undefined) {
+    if (!comments?.length) return undefined;
+    for (let i = comments.length - 1; i >= 0; i--) {
+      const txt = (comments[i]?.comment ?? '').trim();
+      if (!txt || txt[0] !== '{') continue;
+      try {
+        const parsed = JSON.parse(txt) as { mediaStimulus?: unknown };
+        const ms = this.sanitizeMediaStimulusInput(parsed.mediaStimulus);
+        if (ms) return ms;
+      } catch {
+        continue;
+      }
+    }
+    return undefined;
+  }
+
+  private mergeMediaStimulusFromBodyAndComments(
+    body: string | undefined,
+    comments: Array<{ comment: string }> | undefined,
+  ): {
+    mediaStimulus?: {
+      kind: 'youtube';
+      videoId: string;
+      clipStartSec: number;
+      clipEndSec: number;
+      label?: string;
+    };
+    mediaStimulusSource: 'submission_body' | 'submission_comments' | 'none';
+  } {
+    const fromBody = this.extractYoutubeMediaStimulusFromSubmissionBody(body);
+    if (fromBody) return { mediaStimulus: fromBody, mediaStimulusSource: 'submission_body' };
+    const fromComments = this.extractYoutubeMediaStimulusFromSubmissionComments(comments);
+    if (fromComments) return { mediaStimulus: fromComments, mediaStimulusSource: 'submission_comments' };
+    return { mediaStimulus: undefined, mediaStimulusSource: 'none' };
+  }
+
   private mergeBodyCommentAssignmentFallback(
     body: string | undefined,
     comments: Array<{ comment: string }> | undefined,
@@ -2565,24 +2613,43 @@ export class PromptService {
     durationSource: 'submission' | 'prompts' | 'unknown';
     metadataPromptResolution: 'webm_metadata' | 'assignment_fallback';
     captionsVtt?: string;
+    mediaStimulus?: {
+      kind: 'youtube';
+      videoId: string;
+      clipStartSec: number;
+      clipEndSec: number;
+      label?: string;
+    };
+    mediaStimulusResolutionSource: 'webm_metadata' | 'submission_body' | 'submission_comments' | 'none';
   }> {
     const merged = this.mergeBodyCommentAssignmentFallback(
       args.body,
       args.submissionComments,
       args.promptsFallbackDuration,
     );
+    const mergedMs = this.mergeMediaStimulusFromBodyAndComments(args.body, args.submissionComments);
     const fallback = (captionsVtt?: string): {
       promptHtml?: string;
       videoDurationSeconds: number | null;
       durationSource: 'submission' | 'prompts' | 'unknown';
       metadataPromptResolution: 'assignment_fallback';
       captionsVtt?: string;
+      mediaStimulus?: {
+        kind: 'youtube';
+        videoId: string;
+        clipStartSec: number;
+        clipEndSec: number;
+        label?: string;
+      };
+      mediaStimulusResolutionSource: 'webm_metadata' | 'submission_body' | 'submission_comments' | 'none';
     } => ({
       promptHtml: merged.promptHtml,
       videoDurationSeconds: merged.videoDurationSeconds,
       durationSource: merged.durationSource,
       metadataPromptResolution: 'assignment_fallback',
       ...(captionsVtt ? { captionsVtt } : {}),
+      ...(mergedMs.mediaStimulus ? { mediaStimulus: mergedMs.mediaStimulus } : {}),
+      mediaStimulusResolutionSource: mergedMs.mediaStimulusSource,
     });
 
     const url = (args.canvasVideoUrl ?? '').trim();
@@ -2702,6 +2769,12 @@ export class PromptService {
 
       appendLtiLog('webm-prompt', 'PROMPT_SOURCE: webm_metadata', { userId: args.userId });
 
+      const tagMs = this.sanitizeMediaStimulusInput((decoded.obj as { mediaStimulus?: unknown }).mediaStimulus);
+      const hasTagMs = !!tagMs;
+      const mediaStimulus = hasTagMs ? tagMs : mergedMs.mediaStimulus;
+      const mediaStimulusResolutionSource: 'webm_metadata' | 'submission_body' | 'submission_comments' | 'none' =
+        hasTagMs ? 'webm_metadata' : mergedMs.mediaStimulusSource;
+
       return {
         promptHtml: hasPromptHtml ? fromTag.promptHtml : merged.promptHtml,
         videoDurationSeconds: hasDuration
@@ -2710,6 +2783,8 @@ export class PromptService {
         durationSource: hasDuration ? 'submission' : merged.durationSource,
         metadataPromptResolution: 'webm_metadata',
         ...(captionsVtt ? { captionsVtt } : {}),
+        ...(mediaStimulus ? { mediaStimulus } : {}),
+        mediaStimulusResolutionSource,
       };
     } finally {
       dl.cleanup();
@@ -3265,6 +3340,13 @@ export class PromptService {
       durationSource: 'submission' | 'prompts' | 'unknown';
       rubricAssessment?: Record<string, unknown>;
       captionsVtt?: string;
+      mediaStimulus?: {
+        kind: 'youtube';
+        videoId: string;
+        clipStartSec: number;
+        clipEndSec: number;
+        label?: string;
+      };
     }>
   > {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
@@ -3356,10 +3438,12 @@ export class PromptService {
           row.submissionComments,
           resolved.metadataPromptResolution,
         );
-        appendLtiLog('viewer', 'getSubmissions: prompt source selected', {
+        appendLtiLog('viewer', 'getSubmissions: prompt-resolution-source', {
           userId: row.userId,
           assignmentId,
-          source: viewerSource,
+          promptTextSource: viewerSource,
+          mediaStimulusSource: resolved.mediaStimulusResolutionSource,
+          hasMediaStimulus: !!resolved.mediaStimulus,
         });
         return {
           ...publicRow,
@@ -3367,6 +3451,7 @@ export class PromptService {
           videoDurationSeconds: resolved.videoDurationSeconds,
           durationSource: resolved.durationSource,
           ...(resolved.captionsVtt ? { captionsVtt: resolved.captionsVtt } : {}),
+          ...(resolved.mediaStimulus ? { mediaStimulus: resolved.mediaStimulus } : {}),
         };
       }),
     );
@@ -3690,6 +3775,13 @@ export class PromptService {
     /** From Canvas assignment `allowed_attempts` (-1 = unlimited). */
     allowedAttempts?: number;
     captionsVtt?: string;
+    mediaStimulus?: {
+      kind: 'youtube';
+      videoId: string;
+      clipStartSec: number;
+      clipEndSec: number;
+      label?: string;
+    };
   } | null> {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
     if (!token) return null;
@@ -3750,10 +3842,12 @@ export class PromptService {
       mappedComments,
       resolved.metadataPromptResolution,
     );
-    appendLtiLog('viewer', 'getMySubmission: prompt source selected', {
+    appendLtiLog('viewer', 'getMySubmission: prompt-resolution-source', {
       userId,
       assignmentId,
-      source: viewerSource,
+      promptTextSource: viewerSource,
+      mediaStimulusSource: resolved.mediaStimulusResolutionSource,
+      hasMediaStimulus: !!resolved.mediaStimulus,
     });
     return {
       userId,
@@ -3771,6 +3865,7 @@ export class PromptService {
       durationSource: resolved.durationSource,
       ...(allowedAttempts !== undefined ? { allowedAttempts } : {}),
       ...(resolved.captionsVtt ? { captionsVtt: resolved.captionsVtt } : {}),
+      ...(resolved.mediaStimulus ? { mediaStimulus: resolved.mediaStimulus } : {}),
     };
   }
 

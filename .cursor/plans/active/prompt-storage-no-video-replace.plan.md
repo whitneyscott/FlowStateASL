@@ -20,7 +20,7 @@
   1. **WebM metadata** (full or partial fields, with gaps filled from the next layers).
   2. **Submission body** (legacy JSON: `promptSnapshotHtml`, `deckTimeline`, `durationSeconds`, etc.).
   3. **Submission comments** (same JSON shapes and the same legacy heuristics as the client: forward scan for JSON prompt/deck, then “Prompt used:” / markup tail—aligned with [`TeacherViewerPage.tsx`](../../apps/web/src/pages/TeacherViewerPage.tsx) `getPromptFromComments` / latest-comment duration+deck hints).
-- **Client:** keep **`getPromptFromComments`**, **`parseDeckTimelineFromSubmissionComments`**, **`resolveDeckTimeline`**, **`parseYoutubeMediaStimulusFromComments`**, and body-based deck parsing as **defensive fallback** only; the API must not rely on the client to supply prompt text that the server could have resolved.
+- **Client:** keep **`getPromptFromComments`**, **`parseDeckTimelineFromSubmissionComments`**, **`resolveDeckTimeline`**, and body-based deck parsing as **defensive fallback** only; **`mediaStimulus`** is resolved on the server (WebM → body → comments) and returned on submission DTOs.
 
 ## C. Legacy submissions — no video mutation
 
