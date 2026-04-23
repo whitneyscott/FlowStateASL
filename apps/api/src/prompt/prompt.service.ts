@@ -51,6 +51,8 @@ import {
 import { isMachinePromptJsonComment } from './machine-prompt-comment.util';
 import {
   buildHumanReadableSubmissionBodyText,
+  gradingDisplayHtmlFromDeckTimelineRows,
+  gradingDisplayHtmlFromPromptSnapshotRte,
   humanSubmissionBodyToPromptHtml,
 } from './submission-human-readable-body.util';
 import { randomUUID } from 'crypto';
@@ -2528,6 +2530,74 @@ export class PromptService {
     return { mediaStimulus: undefined, mediaStimulusSource: 'none' };
   }
 
+  private extractDeckTimelineFromSubmissionBody(
+    body: string | undefined,
+  ): Array<{ title: string; startSec: number; videoId?: string }> | undefined {
+    const raw = (body ?? '').trim();
+    if (!raw || raw[0] !== '{') return undefined;
+    try {
+      const parsed = JSON.parse(raw) as { deckTimeline?: unknown };
+      return this.sanitizeDeckTimelineInput(
+        Array.isArray(parsed.deckTimeline)
+          ? (parsed.deckTimeline as Array<{ title?: unknown; startSec?: unknown; videoId?: unknown }>)
+          : undefined,
+      );
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Newest JSON machine comment with a non-empty deck (matches client resolveDeckTimeline). */
+  private extractDeckTimelineFromSubmissionComments(
+    comments: Array<{ comment: string }> | undefined,
+  ): Array<{ title: string; startSec: number; videoId?: string }> | undefined {
+    if (!comments?.length) return undefined;
+    for (let i = comments.length - 1; i >= 0; i--) {
+      const txt = (comments[i]?.comment ?? '').trim();
+      if (!txt || txt[0] !== '{') continue;
+      try {
+        const parsed = JSON.parse(txt) as { deckTimeline?: unknown };
+        const deck = this.sanitizeDeckTimelineInput(
+          Array.isArray(parsed.deckTimeline)
+            ? (parsed.deckTimeline as Array<{ title?: unknown; startSec?: unknown; videoId?: unknown }>)
+            : undefined,
+        );
+        if (deck?.length) return deck;
+      } catch {
+        continue;
+      }
+    }
+    return undefined;
+  }
+
+  private mergeDeckTimelineFromBodyAndComments(
+    body: string | undefined,
+    comments: Array<{ comment: string }> | undefined,
+  ): Array<{ title: string; startSec: number; videoId?: string }> | undefined {
+    return (
+      this.extractDeckTimelineFromSubmissionBody(body) ?? this.extractDeckTimelineFromSubmissionComments(comments)
+    );
+  }
+
+  /** Readable grading HTML from PROMPT_DATA JSON (ordered list for decks; plain paragraphs for RTE snapshots). */
+  private gradingDisplayPromptHtmlFromDecodedPayload(parsed: Record<string, unknown>): string | undefined {
+    const deck = this.sanitizeDeckTimelineInput(
+      Array.isArray(parsed.deckTimeline)
+        ? (parsed.deckTimeline as Array<{ title?: unknown; startSec?: unknown; videoId?: unknown }>)
+        : undefined,
+    );
+    if (deck?.length) {
+      const html = gradingDisplayHtmlFromDeckTimelineRows(deck).trim();
+      if (html) return html;
+    }
+    const snap = String(parsed.promptSnapshotHtml ?? '').trim();
+    if (snap) {
+      const g = gradingDisplayHtmlFromPromptSnapshotRte(snap).trim();
+      if (g) return g;
+    }
+    return undefined;
+  }
+
   private mergeBodyCommentAssignmentFallback(
     body: string | undefined,
     comments: Array<{ comment: string }> | undefined,
@@ -2621,6 +2691,7 @@ export class PromptService {
       label?: string;
     };
     mediaStimulusResolutionSource: 'webm_metadata' | 'submission_body' | 'submission_comments' | 'none';
+    deckTimeline?: Array<{ title: string; startSec: number; videoId?: string }>;
   }> {
     const merged = this.mergeBodyCommentAssignmentFallback(
       args.body,
@@ -2628,6 +2699,7 @@ export class PromptService {
       args.promptsFallbackDuration,
     );
     const mergedMs = this.mergeMediaStimulusFromBodyAndComments(args.body, args.submissionComments);
+    const mergedDeckTimeline = this.mergeDeckTimelineFromBodyAndComments(args.body, args.submissionComments);
     const fallback = (captionsVtt?: string): {
       promptHtml?: string;
       videoDurationSeconds: number | null;
@@ -2642,6 +2714,7 @@ export class PromptService {
         label?: string;
       };
       mediaStimulusResolutionSource: 'webm_metadata' | 'submission_body' | 'submission_comments' | 'none';
+      deckTimeline?: Array<{ title: string; startSec: number; videoId?: string }>;
     } => ({
       promptHtml: merged.promptHtml,
       videoDurationSeconds: merged.videoDurationSeconds,
@@ -2650,6 +2723,7 @@ export class PromptService {
       ...(captionsVtt ? { captionsVtt } : {}),
       ...(mergedMs.mediaStimulus ? { mediaStimulus: mergedMs.mediaStimulus } : {}),
       mediaStimulusResolutionSource: mergedMs.mediaStimulusSource,
+      ...(mergedDeckTimeline?.length ? { deckTimeline: mergedDeckTimeline } : {}),
     });
 
     const url = (args.canvasVideoUrl ?? '').trim();
@@ -2752,8 +2826,18 @@ export class PromptService {
         appendLtiLog('webm-prompt', 'PROMPT_SOURCE: assignment_fallback', { userId: args.userId });
         return fallback(captionsVtt);
       }
+      const tagDeck = this.sanitizeDeckTimelineInput(
+        Array.isArray(decoded.obj.deckTimeline)
+          ? (decoded.obj.deckTimeline as Array<{ title?: unknown; startSec?: unknown; videoId?: unknown }>)
+          : undefined,
+      );
+      const deckTimeline =
+        tagDeck?.length ? tagDeck : mergedDeckTimeline?.length ? mergedDeckTimeline : undefined;
+
+      const displayPrompt = this.gradingDisplayPromptHtmlFromDecodedPayload(decoded.obj);
       const fromTag = this.promptHtmlAndDurationFromUploadRecord(decoded.obj);
-      const hasPromptHtml = !!(fromTag.promptHtml ?? '').trim();
+      const tagPromptHtml = (displayPrompt ?? fromTag.promptHtml ?? '').trim() || undefined;
+      const hasPromptHtml = !!tagPromptHtml;
       const hasDuration = fromTag.videoDurationSeconds != null;
       if (!hasPromptHtml && !hasDuration) {
         appendLtiLog('webm-prompt', 'read: FAIL (empty_prompt_fields)', { userId: args.userId });
@@ -2776,7 +2860,7 @@ export class PromptService {
         hasTagMs ? 'webm_metadata' : mergedMs.mediaStimulusSource;
 
       return {
-        promptHtml: hasPromptHtml ? fromTag.promptHtml : merged.promptHtml,
+        promptHtml: tagPromptHtml ?? merged.promptHtml,
         videoDurationSeconds: hasDuration
           ? (fromTag.videoDurationSeconds as number)
           : merged.videoDurationSeconds,
@@ -2785,6 +2869,7 @@ export class PromptService {
         ...(captionsVtt ? { captionsVtt } : {}),
         ...(mediaStimulus ? { mediaStimulus } : {}),
         mediaStimulusResolutionSource,
+        ...(deckTimeline?.length ? { deckTimeline } : {}),
       };
     } finally {
       dl.cleanup();
@@ -3347,6 +3432,7 @@ export class PromptService {
         clipEndSec: number;
         label?: string;
       };
+      deckTimeline?: Array<{ title: string; startSec: number; videoId?: string }>;
     }>
   > {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
@@ -3452,6 +3538,7 @@ export class PromptService {
           durationSource: resolved.durationSource,
           ...(resolved.captionsVtt ? { captionsVtt: resolved.captionsVtt } : {}),
           ...(resolved.mediaStimulus ? { mediaStimulus: resolved.mediaStimulus } : {}),
+          ...(resolved.deckTimeline?.length ? { deckTimeline: resolved.deckTimeline } : {}),
         };
       }),
     );
@@ -3782,6 +3869,7 @@ export class PromptService {
       clipEndSec: number;
       label?: string;
     };
+    deckTimeline?: Array<{ title: string; startSec: number; videoId?: string }>;
   } | null> {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
     if (!token) return null;
@@ -3866,6 +3954,7 @@ export class PromptService {
       ...(allowedAttempts !== undefined ? { allowedAttempts } : {}),
       ...(resolved.captionsVtt ? { captionsVtt: resolved.captionsVtt } : {}),
       ...(resolved.mediaStimulus ? { mediaStimulus: resolved.mediaStimulus } : {}),
+      ...(resolved.deckTimeline?.length ? { deckTimeline: resolved.deckTimeline } : {}),
     };
   }
 

@@ -33,7 +33,8 @@ export function humanSubmissionBodyToPromptHtml(text: string): string {
     .join('');
 }
 
-function plainTextFromPromptSnapshotHtml(html: string): string {
+/** Strip tags / BR from RTE HTML for readable plain text (grading, human body). */
+export function plainTextFromPromptSnapshotHtml(html: string): string {
   const trimmed = html.trim();
   if (!trimmed) return '';
   let t = trimmed
@@ -43,4 +44,24 @@ function plainTextFromPromptSnapshotHtml(html: string): string {
     .replace(/<\/li>/gi, '\n');
   t = t.replace(/<[^>]+>/g, '');
   return t.replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/**
+ * HTML for grading viewer from WebM PROMPT_DATA (or same-shaped JSON): ordered list for decks,
+ * paragraph text for RTE snapshots (avoids showing raw base64/escaped blobs).
+ */
+export function gradingDisplayHtmlFromDeckTimelineRows(
+  rows: Array<{ title: string; startSec: number; videoId?: string }>,
+): string {
+  const items = rows
+    .map((r) => (r.title ?? '').trim())
+    .filter(Boolean);
+  if (items.length === 0) return '';
+  return `<ol class="fsasl-grading-deck-prompt">${items.map((t) => `<li>${t}</li>`).join('')}</ol>`;
+}
+
+export function gradingDisplayHtmlFromPromptSnapshotRte(snapshotHtml: string): string {
+  const plain = plainTextFromPromptSnapshotHtml(snapshotHtml);
+  if (!plain.trim()) return '';
+  return humanSubmissionBodyToPromptHtml(plain);
 }

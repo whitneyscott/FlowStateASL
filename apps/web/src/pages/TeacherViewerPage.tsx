@@ -51,7 +51,7 @@ function appendViewerBridgeLog(message: string, extra?: Record<string, unknown>)
 /** Populated after getSubmissions (background warm, concurrency-limited). */
 type PrefetchedGradingMedia = Pick<
   promptApi.PromptSubmission,
-  'captionsVtt' | 'promptHtml' | 'videoDurationSeconds' | 'durationSource' | 'mediaStimulus'
+  'captionsVtt' | 'promptHtml' | 'videoDurationSeconds' | 'durationSource' | 'mediaStimulus' | 'deckTimeline'
 >;
 
 /** Deck submissions: real boundaries from the student recorder (seconds from recording start). */
@@ -579,6 +579,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
           videoDurationSeconds: row.videoDurationSeconds ?? null,
           durationSource: row.durationSource,
           mediaStimulus: row.mediaStimulus,
+          deckTimeline: row.deckTimeline,
         };
         if (!cancelled) {
           setGradingPrefetchByUserId((prev) => {
@@ -1182,10 +1183,21 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     return `${m}:${sec < 10 ? '0' : ''}${sec}`;
   };
 
-  const deckTimeline = useMemo(
-    () => resolveDeckTimeline(current?.body, current?.submissionComments),
-    [current?.body, current?.submissionComments],
-  );
+  const deckTimeline = useMemo(() => {
+    const fromApi =
+      gradingMode && current?.userId
+        ? gradingPrefetchByUserId.get(current.userId)?.deckTimeline ?? current?.deckTimeline
+        : current?.deckTimeline;
+    if (fromApi?.length) return fromApi as DeckTimelineEntry[];
+    return resolveDeckTimeline(current?.body, current?.submissionComments);
+  }, [
+    gradingMode,
+    current?.userId,
+    current?.deckTimeline,
+    current?.body,
+    current?.submissionComments,
+    gradingPrefetchByUserId,
+  ]);
   const isDeckPromptMode = deckTimeline.length > 0;
   const isTextPromptMode = !isDeckPromptMode;
   /** Plain text + deck prompts do not use burned-in transcript tracks; YouTube / sign-to-voice may. */

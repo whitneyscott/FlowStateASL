@@ -402,6 +402,8 @@ export interface PromptSubmission {
   captionsVtt?: string;
   /** YouTube (etc.) stimulus: server resolves WebM PROMPT_DATA, then body, then comments. */
   mediaStimulus?: MediaStimulusPayload;
+  /** Deck timeline from server (WebM metadata, then body, then comments) when body is human-only. */
+  deckTimeline?: DeckTimelineEntry[];
 }
 
 export async function getSubmissionCount(assignmentId?: string | null): Promise<number> {

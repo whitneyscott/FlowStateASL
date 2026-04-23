@@ -78,15 +78,34 @@ export function decodePromptDataFromFfmpegMetadataTag(
 ): { ok: true; obj: Record<string, unknown>; utf8ByteLength: number } | { ok: false; error: string } {
   const s = (rawTag ?? '').trim();
   if (!s) return { ok: false, error: 'empty_tag' };
-  let utf8: string;
+
+  /** Base64 payloads may be line-wrapped; strip whitespace before decode. */
+  const compactB64 = s.replace(/\s+/g, '');
+  let fromBase64: string | undefined;
   try {
-    utf8 = Buffer.from(s, 'base64').toString('utf8');
-  } catch (e) {
-    return { ok: false, error: `base64: ${e instanceof Error ? e.message : String(e)}` };
+    const decoded = Buffer.from(compactB64, 'base64').toString('utf8');
+    if (decoded.length > 0) fromBase64 = decoded;
+  } catch {
+    /* treat as not base64 */
   }
-  const byteLen = Buffer.byteLength(utf8, 'utf8');
-  if (byteLen > maxDecodedUtf8Bytes) return { ok: false, error: 'decoded_too_large' };
-  const parsed = parseJsonObject(utf8, maxDecodedUtf8Bytes);
-  if (!parsed.ok) return { ok: false, error: parsed.error };
-  return { ok: true, obj: parsed.obj, utf8ByteLength: byteLen };
+
+  let jsonAfterBase64Error: string | undefined;
+  if (fromBase64 != null) {
+    const byteLen = Buffer.byteLength(fromBase64, 'utf8');
+    if (byteLen > maxDecodedUtf8Bytes) return { ok: false, error: 'decoded_too_large' };
+    const parsed = parseJsonObject(fromBase64, maxDecodedUtf8Bytes);
+    if (parsed.ok) return { ok: true, obj: parsed.obj, utf8ByteLength: byteLen };
+    jsonAfterBase64Error = parsed.error;
+  }
+
+  /** Tag may be raw JSON (not base64) depending on mux / tooling. */
+  const directByteLen = Buffer.byteLength(s, 'utf8');
+  if (directByteLen > maxDecodedUtf8Bytes) return { ok: false, error: 'tag_too_large' };
+  const direct = parseJsonObject(s, maxDecodedUtf8Bytes);
+  if (direct.ok) return { ok: true, obj: direct.obj, utf8ByteLength: directByteLen };
+
+  return {
+    ok: false,
+    error: jsonAfterBase64Error ? `json_after_base64: ${jsonAfterBase64Error}` : direct.error,
+  };
 }
