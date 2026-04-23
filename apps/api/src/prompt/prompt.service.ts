@@ -71,6 +71,21 @@ import type { ImportPromptManagerBlobDto } from './dto/import-prompt-manager-blo
 import type { ImportSinglePromptAssignmentDto } from './dto/import-single-prompt-assignment.dto';
 import { buildPartialPromptConfigForTrueWay, scanTrueWayAssignments, type TrueWayTemplateMatch } from './true-way-templates';
 
+/** Import modal payload derived from one `listAssignmentsForPromptImport` result (sorted). */
+function buildCanvasImportListsFromAssignments(all: CanvasAssignmentBrief[]): {
+  allAssignments: CanvasAssignmentBrief[];
+  settingsTitleCandidates: CanvasAssignmentBrief[];
+} {
+  const byName = (a: CanvasAssignmentBrief, b: CanvasAssignmentBrief) => a.name.localeCompare(b.name);
+  const settingsTitleCandidates = all
+    .filter((a) => a.name.toLowerCase().includes('prompt manager settings'))
+    .sort(byName);
+  return {
+    allAssignments: [...all].sort(byName),
+    settingsTitleCandidates,
+  };
+}
+
 /**
  * Deck card timing (mirrors TimerPage): minimum prompt floor + cognitive transition.
  */
@@ -3599,13 +3614,20 @@ export class PromptService {
     };
   }
 
-  /** Teacher only. Returns configured assignments with names and counts from Canvas. */
-  async getConfiguredAssignments(ctx: LtiContext): Promise<
-    Array<{ id: string; name: string; submissionCount: number; ungradedCount: number }>
-  > {
+  /** Teacher only. One Canvas assignment index fetch; configured rows + optional import lists for the client. */
+  async getConfiguredAssignments(
+    ctx: LtiContext,
+    options?: { omitCanvasImport?: boolean },
+  ): Promise<{
+    configured: Array<{ id: string; name: string; submissionCount: number; ungradedCount: number }>;
+    canvasImport?: { allAssignments: CanvasAssignmentBrief[]; settingsTitleCandidates: CanvasAssignmentBrief[] };
+  }> {
+    const omitCanvasImport = options?.omitCanvasImport === true;
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
     if (!token) {
-      return [];
+      return omitCanvasImport
+        ? { configured: [] }
+        : { configured: [], canvasImport: { allAssignments: [], settingsTitleCandidates: [] } };
     }
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
     await this.ensureMigrated(ctx.courseId, domainOverride, token);
@@ -3619,19 +3641,20 @@ export class PromptService {
     );
     const result: Array<{ id: string; name: string; submissionCount: number; ungradedCount: number }> = [];
     let assignmentNamesById: Map<string, string> | null = null;
+    let fullCourseList: CanvasAssignmentBrief[] = [];
     try {
-      const brief = await this.canvas.listAssignmentsBrief(ctx.courseId, domainOverride, token);
-      if (brief.length > 0) {
+      fullCourseList = await this.canvas.listAssignmentsForPromptImport(ctx.courseId, domainOverride, token);
+      if (fullCourseList.length > 0) {
         assignmentNamesById = new Map(
-          brief.map((a) => [String(a.id).trim(), String(a.name ?? '').trim()]),
+          fullCourseList.map((a) => [String(a.id).trim(), String(a.name ?? '').trim()]),
         );
       } else {
-        appendLtiLog('prompt', 'getConfiguredAssignments: assignment brief list empty; using per-assignment fallback to avoid false negatives', {
+        appendLtiLog('prompt', 'getConfiguredAssignments: assignment list empty; using per-assignment fallback to avoid false negatives', {
           configCount: assignmentIds.length,
         });
       }
     } catch (err) {
-      appendLtiLog('prompt', 'getConfiguredAssignments: listAssignmentsBrief failed; falling back to per-assignment checks', {
+      appendLtiLog('prompt', 'getConfiguredAssignments: listAssignmentsForPromptImport failed; falling back to per-assignment checks', {
         error: String(err),
       });
     }
@@ -3666,7 +3689,8 @@ export class PromptService {
       count: result.length,
       assignments: result.map((a) => ({ id: a.id, name: a.name, submissionCount: a.submissionCount })),
     });
-    return result;
+    const canvasImport = omitCanvasImport ? undefined : buildCanvasImportListsFromAssignments(fullCourseList);
+    return canvasImport ? { configured: result, canvasImport } : { configured: result };
   }
 
   /** Teacher only. Delete a configured assignment in Canvas and remove it from Prompt Manager Settings blob. */
@@ -4272,11 +4296,11 @@ export class PromptService {
       throw new BadRequestException('Nothing to import after skip list');
     }
 
-    const targetList = await this.canvas.listAssignmentsBrief(ctx.courseId, domainOverride, token);
+    const targetList = await this.canvas.listAssignmentsForPromptImport(ctx.courseId, domainOverride, token);
     const targetIds = new Set(targetList.map((a) => a.id));
     let sourceList: CanvasAssignmentBrief[] | null = null;
     if (sourceCourseTrim) {
-      sourceList = await this.canvas.listAssignmentsBrief(sourceCourseTrim, domainOverride, token);
+      sourceList = await this.canvas.listAssignmentsForPromptImport(sourceCourseTrim, domainOverride, token);
     } else if (sourceAssignmentTrim) {
       sourceList = targetList;
     }
@@ -4527,7 +4551,7 @@ export class PromptService {
     return undefined;
   }
 
-  /** Brief assignment lists for Prompt Manager import UI (same course). */
+  /** Brief assignment lists for Prompt Manager import UI (same course). Prefer bundled `canvasImport` from GET configured-assignments. */
   async getCanvasAssignmentsForImport(ctx: LtiContext): Promise<{
     allAssignments: CanvasAssignmentBrief[];
     settingsTitleCandidates: CanvasAssignmentBrief[];
@@ -4538,14 +4562,7 @@ export class PromptService {
     }
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
     const all = await this.canvas.listAssignmentsForPromptImport(ctx.courseId, domainOverride, token);
-    const byName = (a: CanvasAssignmentBrief, b: CanvasAssignmentBrief) => a.name.localeCompare(b.name);
-    const settingsTitleCandidates = all
-      .filter((a) => a.name.toLowerCase().includes('prompt manager settings'))
-      .sort(byName);
-    return {
-      allAssignments: [...all].sort(byName),
-      settingsTitleCandidates,
-    };
+    return buildCanvasImportListsFromAssignments(all);
   }
 
   /**
@@ -4874,7 +4891,7 @@ export class PromptService {
     }
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
     await this.ensureMigrated(ctx.courseId, domainOverride, token);
-    const list = await this.canvas.listAssignmentsBrief(ctx.courseId, domainOverride, token);
+    const list = await this.canvas.listAssignmentsForPromptImport(ctx.courseId, domainOverride, token);
     const matches = scanTrueWayAssignments(list);
     if (matches.length === 0) {
       return { updated: 0, matches: [] };

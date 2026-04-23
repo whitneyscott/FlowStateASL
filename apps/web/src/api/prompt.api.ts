@@ -534,10 +534,6 @@ export async function getMySubmission(assignmentId?: string | null): Promise<Pro
   return fetchJson(withAssignmentId(base + '/my-submission', assignmentId));
 }
 
-export async function getConfiguredAssignments(): Promise<ConfiguredAssignment[]> {
-  return fetchJsonWithOAuthRedirect<ConfiguredAssignment[]>(base + '/configured-assignments');
-}
-
 export async function getAssignmentGroups(): Promise<CanvasAssignmentGroup[]> {
   return fetchJsonWithOAuthRedirect<CanvasAssignmentGroup[]>(base + '/assignment-groups');
 }
@@ -629,10 +625,41 @@ export interface CanvasAssignmentBriefForImport {
   assignmentGroupId?: string;
 }
 
-export async function getCanvasAssignmentsForImport(): Promise<{
+export type CanvasImportBundle = {
   allAssignments: CanvasAssignmentBriefForImport[];
   settingsTitleCandidates: CanvasAssignmentBriefForImport[];
-}> {
+};
+
+/** GET /configured-assignments — one Canvas index fetch on the server; `canvasImport` omitted when `omitCanvasImport`. */
+export interface ConfiguredAssignmentsResponse {
+  configured: ConfiguredAssignment[];
+  canvasImport?: CanvasImportBundle;
+}
+
+const configuredAssignmentsInflight = new Map<string, Promise<ConfiguredAssignmentsResponse>>();
+
+/**
+ * Config page: omit `omitCanvasImport` (default) to receive `canvasImport` for the Import modal without a second list fetch.
+ * Viewer: pass `{ omitCanvasImport: true }` for a smaller payload.
+ * In-flight dedupe collapses React StrictMode double-mount to one HTTP request per variant.
+ */
+export async function getConfiguredAssignments(options?: {
+  omitCanvasImport?: boolean;
+}): Promise<ConfiguredAssignmentsResponse> {
+  const key = options?.omitCanvasImport ? 'omit' : 'full';
+  const existing = configuredAssignmentsInflight.get(key);
+  if (existing) return existing;
+  const q = options?.omitCanvasImport ? '?omitCanvasImport=1' : '';
+  const url = `${base}/configured-assignments${q}`;
+  const p = fetchJsonWithOAuthRedirect<ConfiguredAssignmentsResponse>(url).finally(() => {
+    configuredAssignmentsInflight.delete(key);
+  });
+  configuredAssignmentsInflight.set(key, p);
+  return p;
+}
+
+/** Standalone import list (extra Canvas round-trip). Prefer `canvasImport` from `getConfiguredAssignments()`. */
+export async function getCanvasAssignmentsForImport(): Promise<CanvasImportBundle> {
   return fetchJsonWithOAuthRedirect(`${base}/canvas-assignments-for-import`);
 }
 

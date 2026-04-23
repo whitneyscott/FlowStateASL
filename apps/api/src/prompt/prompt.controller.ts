@@ -801,12 +801,20 @@ export class PromptController {
 
   @Get('configured-assignments')
   @UseGuards(TeacherRoleGuard)
-  async getConfiguredAssignments(@Req() req: Request, @Res() res: Response) {
+  async getConfiguredAssignments(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Query('omitCanvasImport') omitCanvasImport?: string,
+  ) {
     appendLtiLog('viewer', 'GET configured-assignments');
     const ctx = this.getCtx(req);
     try {
-      const list = await this.prompt.getConfiguredAssignments(ctx);
-      return res.json(list);
+      const omit =
+        omitCanvasImport === '1' ||
+        omitCanvasImport === 'true' ||
+        String(omitCanvasImport ?? '').toLowerCase() === 'yes';
+      const payload = await this.prompt.getConfiguredAssignments(ctx, { omitCanvasImport: omit });
+      return res.json(payload);
     } catch (err) {
       if (err instanceof CanvasTokenExpiredError) {
         return res.status(401).json(getOAuth401Body(req));

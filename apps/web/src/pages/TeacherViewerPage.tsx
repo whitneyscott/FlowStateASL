@@ -808,9 +808,9 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     setLoadingAssignments(true);
     try {
       setLastFunction('GET /api/prompt/configured-assignments');
-      const list = await promptApi.getConfiguredAssignments();
+      const res = await promptApi.getConfiguredAssignments({ omitCanvasImport: true });
       setLastApiResult('GET /api/prompt/configured-assignments', 200, true);
-      setConfiguredAssignments(list ?? []);
+      setConfiguredAssignments(res.configured ?? []);
     } catch {
       setConfiguredAssignments([]);
     } finally {

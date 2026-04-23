@@ -97,6 +97,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     allAssignments: promptApi.CanvasAssignmentBriefForImport[];
     settingsTitleCandidates: promptApi.CanvasAssignmentBriefForImport[];
   } | null>(null);
+  const importCanvasBriefRef = useRef(importCanvasBrief);
+  importCanvasBriefRef.current = importCanvasBrief;
   const [importSourceAssignmentId, setImportSourceAssignmentId] = useState('');
   const [importModalBusy, setImportModalBusy] = useState(false);
   const [importModalMessage, setImportModalMessage] = useState<string | null>(null);
@@ -159,12 +161,12 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const hasLti = context?.courseId && context.userId !== 'standalone';
   const needsAssignmentSelector = hasLti && !ctxAssignmentId;
 
-  const loadAssignments = useCallback(async () => {
+  const loadAssignments = useCallback(async (): Promise<promptApi.ConfiguredAssignmentsResponse | null> => {
     if (!teacher || !hasLti) {
       console.log('[TeacherConfig] loadAssignments SKIPPED', { teacher: !!teacher, hasLti: !!hasLti, courseId: context?.courseId, userId: context?.userId });
       assignmentsLoadGenRef.current += 1;
       setLoadingAssignments(false);
-      return;
+      return null;
     }
     const gen = ++assignmentsLoadGenRef.current;
     assignmentsPendingRef.current++;
@@ -172,26 +174,30 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setLoadingAssignments(true);
     try {
       setLastFunction('GET /api/prompt/configured-assignments');
-      const list = await promptApi.getConfiguredAssignments();
+      const res = await promptApi.getConfiguredAssignments();
       if (gen === assignmentsLoadGenRef.current) {
         setLastApiResult('GET /api/prompt/configured-assignments', 200, true);
-        console.log('[TeacherConfig] getConfiguredAssignments response:', list);
+        console.log('[TeacherConfig] getConfiguredAssignments response:', res);
+        const list = res.configured ?? [];
         setConfiguredAssignments((prev) => {
-          const next = list ?? [];
-          if (next.length === 0 && prev.length > 0) {
+          if (list.length === 0 && prev.length > 0) {
             console.warn('[TeacherConfig] preserving prior configuredAssignments due transient empty response', {
               previousCount: prev.length,
             });
             return prev;
           }
-          return next;
+          return list;
         });
+        setImportCanvasBrief(res.canvasImport ?? null);
+        return res;
       }
+      return null;
     } catch (e) {
       if (gen === assignmentsLoadGenRef.current) {
         if (e instanceof promptApi.NeedsManualTokenError) setShowManualTokenModal(true);
         console.warn('[TeacherConfig] loadAssignments error, preserving prior configuredAssignments', e);
       }
+      return null;
     } finally {
       assignmentsPendingRef.current = Math.max(0, assignmentsPendingRef.current - 1);
       if (assignmentsPendingRef.current === 0) {
@@ -1013,7 +1019,17 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       if (!modules.length) {
         void loadModules();
       }
-      const brief = await promptApi.getCanvasAssignmentsForImport();
+      let brief = importCanvasBriefRef.current;
+      if (!brief?.allAssignments?.length) {
+        const res = await loadAssignments();
+        brief = res?.canvasImport ?? null;
+      }
+      if (!brief?.allAssignments?.length) {
+        setImportCanvasBrief(null);
+        setImportSourceAssignmentId('');
+        setImportModalMessage('Could not load course assignments. Try again after the list finishes loading.');
+        return;
+      }
       setImportCanvasBrief(brief);
       const preferred = assignmentId && brief.allAssignments.some((a) => a.id === assignmentId)
         ? assignmentId
@@ -1028,7 +1044,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     } finally {
       setImportModalBusy(false);
     }
-  }, [teacher, hasLti, modules.length, loadModules, assignmentId]);
+  }, [teacher, hasLti, modules.length, loadModules, assignmentId, loadAssignments]);
 
   const closeImportModal = useCallback(() => {
     setImportModalOpen(false);
