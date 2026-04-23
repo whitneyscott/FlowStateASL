@@ -79,8 +79,6 @@ export function appendBridgeLog(tag: string, message: string, extra?: Record<str
   if (!isBridgeClientDiagnosticsEnabled()) return;
 
   const fullMessage = `${message}${extra ? ` ${JSON.stringify(extra)}` : ''}`;
-  // Always keep a local mirror so BridgeLog remains useful even if backend logs are on another instance/process.
-  appendClientFallbackLine(buildLine(tag, `${fullMessage} [client-mirror]`));
   void fetch('/api/debug/lti-log', {
     method: 'POST',
     credentials: 'include',
@@ -93,6 +91,7 @@ export function appendBridgeLog(tag: string, message: string, extra?: Record<str
       }
     })
     .catch((err) => {
+      // Only mirror locally when the server did not record the line (avoids duplicate server + client lines in Bridge).
       appendClientFallbackLine(
         buildLine(
           tag,

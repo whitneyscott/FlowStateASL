@@ -800,6 +800,11 @@ export class CanvasService {
         }
       }
     }
+    const rubricSettings = data.rubric_settings;
+    if (rubricSettings && typeof rubricSettings === 'object' && !Array.isArray(rubricSettings)) {
+      const rid = coerceId((rubricSettings as { id?: unknown }).id);
+      if (rid) return rid;
+    }
     const topRid = (data as { rubric_id?: unknown }).rubric_id;
     const fromTop = coerceId(topRid);
     if (fromTop) return fromTop;
@@ -808,10 +813,7 @@ export class CanvasService {
       const rid = coerceId((rubric as { id?: unknown }).id);
       if (rid) return rid;
     }
-    if (Array.isArray(rubric) && rubric[0] && typeof rubric[0] === 'object') {
-      const rid = coerceId((rubric[0] as { id?: unknown }).id);
-      if (rid) return rid;
-    }
+    /** When `rubric` is an array, Canvas sends criteria rows — `rubric[0].id` is a criterion id, not the course template id. */
     return undefined;
   }
 

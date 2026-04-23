@@ -457,15 +457,18 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
 
   useEffect(() => {
     if (teacher && hasLti) {
-      loadModules();
-      loadAssignmentGroups();
-      loadRubrics();
-      if (assignmentId) load();
+      void loadModules();
+      void loadAssignmentGroups();
+      void loadRubrics();
+      if (assignmentId) void load();
       else setLoading(false);
     } else {
       setLoading(false);
     }
-  }, [teacher, hasLti, assignmentId, load, loadModules, loadAssignmentGroups, loadRubrics]);
+    // Intentionally omit load/loadModules/… from deps: their identities can change every render (e.g. debug context),
+    // which would re-fire Canvas + config fetches without assignment/course changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run when teacher, LTI course context, or assignment id changes only
+  }, [teacher, hasLti, assignmentId]);
 
   /** Normalize rubric id string if the course list uses the same id with different formatting. */
   useEffect(() => {
@@ -475,43 +478,6 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     if (hit && hit.id !== rubricId) {
       setRubricId(hit.id);
     }
-  }, [rubrics, rubricId]);
-
-  /** Bridge: trace rubric <select> matching (strict vs string compare, option values vs state). */
-  useEffect(() => {
-    const ridTrim = rubricId.trim();
-    const maxRows = 40;
-    const rows = rubrics.slice(0, maxRows).map((r, i) => ({
-      i,
-      optionValue: r.id,
-      optionValueType: typeof r.id,
-      strictEq: r.id === ridTrim,
-      stringEq: String(r.id) === ridTrim,
-      trimStringEq: String(r.id).trim() === ridTrim,
-    }));
-    const matchStrict = rubrics.findIndex((r) => r.id === ridTrim);
-    const matchString = rubrics.findIndex((r) => String(r.id) === ridTrim);
-    const inListStrict = matchStrict >= 0;
-    const orphan = !!ridTrim && !inListStrict;
-    const optionValuesForSelect = [
-      '',
-      ...(orphan ? [ridTrim] : []),
-      ...rubrics.map((r) => r.id),
-    ];
-    const valueInOptions = optionValuesForSelect.some((v) => v === rubricId);
-    appendBridgeLog('teacher-config-assignment', 'rubric dropdown: match trace', {
-      selectValueProp: rubricId,
-      selectValueLen: rubricId.length,
-      configuredTrimmed: ridTrim,
-      rubricsCount: rubrics.length,
-      matchIndexStrict: matchStrict,
-      matchIndexString: matchString,
-      inCourseListStrict: inListStrict,
-      willRenderOrphanOption: orphan,
-      valueWouldMatchAnOption: valueInOptions,
-      sampleComparisons: rows,
-      sampleTruncated: rubrics.length > maxRows,
-    });
   }, [rubrics, rubricId]);
 
   const { hubCurricula: deckPickerCurricula, hubUnits: deckPickerUnits, hubSections: deckPickerSections, filteredPlaylists: deckPickerPlaylists } =
@@ -1228,25 +1194,20 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       </p>
       <select
         className="prompter-settings-input"
-        value={rubricId}
+        value={rubricInCourseList ? rubricId : ''}
         onChange={(e) => setRubricId(e.target.value)}
       >
         <option value="">— No Rubric —</option>
-        {rubricOrphanFromAssignment ? (
-          <option value={rubricIdTrim} key={`rubric-from-assignment-${rubricIdTrim}`}>
-            Attached on assignment (id {rubricIdTrim})
-          </option>
-        ) : null}
         {rubrics.map((r) => (
           <option key={r.id} value={r.id}>
             {r.title} ({r.pointsPossible} pts)
           </option>
         ))}
       </select>
-      {rubricOrphanFromAssignment && rubrics.length > 0 ? (
+      {rubricOrphanFromAssignment ? (
         <p className="prompter-hint" style={{ marginTop: 6 }}>
-          This rubric id is on the assignment in Canvas but was not returned in the course rubrics list (unusual). You
-          can keep it or pick another rubric; Save updates the assignment link.
+          Canvas linked rubric id {rubricIdTrim} is not in the loaded course rubrics list. Choose a rubric below to
+          replace it, or refresh after fixing Canvas data. Save still uses the linked id until you select a match.
         </p>
       ) : null}
     </div>
