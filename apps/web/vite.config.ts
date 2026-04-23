@@ -25,6 +25,8 @@ export default defineConfig({
   build: {
     outDir: '../../dist/apps/web',
     emptyOutDir: true,
+    /** Main bundle is a single app chunk (~650kB minified); silence Rollup’s 500kB default warning. */
+    chunkSizeWarningLimit: 800,
   },
   server: {
     port: 4200,
