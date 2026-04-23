@@ -128,20 +128,10 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
     const pit = ltiLog.filter((line) => line.includes('] [prompt-import-trace] '));
     if (pit.length === 0) {
       newLines.push(
-        '(no prompt-import-trace lines yet — run single-assignment import in Teacher Config to trace request→blob write→config readback→UI bind)',
+        '(no prompt-import-trace lines yet — run single-assignment import in Teacher Config to trace the import POST)',
       );
     } else {
       newLines.push(...pit);
-    }
-    newLines.push('');
-    newLines.push('--- Teacher config: selected assignment (tag teacher-config-assignment) ---');
-    const tca = ltiLog.filter((line) => line.includes('] [teacher-config-assignment] '));
-    if (tca.length === 0) {
-      newLines.push(
-        '(no teacher-config-assignment lines yet — select an assignment to edit or choose a source assignment in Import; server Canvas hydration + client snapshots appear here)',
-      );
-    } else {
-      newLines.push(...tca);
     }
     setLines(newLines);
   }, [ltiLog, debugVersion]);

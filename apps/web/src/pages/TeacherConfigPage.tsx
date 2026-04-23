@@ -14,7 +14,6 @@ import { YoutubeStimulusShell } from '../components/YoutubeStimulusShell';
 import { YoutubeIframePlayer, type YoutubeIframePlayerHandle } from '../components/YoutubeIframePlayer';
 import { YoutubeClipRangeEditor } from '../components/YoutubeClipRangeEditor';
 import { TeacherPromptRte } from '../components/TeacherPromptRte';
-import { appendBridgeLog } from '../utils/bridge-log';
 import '../components/TeacherSettings.css';
 import './PrompterPage.css';
 
@@ -164,21 +163,18 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
 
   const loadAssignments = useCallback(async (): Promise<promptApi.ConfiguredAssignmentsResponse | null> => {
     if (!teacher || !hasLti) {
-      console.log('[TeacherConfig] loadAssignments SKIPPED', { teacher: !!teacher, hasLti: !!hasLti, courseId: context?.courseId, userId: context?.userId });
       assignmentsLoadGenRef.current += 1;
       setLoadingAssignments(false);
       return null;
     }
     const gen = ++assignmentsLoadGenRef.current;
     assignmentsPendingRef.current++;
-    console.log('[TeacherConfig] loadAssignments CALLING /api/prompt/configured-assignments');
     setLoadingAssignments(true);
     try {
       setLastFunction('GET /api/prompt/configured-assignments');
       const res = await promptApi.getConfiguredAssignments();
       if (gen === assignmentsLoadGenRef.current) {
         setLastApiResult('GET /api/prompt/configured-assignments', 200, true);
-        console.log('[TeacherConfig] getConfiguredAssignments response:', res);
         const list = res.configured ?? [];
         setConfiguredAssignments((prev) => {
           if (list.length === 0 && prev.length > 0) {
@@ -255,19 +251,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setLoading(true);
     setError(null);
     try {
-      console.log('[TeacherConfig] load START', { requestedAssignmentId: id, overrideId: overrideId ?? null });
       setLastFunction('GET /api/prompt/config');
-      const data = await promptApi.getPromptConfig(id, { bridgeContext: 'edit-assignment-selected' });
-      console.log('[TeacherConfig] load RESPONSE /api/prompt/config', {
-        requestedAssignmentId: id,
-        resolvedAssignmentId: data?.resolvedAssignmentId ?? null,
-        assignmentName: data?.assignmentName ?? null,
-        pointsPossible: data?.pointsPossible ?? null,
-        allowedAttempts: data?.allowedAttempts ?? null,
-        rubricId: data?.rubricId ?? null,
-        instructionsLen: typeof data?.instructions === 'string' ? data.instructions.length : 0,
-        promptMode: data?.promptMode ?? null,
-      });
+      const data = await promptApi.getPromptConfig(id);
       setLastApiResult('GET /api/prompt/config', 200, true);
       setConfig(data ?? null);
       if (data) {
@@ -287,15 +272,6 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         setInstructions(data.instructions ?? '');
         setSignToVoiceRequired(data.signToVoiceRequired === true);
         setPromptMode(data.promptMode ?? 'text');
-        console.log('[TeacherConfig] load APPLY STATE', {
-          assignmentId: id,
-          assignmentName: data.assignmentName ?? null,
-          pointsPossible: data.pointsPossible ?? null,
-          allowedAttempts: data.allowedAttempts ?? null,
-          rubricId: data.rubricId ?? null,
-          instructionsLen: typeof data.instructions === 'string' ? data.instructions.length : 0,
-          promptMode: data.promptMode ?? null,
-        });
         if (data.promptMode === 'youtube' && data.youtubePromptConfig?.videoId) {
           const vid = data.youtubePromptConfig.videoId;
           const yc = data.youtubePromptConfig;
@@ -1056,26 +1032,6 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setImportModuleId('');
   }, []);
 
-  /** Debounced GET /config for the import source assignment so Bridge shows Canvas hydration + rubric merge. */
-  useEffect(() => {
-    if (!importModalOpen || importModalBusy) return;
-    const sid = importSourceAssignmentId.trim();
-    if (!sid) return;
-    const handle = window.setTimeout(() => {
-      void (async () => {
-        try {
-          await promptApi.getPromptConfig(sid, { bridgeContext: 'import-source-selected' });
-        } catch (e) {
-          appendBridgeLog('teacher-config-assignment', 'import-source-selected: getPromptConfig failed', {
-            sourceAssignmentId: sid,
-            error: e instanceof Error ? e.message : String(e),
-          });
-        }
-      })();
-    }, 350);
-    return () => window.clearTimeout(handle);
-  }, [importModalOpen, importSourceAssignmentId, importModalBusy]);
-
   const handleImportModalSingleMerge = useCallback(async () => {
     if (!teacher || !hasLti) return;
     const sid = importSourceAssignmentId.trim();
@@ -1087,18 +1043,11 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setImportModalBusy(true);
     setImportModalMessage(null);
     try {
-      console.log('[TeacherConfig] importSingle START', {
-        sourceAssignmentId: sid,
-        moduleIdFromPicker: mid || null,
-      });
       await promptApi.importSinglePromptAssignment({
         sourceAssignmentId: sid,
         targetAssignmentId: sid,
         ...(mid ? { moduleId: mid } : {}),
         dryRun: false,
-      });
-      console.log('[TeacherConfig] importSingle SUCCESS', {
-        sourceAssignmentId: sid,
       });
       await loadAssignments();
       await load(sid);

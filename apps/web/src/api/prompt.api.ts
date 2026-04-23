@@ -173,85 +173,9 @@ function withAssignmentId(url: string, assignmentId?: string | null): string {
   return `${url}${sep}assignmentId=${encodeURIComponent(aid)}`;
 }
 
-/** Verbose snapshot for Bridge Debug (teacher-config-assignment); keeps log size bounded. */
-export function buildPromptConfigBridgeSnapshot(data: PromptConfig | null): Record<string, unknown> {
-  if (!data) return { config: null };
-  const instructions = data.instructions;
-  const prompts = data.prompts;
-  const vpc = data.videoPromptConfig;
-  const ypc = data.youtubePromptConfig;
-  return {
-    resolvedAssignmentId: data.resolvedAssignmentId ?? null,
-    assignmentName: data.assignmentName ?? null,
-    assignmentGroupId: data.assignmentGroupId ?? null,
-    moduleId: data.moduleId ?? null,
-    pointsPossible: data.pointsPossible ?? null,
-    rubricId: data.rubricId ?? null,
-    allowedAttempts: data.allowedAttempts ?? null,
-    promptMode: data.promptMode ?? null,
-    accessCode: data.accessCode != null && String(data.accessCode).trim() ? '(set)' : '(none)',
-    minutes: data.minutes ?? null,
-    signToVoiceRequired: data.signToVoiceRequired ?? null,
-    dueAt: data.dueAt ?? null,
-    unlockAt: data.unlockAt ?? null,
-    lockAt: data.lockAt ?? null,
-    instructionsLen: typeof instructions === 'string' ? instructions.length : 0,
-    instructionsPreview:
-      typeof instructions === 'string' && instructions.length > 0
-        ? `${instructions.slice(0, 500)}${instructions.length > 500 ? '… [truncated]' : ''}`
-        : null,
-    promptsCount: Array.isArray(prompts) ? prompts.length : 0,
-    promptsPreview: Array.isArray(prompts) ? prompts.slice(0, 3).map((p) => String(p).slice(0, 120)) : null,
-    videoPromptConfig:
-      vpc == null
-        ? null
-        : {
-            totalCards: vpc.totalCards ?? null,
-            selectedDeckIds: Array.isArray(vpc.selectedDecks) ? vpc.selectedDecks.map((d) => d.id) : [],
-            selectedDeckCount: Array.isArray(vpc.selectedDecks) ? vpc.selectedDecks.length : 0,
-            storedBanksCount: Array.isArray(vpc.storedPromptBanks) ? vpc.storedPromptBanks.length : 0,
-          },
-    youtubePromptConfig:
-      ypc == null
-        ? null
-        : {
-            videoId: ypc.videoId ?? null,
-            label: ypc.label ?? null,
-            clipStartSec: ypc.clipStartSec ?? null,
-            clipEndSec: ypc.clipEndSec ?? null,
-            allowStudentCaptions: ypc.allowStudentCaptions ?? null,
-          },
-  };
-}
-
-export async function getPromptConfig(
-  assignmentId?: string | null,
-  opts?: { bridgeContext?: string },
-): Promise<PromptConfig | null> {
+export async function getPromptConfig(assignmentId?: string | null): Promise<PromptConfig | null> {
   const url = withAssignmentId(base + '/config', assignmentId);
-  const bridgeCtx = opts?.bridgeContext ?? 'getPromptConfig';
-  appendBridgeLog('prompt-import-trace', 'getPromptConfig REQUEST', {
-    url,
-    assignmentId: assignmentId ?? null,
-    bridgeContext: bridgeCtx,
-  });
-  const data = await fetchJsonWithOAuthRedirect<PromptConfig | null>(url);
-  appendBridgeLog('prompt-import-trace', 'getPromptConfig RESPONSE', {
-    assignmentId: assignmentId ?? null,
-    bridgeContext: bridgeCtx,
-    resolvedAssignmentId: data?.resolvedAssignmentId ?? null,
-    assignmentName: data?.assignmentName ?? null,
-    pointsPossible: data?.pointsPossible ?? null,
-    allowedAttempts: data?.allowedAttempts ?? null,
-    rubricId: data?.rubricId ?? null,
-    instructionsLen: typeof data?.instructions === 'string' ? data.instructions.length : 0,
-    promptMode: data?.promptMode ?? null,
-  });
-  appendBridgeLog('teacher-config-assignment', `client: getPromptConfig full snapshot (${bridgeCtx})`, {
-    requestAssignmentId: assignmentId ?? null,
-    ...buildPromptConfigBridgeSnapshot(data),
-  });
-  return data;
+  return fetchJsonWithOAuthRedirect<PromptConfig | null>(url);
 }
 
 export async function putPromptConfig(

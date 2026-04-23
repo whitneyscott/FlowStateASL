@@ -128,26 +128,8 @@ export class PromptController {
   @Get('config')
   async getConfig(@Req() req: Request, @Res() res: Response) {
     const ctx = this.getCtxWithAssignment(req);
-    appendLtiLog('prompt-import-trace', 'GET /prompt/config REQUEST', {
-      assignmentId: ctx.assignmentId ?? '(none)',
-      courseId: ctx.courseId,
-      resourceLinkId: ctx.resourceLinkId ?? '(none)',
-    });
     try {
       const config = await this.prompt.getConfig(ctx);
-      appendLtiLog('prompt-import-trace', 'GET /prompt/config RESPONSE', {
-        assignmentId: ctx.assignmentId ?? '(none)',
-        response: config
-          ? {
-              assignmentName: config.assignmentName ?? '(none)',
-              pointsPossible: config.pointsPossible ?? '(none)',
-              allowedAttempts: config.allowedAttempts ?? '(none)',
-              rubricId: config.rubricId ?? '(none)',
-              instructionsLen: typeof config.instructions === 'string' ? config.instructions.length : 0,
-              resolvedAssignmentId: (config as { resolvedAssignmentId?: string }).resolvedAssignmentId ?? '(none)',
-            }
-          : null,
-      });
       return res.json(config);
     } catch (err) {
       if (err instanceof CanvasTokenExpiredError) {

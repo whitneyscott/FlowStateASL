@@ -1257,7 +1257,7 @@ export class PromptService {
     // Hydrate key assignment-backed fields directly from Canvas so UI reflects current assignment state.
     // Keep blob values as fallback when Canvas read is unavailable.
     try {
-      const { assignment, tokenSource } = await this.getAssignmentForImportHydration(
+      const { assignment } = await this.getAssignmentForImportHydration(
         ctx,
         assignmentId,
         domainOverride,
@@ -1285,32 +1285,10 @@ export class PromptService {
           ...(effectiveRubricId ? { rubricId: effectiveRubricId } : {}),
         };
         if (!hydrated.promptMode) hydrated.promptMode = 'text';
-        appendLtiLog('teacher-config-assignment', 'getConfig: assignment hydration source', {
-          assignmentId,
-          tokenSource,
-          hasDescription: typeof assignment.description === 'string',
-          descriptionLength: typeof assignment.description === 'string' ? assignment.description.length : 0,
-          linkedRubricIdFromCanvas: assignment.linkedRubricId ?? '(none)',
-          configRubricIdFromBlob: configRid || '(none)',
-          effectiveRubricIdAfterMerge: effectiveRubricId || '(none)',
-        });
-        appendLtiLog('teacher-config-assignment', 'getConfig: response fields after hydration', {
-          assignmentId,
-          response: {
-            assignmentName: hydrated.assignmentName ?? '(none)',
-            pointsPossible: hydrated.pointsPossible ?? '(none)',
-            allowedAttempts: hydrated.allowedAttempts ?? '(none)',
-            instructionsLen: typeof hydrated.instructions === 'string' ? hydrated.instructions.length : 0,
-            rubricId: hydrated.rubricId ?? '(none)',
-          },
-        });
         return { ...hydrated, resolvedAssignmentId: assignmentId };
       }
-    } catch (err) {
-      appendLtiLog('teacher-config-assignment', 'getConfig: assignment hydration failed (non-fatal)', {
-        assignmentId,
-        error: String(err),
-      });
+    } catch {
+      /* non-fatal: fall through to blob-only config */
     }
 
     return config ? { ...config, resolvedAssignmentId: assignmentId } : null;
