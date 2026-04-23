@@ -1,0 +1,22 @@
+---
+description: This repo uses SSH for GitHub; do not blame HTTPS credentials when agent git commands stall
+alwaysApply: true
+---
+
+# Git remote and agent troubleshooting (FlowStateASL)
+
+## How this repo talks to GitHub
+
+- **`origin` uses SSH** (e.g. `git@github.com:whitneyscott/FlowStateASL.git`), not HTTPS.
+- Auth is **SSH keys** (and **ssh-agent** where the user’s environment loads them), not `git credential` / PAT / interactive username-password flows.
+
+## When `git fetch`, `git push`, or similar look “stuck” in the agent
+
+1. **Do not** treat “missing or broken **credentials**” as the default cause. That mental model fits **HTTPS + credential helper** problems; it is **misleading** for an SSH `origin`.
+2. **Do** consider: agent **sandbox / network restrictions**, **timeouts** vs. slow SSH, **non-interactive** shells (no prompt), or **environment** differences between the user’s normal terminal and the agent’s shell.
+3. **Before** explaining a failure, run **`git remote -v`** (read-only) and base the diagnosis on whether the remote is **SSH or HTTPS**.
+
+## Relationship to other rules
+
+- Still follow **`.cursor/rules/git-push.mdc`** for when to commit and push after user-requested work.
+- This file only fixes **how to reason about git/network failures** in agent sessions, not whether to push.
