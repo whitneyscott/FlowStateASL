@@ -13,3 +13,7 @@ When you **complete a task that the user asked for** (implementation, fixes, ref
 Do **not** leave completed work only on the local machine unless the user explicitly opts out (e.g. "don't push", "commit only", "local only").
 
 This applies to work done **per the user's request**—not to incidental exploration or answers that involve no repo changes.
+
+## Cursor agent (Shell tool)
+
+`origin` is **SSH**. From the agent, **`git push` / `git fetch` must use Shell with `required_permissions: ["all"]`** so DNS and SSH reach GitHub; `network` alone is not enough and may show `Could not resolve hostname github.com`. See **`.cursor/rules/git-agent-ssh-remote.mdc`**.

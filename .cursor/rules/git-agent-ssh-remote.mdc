@@ -1,22 +1,55 @@
 ---
-description: This repo uses SSH for GitHub; do not blame HTTPS credentials when agent git commands stall
+description: SSH origin + Cursor agent: use full permissions for push/fetch; DNS sandbox is the usual failure mode
 alwaysApply: true
 ---
 
-# Git remote and agent troubleshooting (FlowStateASL)
+# Git remote and Cursor agent behavior (FlowStateASL)
 
 ## How this repo talks to GitHub
 
 - **`origin` uses SSH** (e.g. `git@github.com:whitneyscott/FlowStateASL.git`), not HTTPS.
-- Auth is **SSH keys** (and **ssh-agent** where the user’s environment loads them), not `git credential` / PAT / interactive username-password flows.
+- Auth is **SSH keys** and **ssh-agent** (`SSH_AUTH_SOCK`), not `git credential` / PAT / interactive password prompts.
 
-## When `git fetch`, `git push`, or similar look “stuck” in the agent
+## Cursor agent: why `git push` / `git fetch` breaks (especially after a new agent or fresh session)
 
-1. **Do not** treat “missing or broken **credentials**” as the default cause. That mental model fits **HTTPS + credential helper** problems; it is **misleading** for an SSH `origin`.
-2. **Do** consider: agent **sandbox / network restrictions**, **timeouts** vs. slow SSH, **non-interactive** shells (no prompt), or **environment** differences between the user’s normal terminal and the agent’s shell.
-3. **Before** explaining a failure, run **`git remote -v`** (read-only) and base the diagnosis on whether the remote is **SSH or HTTPS**.
+This is **not** “credentials forgot” or “GitHub login broke.”
+
+1. **Sandbox + DNS**  
+   Agent **Shell** often runs **sandboxed**. Requesting only `network` (or `git_write` + `network`) can still leave **name resolution broken**. Symptom:
+
+   `Could not resolve hostname github.com: Temporary failure in name resolution`
+
+   That is **sandbox/environment**, not missing SSH keys.
+
+2. **Required fix for any remote Git operation**  
+   For `git push`, `git fetch`, `git pull`, or anything that must reach `github.com` over SSH, run Shell with:
+
+   **`required_permissions: ["all"]`**
+
+   so the command runs with the same network stack as a normal terminal. **Do not** rely on `network` alone for these commands.
+
+3. **Confirm SSH (optional, quick)**  
+   With `["all"]`:
+
+   `ssh -o BatchMode=yes -o ConnectTimeout=15 -T git@github.com`
+
+   Success looks like: `Hi <user>! You've successfully authenticated...`
+
+4. **Timeouts and “stuck”**  
+   SSH to GitHub can take **on the order of 15–30+ seconds** in some environments. The default agent Shell timeout may background the job before completion. Prefer:
+
+   - `required_permissions: ["all"]`, and
+   - `GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=30"` on `git push` / `git fetch` so failures surface instead of hanging indefinitely.
+
+5. **New agent / new chat**  
+   Every new agent session gets the same sandbox defaults. **There is no remembered “we already fixed Git.”** Always use `["all"]` for remote git over SSH unless a future Cursor behavior change says otherwise.
+
+## What not to do
+
+- **Do not** diagnose **HTTPS credential helper** or “you need to log in again” when `git remote -v` shows `git@github.com`.
+- **Do not** stop after one failed push without checking whether the failure was **DNS / sandbox** (see error text above).
 
 ## Relationship to other rules
 
-- Still follow **`.cursor/rules/git-push.mdc`** for when to commit and push after user-requested work.
-- This file only fixes **how to reason about git/network failures** in agent sessions, not whether to push.
+- Follow **`.cursor/rules/git-push.mdc`** for **when** to commit and push after user-requested work.
+- This file defines **how** to run those commands **from the Cursor agent** so they actually reach GitHub.
