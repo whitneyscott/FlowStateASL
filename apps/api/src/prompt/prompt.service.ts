@@ -1285,14 +1285,16 @@ export class PromptService {
           ...(effectiveRubricId ? { rubricId: effectiveRubricId } : {}),
         };
         if (!hydrated.promptMode) hydrated.promptMode = 'text';
-        appendLtiLog('prompt', 'getConfig: assignment hydration source', {
+        appendLtiLog('teacher-config-assignment', 'getConfig: assignment hydration source', {
           assignmentId,
           tokenSource,
           hasDescription: typeof assignment.description === 'string',
           descriptionLength: typeof assignment.description === 'string' ? assignment.description.length : 0,
-          linkedRubricId: assignment.linkedRubricId ?? '(none)',
+          linkedRubricIdFromCanvas: assignment.linkedRubricId ?? '(none)',
+          configRubricIdFromBlob: configRid || '(none)',
+          effectiveRubricIdAfterMerge: effectiveRubricId || '(none)',
         });
-        appendLtiLog('prompt', 'getConfig: response fields after hydration', {
+        appendLtiLog('teacher-config-assignment', 'getConfig: response fields after hydration', {
           assignmentId,
           response: {
             assignmentName: hydrated.assignmentName ?? '(none)',
@@ -1305,7 +1307,7 @@ export class PromptService {
         return { ...hydrated, resolvedAssignmentId: assignmentId };
       }
     } catch (err) {
-      appendLtiLog('prompt', 'getConfig: assignment hydration failed (non-fatal)', {
+      appendLtiLog('teacher-config-assignment', 'getConfig: assignment hydration failed (non-fatal)', {
         assignmentId,
         error: String(err),
       });

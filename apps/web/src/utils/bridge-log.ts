@@ -43,6 +43,8 @@ const BRIDGE_LTI_LOG_SCOPES = [
   'webm-prompt',
   'sign-to-voice',
   'prompt-import-trace',
+  /** Teacher Config: Canvas hydration + rubric resolution for selected assignment (edit / import preview). */
+  'teacher-config-assignment',
 ] as const;
 
 export function ltiLogLineMatchesBridgeFilter(line: string): boolean {

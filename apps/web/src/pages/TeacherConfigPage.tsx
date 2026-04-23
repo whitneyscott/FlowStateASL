@@ -14,6 +14,7 @@ import { YoutubeStimulusShell } from '../components/YoutubeStimulusShell';
 import { YoutubeIframePlayer, type YoutubeIframePlayerHandle } from '../components/YoutubeIframePlayer';
 import { YoutubeClipRangeEditor } from '../components/YoutubeClipRangeEditor';
 import { TeacherPromptRte } from '../components/TeacherPromptRte';
+import { appendBridgeLog } from '../utils/bridge-log';
 import '../components/TeacherSettings.css';
 import './PrompterPage.css';
 
@@ -256,7 +257,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     try {
       console.log('[TeacherConfig] load START', { requestedAssignmentId: id, overrideId: overrideId ?? null });
       setLastFunction('GET /api/prompt/config');
-      const data = await promptApi.getPromptConfig(id);
+      const data = await promptApi.getPromptConfig(id, { bridgeContext: 'edit-assignment-selected' });
       console.log('[TeacherConfig] load RESPONSE /api/prompt/config', {
         requestedAssignmentId: id,
         resolvedAssignmentId: data?.resolvedAssignmentId ?? null,
@@ -1051,6 +1052,26 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setImportModalMessage(null);
     setImportModuleId('');
   }, []);
+
+  /** Debounced GET /config for the import source assignment so Bridge shows Canvas hydration + rubric merge. */
+  useEffect(() => {
+    if (!importModalOpen || importModalBusy) return;
+    const sid = importSourceAssignmentId.trim();
+    if (!sid) return;
+    const handle = window.setTimeout(() => {
+      void (async () => {
+        try {
+          await promptApi.getPromptConfig(sid, { bridgeContext: 'import-source-selected' });
+        } catch (e) {
+          appendBridgeLog('teacher-config-assignment', 'import-source-selected: getPromptConfig failed', {
+            sourceAssignmentId: sid,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
+      })();
+    }, 350);
+    return () => window.clearTimeout(handle);
+  }, [importModalOpen, importSourceAssignmentId, importModalBusy]);
 
   const handleImportModalSingleMerge = useCallback(async () => {
     if (!teacher || !hasLti) return;
