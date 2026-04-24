@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
 import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
@@ -1051,19 +1052,24 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     [teacher, current, assignmentId, rubric, rubricDraft, persistRubricAssessment]
   );
 
-  const handleSaveRubricCriterionComment = useCallback(
+  const handleRubricCriterionCommentBlur = useCallback(
     (criterionId: string, comments: string) => {
       if (!teacher || !current || !assignmentId) return;
-      const nextDraft: Record<string, RubricCriterionDraft> = {
-        ...rubricDraft,
-        [criterionId]: { ...(rubricDraft[criterionId] ?? {}), comments },
-      };
-      setRubricDraft(nextDraft);
+      let nextDraft!: Record<string, RubricCriterionDraft>;
+      flushSync(() => {
+        setRubricDraft((prev) => {
+          nextDraft = {
+            ...prev,
+            [criterionId]: { ...(prev[criterionId] ?? {}), comments },
+          };
+          return nextDraft;
+        });
+      });
       if (rubricDraftHasPayload(rubric, nextDraft)) {
         void persistRubricAssessment(nextDraft);
       }
     },
-    [teacher, current, assignmentId, rubric, rubricDraft, persistRubricAssessment]
+    [teacher, current, assignmentId, rubric, persistRubricAssessment]
   );
 
   const handleReset = async () => {
@@ -2025,18 +2031,13 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                                           [critId]: { ...(prev[critId] ?? {}), comments: e.target.value },
                                         }))
                                       }
+                                      onBlur={(e) => {
+                                        if (!teacher) return;
+                                        handleRubricCriterionCommentBlur(critId, e.target.value);
+                                      }}
                                       disabled={!teacher}
-                                      placeholder="Optional — saved to Canvas rubric for this row"
+                                      placeholder="Optional — saves to Canvas when you leave this field"
                                     />
-                                    {teacher && (
-                                      <button
-                                        type="button"
-                                        className="prompter-viewer-criterion-comment-save prompter-viewer-grade-btn"
-                                        onClick={() => handleSaveRubricCriterionComment(critId, rubricDraft[critId]?.comments ?? '')}
-                                      >
-                                        Save comment
-                                      </button>
-                                    )}
                                   </div>
                                 </td>
                               </tr>
