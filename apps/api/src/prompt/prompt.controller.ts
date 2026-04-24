@@ -1053,6 +1053,27 @@ export class PromptController {
     }
   }
 
+  @Post('configured-assignments/:assignmentId/remove-from-prompts')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @UseGuards(TeacherRoleGuard)
+  async removeConfiguredAssignmentFromPrompts(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Param('assignmentId') assignmentId: string,
+  ) {
+    const ctx = this.getCtx(req);
+    try {
+      appendLtiLog('prompt', 'remove-from-prompts received', { assignmentId });
+      await this.prompt.removeConfiguredAssignmentFromPrompts(ctx, assignmentId);
+      return res.status(HttpStatus.NO_CONTENT).send();
+    } catch (err) {
+      if (err instanceof CanvasTokenExpiredError) {
+        return res.status(401).json(getOAuth401Body(req));
+      }
+      throw err;
+    }
+  }
+
   @Delete('configured-assignments/:assignmentId')
   @HttpCode(HttpStatus.NO_CONTENT)
   @UseGuards(TeacherRoleGuard)

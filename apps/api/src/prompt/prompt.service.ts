@@ -4237,8 +4237,11 @@ export class PromptService {
     return canvasImport ? { configured: result, canvasImport } : { configured: result };
   }
 
-  /** Teacher only. Delete a configured assignment in Canvas and remove it from Prompt Manager Settings blob. */
-  async deleteConfiguredAssignment(ctx: LtiContext, assignmentId: string): Promise<void> {
+  /**
+   * Teacher only. Remove assignment from Prompt Manager course settings blob only.
+   * The Canvas assignment is not deleted.
+   */
+  async removeConfiguredAssignmentFromPrompts(ctx: LtiContext, assignmentId: string): Promise<void> {
     const aid = (assignmentId ?? '').trim();
     if (!aid) throw new Error('assignmentId is required');
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
@@ -4246,24 +4249,24 @@ export class PromptService {
       throw new Error('Canvas OAuth token required. Complete the Canvas OAuth flow (launch via LTI as teacher).');
     }
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
-    appendLtiLog('prompt', 'delete-assignment: start', {
+    appendLtiLog('prompt', 'remove-from-prompts: start', {
       assignmentId: aid,
       courseId: ctx.courseId,
     });
+    await this.removeConfiguredAssignmentFromPromptManagerBlob(ctx.courseId, aid, domainOverride, token);
+    appendLtiLog('prompt', 'remove-from-prompts: done', { assignmentId: aid });
+  }
 
-    try {
-      await this.canvas.deleteAssignment(ctx.courseId, aid, domainOverride, token);
-      appendLtiLog('prompt', 'delete-assignment: Canvas assignment deleted', { assignmentId: aid });
-    } catch (err) {
-      // 404 means assignment already gone; still clean settings blob.
-      const msg = err instanceof Error ? err.message : String(err);
-      if (!msg.includes('404')) throw err;
-      appendLtiLog('prompt', 'delete-assignment: Canvas assignment already missing', { assignmentId: aid });
-    }
-
-    const blob = await this.readPromptManagerSettingsBlob(ctx.courseId, domainOverride, token);
+  private async removeConfiguredAssignmentFromPromptManagerBlob(
+    courseId: string,
+    assignmentId: string,
+    domainOverride: string | undefined,
+    token: string,
+  ): Promise<void> {
+    const aid = assignmentId.trim();
+    const blob = await this.readPromptManagerSettingsBlob(courseId, domainOverride, token);
     if (!blob) {
-      appendLtiLog('prompt', 'delete-assignment: no Prompt Manager blob to clean', { assignmentId: aid });
+      appendLtiLog('prompt', 'configured-assignment-blob: no blob', { assignmentId: aid });
       return;
     }
     const configs = { ...(blob?.configs ?? {}) };
@@ -4293,16 +4296,43 @@ export class PromptService {
         updatedAt: new Date().toISOString(),
       };
       await writePromptManagerSettingsBlobToCanvas(this.canvas, {
-        courseId: ctx.courseId,
+        courseId,
         domainOverride,
         token,
         blob: payload,
         allowConfigShrink: true,
       });
-      appendLtiLog('prompt', 'delete-assignment: settings blob cleaned', { assignmentId: aid });
+      appendLtiLog('prompt', 'configured-assignment-blob: cleaned', { assignmentId: aid });
     } else {
-      appendLtiLog('prompt', 'delete-assignment: no settings blob entry to remove', { assignmentId: aid });
+      appendLtiLog('prompt', 'configured-assignment-blob: no entry', { assignmentId: aid });
     }
+  }
+
+  /** Teacher only. Delete a configured assignment in Canvas and remove it from Prompt Manager Settings blob. */
+  async deleteConfiguredAssignment(ctx: LtiContext, assignmentId: string): Promise<void> {
+    const aid = (assignmentId ?? '').trim();
+    if (!aid) throw new Error('assignmentId is required');
+    const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
+    if (!token) {
+      throw new Error('Canvas OAuth token required. Complete the Canvas OAuth flow (launch via LTI as teacher).');
+    }
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
+    appendLtiLog('prompt', 'delete-assignment: start', {
+      assignmentId: aid,
+      courseId: ctx.courseId,
+    });
+
+    try {
+      await this.canvas.deleteAssignment(ctx.courseId, aid, domainOverride, token);
+      appendLtiLog('prompt', 'delete-assignment: Canvas assignment deleted', { assignmentId: aid });
+    } catch (err) {
+      // 404 means assignment already gone; still clean settings blob.
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.includes('404')) throw err;
+      appendLtiLog('prompt', 'delete-assignment: Canvas assignment already missing', { assignmentId: aid });
+    }
+
+    await this.removeConfiguredAssignmentFromPromptManagerBlob(ctx.courseId, aid, domainOverride, token);
   }
 
   /** Teacher only. Returns course assignment groups for teacher config. */

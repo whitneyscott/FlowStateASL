@@ -623,6 +623,24 @@ export async function deleteConfiguredAssignment(assignmentId: string): Promise<
   if (!res.ok) throw new Error(body.message ?? `HTTP ${res.status}`);
 }
 
+/** Remove assignment from Prompt Manager settings only; Canvas assignment is unchanged. */
+export async function removeConfiguredAssignmentFromPrompts(assignmentId: string): Promise<void> {
+  const res = await fetch(
+    `${base}/configured-assignments/${encodeURIComponent(assignmentId)}/remove-from-prompts`,
+    apiInit({ method: 'POST' }),
+  );
+  const data = await res.json().catch(() => ({}));
+  const body = data as { redirectToOAuth?: boolean; needsManualToken?: boolean; message?: string };
+  if (res.status === 401 && body.redirectToOAuth) {
+    window.location.href = `/api/oauth/canvas?returnTo=${encodeURIComponent(window.location.href)}`;
+    throw new Error('Redirecting to Canvas OAuth');
+  }
+  if (res.status === 401 && body.needsManualToken) {
+    throw new NeedsManualTokenError(body.message);
+  }
+  if (!res.ok) throw new Error(body.message ?? `HTTP ${res.status}`);
+}
+
 export class ImportPromptConflictError extends Error {
   readonly payload: unknown;
   constructor(message: string, payload: unknown) {

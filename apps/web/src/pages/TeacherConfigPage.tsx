@@ -59,7 +59,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   );
   const [configAssignValue, setConfigAssignValue] = useState('');
   const [creatingAssignment, setCreatingAssignment] = useState(false);
-  const [deletingAssignment, setDeletingAssignment] = useState(false);
+  /** Unlink from Prompt Manager only, or full Canvas delete — mutually exclusive while in flight. */
+  const [assignmentRemoval, setAssignmentRemoval] = useState<null | 'prompts' | 'canvas'>(null);
   const [createAssignName, setCreateAssignName] = useState('');
   const [gradeConfirmModal, setGradeConfirmModal] = useState<{ name: string; id: string } | null>(null);
   const [modules, setModules] = useState<promptApi.CanvasModule[]>([]);
@@ -812,40 +813,72 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     }
   };
 
-  const handleDeleteConfiguredAssignment = async () => {
-    if (!teacher || !hasLti || deletingAssignment || !configAssignValue || configAssignValue === '__new__') return;
+  const afterConfiguredAssignmentRemoved = async () => {
+    setSearchParams({ create: '1' });
+    setAssignmentActionMode('create');
+    setConfigAssignValue('__new__');
+    setGradeDropdownValue('');
+    setAssignmentName('ASL Express Assignment');
+    setMinutes(5);
+    setPrompts([]);
+    setAccessCode('');
+    setModuleId('');
+    setAssignmentGroupId('');
+    setRubricId('');
+    setPointsPossible(10);
+    setDueAt('');
+    setUnlockAt('');
+    setLockAt('');
+    setAllowedAttempts(1);
+    setInstructions('');
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+    await loadAssignments();
+  };
+
+  const handleRemoveFromPrompts = async () => {
+    if (!teacher || !hasLti || assignmentRemoval || !configAssignValue || configAssignValue === '__new__') return;
     const target = configuredAssignments.find((a) => a.id === configAssignValue);
     const label = target?.name ?? `Assignment ${configAssignValue}`;
     const ok = window.confirm(
-      `Delete "${label}" from Canvas?\n\nThis also removes its Prompt Manager settings entry. This cannot be undone.`
+      `Remove "${label}" from Prompts?\n\nThe Canvas assignment stays in the course; only Prompt Manager settings are cleared for it.`
     );
     if (!ok) return;
-    setDeletingAssignment(true);
+    setAssignmentRemoval('prompts');
+    setError(null);
+    try {
+      setLastFunction('POST /api/prompt/configured-assignments/:id/remove-from-prompts');
+      await promptApi.removeConfiguredAssignmentFromPrompts(configAssignValue);
+      setLastApiResult('POST /api/prompt/configured-assignments/:id/remove-from-prompts', 204, true);
+      await afterConfiguredAssignmentRemoved();
+    } catch (e: unknown) {
+      if (e instanceof promptApi.NeedsManualTokenError) {
+        setShowManualTokenModal(true);
+      } else {
+        const msg = e instanceof Error ? e.message : String(e);
+        setError(msg);
+        setLastApiError('POST /api/prompt/configured-assignments/:id/remove-from-prompts', 0, msg);
+      }
+    } finally {
+      setAssignmentRemoval(null);
+    }
+  };
+
+  const handleDeleteFromCanvas = async () => {
+    if (!teacher || !hasLti || assignmentRemoval || !configAssignValue || configAssignValue === '__new__') return;
+    const target = configuredAssignments.find((a) => a.id === configAssignValue);
+    const label = target?.name ?? `Assignment ${configAssignValue}`;
+    const ok = window.confirm(
+      `Delete "${label}" from Canvas?\n\nThis removes the assignment from the course and from Prompts. This cannot be undone.`
+    );
+    if (!ok) return;
+    setAssignmentRemoval('canvas');
     setError(null);
     try {
       setLastFunction('DELETE /api/prompt/configured-assignments/:assignmentId');
       await promptApi.deleteConfiguredAssignment(configAssignValue);
       setLastApiResult('DELETE /api/prompt/configured-assignments/:assignmentId', 204, true);
-      setSearchParams({ create: '1' });
-      setAssignmentActionMode('create');
-      setConfigAssignValue('__new__');
-      setGradeDropdownValue('');
-      setAssignmentName('ASL Express Assignment');
-      setMinutes(5);
-      setPrompts([]);
-      setAccessCode('');
-      setModuleId('');
-      setAssignmentGroupId('');
-      setRubricId('');
-      setPointsPossible(10);
-      setDueAt('');
-      setUnlockAt('');
-      setLockAt('');
-      setAllowedAttempts(1);
-      setInstructions('');
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
-      await loadAssignments();
+      await afterConfiguredAssignmentRemoved();
     } catch (e: unknown) {
       if (e instanceof promptApi.NeedsManualTokenError) {
         setShowManualTokenModal(true);
@@ -855,7 +888,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         setLastApiError('DELETE /api/prompt/configured-assignments/:assignmentId', 0, msg);
       }
     } finally {
-      setDeletingAssignment(false);
+      setAssignmentRemoval(null);
     }
   };
 
@@ -942,7 +975,10 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
 
   const configBlockingLoader = useMemo(() => {
     if (creatingModule) return { active: true as const, message: 'Creating module…', subMessage: undefined as string | undefined };
-    if (deletingAssignment) return { active: true as const, message: 'Deleting assignment…', subMessage: undefined as string | undefined };
+    if (assignmentRemoval === 'prompts')
+      return { active: true as const, message: 'Removing from Prompts…', subMessage: undefined as string | undefined };
+    if (assignmentRemoval === 'canvas')
+      return { active: true as const, message: 'Deleting from Canvas…', subMessage: undefined as string | undefined };
     if (creatingAssignment) return { active: true as const, message: 'Creating assignment…', subMessage: undefined as string | undefined };
     if (saving) return { active: true as const, message: 'Saving…', subMessage: undefined as string | undefined };
     if (resetting) return { active: true as const, message: 'Resetting…', subMessage: undefined as string | undefined };
@@ -951,7 +987,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     return { active: false as const, message: '', subMessage: undefined as string | undefined };
   }, [
     creatingModule,
-    deletingAssignment,
+    assignmentRemoval,
     creatingAssignment,
     saving,
     resetting,
@@ -1338,14 +1374,37 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                       </>
                     )}
                     {assignmentActionMode === 'edit' && configAssignValue !== '__new__' && !!configAssignValue && (
-                      <div className="prompter-settings-actions-row prompter-settings-actions-row-mt-sm">
+                      <div
+                        className="prompter-settings-actions-row prompter-settings-actions-row-mt-sm"
+                        style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}
+                      >
                         <button
                           type="button"
-                          onClick={handleDeleteConfiguredAssignment}
-                          disabled={deletingAssignment}
+                          onClick={() => void handleRemoveFromPrompts()}
+                          disabled={!!assignmentRemoval}
                           className="prompter-btn-secondary"
                         >
-                          {deletingAssignment ? <><span className="prompter-inline-spinner" /> Deleting...</> : 'Delete Assignment'}
+                          {assignmentRemoval === 'prompts' ? (
+                            <>
+                              <span className="prompter-inline-spinner" /> Removing…
+                            </>
+                          ) : (
+                            'Remove from Prompts'
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleDeleteFromCanvas()}
+                          disabled={!!assignmentRemoval}
+                          className="prompter-btn-remove"
+                        >
+                          {assignmentRemoval === 'canvas' ? (
+                            <>
+                              <span className="prompter-inline-spinner" /> Deleting…
+                            </>
+                          ) : (
+                            'Delete from Canvas'
+                          )}
                         </button>
                       </div>
                     )}
