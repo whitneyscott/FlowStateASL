@@ -58,20 +58,53 @@ export function sanitizePromptConfigJson(input: unknown): PromptConfigJson {
           })
           .filter((x): x is { id: string; title: string } => x != null)
       : [];
-    const totalCards = Math.floor(Number(v.totalCards));
-    if (decks.length > 0 && Number.isFinite(totalCards) && totalCards >= 1) {
-      out.videoPromptConfig = {
-        selectedDecks: decks,
-        totalCards,
-        ...(Array.isArray(v.storedPromptBanks) ? { storedPromptBanks: v.storedPromptBanks as never } : {}),
-        ...(Array.isArray(v.staticFallbackPrompts)
-          ? {
-              staticFallbackPrompts: (v.staticFallbackPrompts as unknown[])
-                .map((x) => String(x ?? '').trim())
-                .filter(Boolean),
-            }
-          : {}),
-      };
+    const banks = Array.isArray(v.storedPromptBanks) ? (v.storedPromptBanks as unknown[]) : [];
+    const hasBankRows = banks.some((b) => Array.isArray(b) && b.length > 0);
+    const staticArr = Array.isArray(v.staticFallbackPrompts) ? (v.staticFallbackPrompts as unknown[]) : [];
+    const hasStatic = staticArr.length > 0;
+    const hasAnyDeckBody = decks.length > 0 || hasBankRows || hasStatic;
+    let totalCards = Math.floor(Number(v.totalCards));
+    if (hasAnyDeckBody) {
+      if (!Number.isFinite(totalCards) || totalCards < 1) {
+        if (decks.length > 0) {
+          totalCards = 10;
+        } else if (hasBankRows) {
+          const lens = banks
+            .filter((b): b is unknown[] => Array.isArray(b) && b.length > 0)
+            .map((b) => b.length);
+          totalCards = Math.max(1, ...lens, 1);
+        } else {
+          totalCards = 10;
+        }
+      }
+      if (decks.length > 0) {
+        out.videoPromptConfig = {
+          selectedDecks: decks,
+          totalCards,
+          ...(Array.isArray(v.storedPromptBanks) ? { storedPromptBanks: v.storedPromptBanks as never } : {}),
+          ...(Array.isArray(v.staticFallbackPrompts)
+            ? {
+                staticFallbackPrompts: (v.staticFallbackPrompts as unknown[])
+                  .map((x) => String(x ?? '').trim())
+                  .filter(Boolean),
+              }
+            : {}),
+        };
+      } else if (hasBankRows || hasStatic) {
+        // Banks-only or static-only deck-shaped configs (legacy / partial embeds)
+        out.videoPromptConfig = {
+          selectedDecks: [],
+          totalCards,
+          ...(Array.isArray(v.storedPromptBanks) ? { storedPromptBanks: v.storedPromptBanks as never } : {}),
+          ...(Array.isArray(v.staticFallbackPrompts)
+            ? {
+                staticFallbackPrompts: (v.staticFallbackPrompts as unknown[])
+                  .map((x) => String(x ?? '').trim())
+                  .filter(Boolean),
+              }
+            : {}),
+        };
+      }
     }
   }
   if (isPlainObject(rec.youtubePromptConfig)) {

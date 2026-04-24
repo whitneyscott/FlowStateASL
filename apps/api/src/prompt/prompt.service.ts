@@ -28,7 +28,7 @@ import {
 } from '../common/utils/canvas-base-url.util';
 import { resolveCanvasApiUserId } from '../common/utils/canvas-api-user.util';
 import { getSproutAccountId } from '../common/utils/sprout-account-id.util';
-import type { PromptConfigJson, PutPromptConfigDto } from './dto/prompt-config.dto';
+import type { PromptConfigJson, PutPromptConfigDto, VideoPromptConfig } from './dto/prompt-config.dto';
 import { cleanupWebmVttMuxOutputPath } from './ffmpeg-captions.util';
 import { tryPreuploadSignToVoiceCaptionsMux } from './sign-to-voice-preupload.util';
 import { normalizeYoutubeInputToVideoId } from './youtube-video-id.util';
@@ -577,7 +577,86 @@ export class PromptService {
     token: string,
   ): Promise<PromptConfigJson | null> {
     const raw = await this.canvas.getAssignment(courseId, assignmentId, domainOverride, token);
-    return this.promptConfigFromAssignmentDescriptionString(raw?.description);
+    const desc = raw?.description;
+    if (typeof desc === 'string' && desc.trim()) {
+      const parsed = parseAssignmentDescriptionForPromptManager(desc);
+      if (!parsed.config) {
+        appendLtiLog('student-prompt-type', 'readPromptConfig: non-empty description but no ASL config (check assignment id / Canvas HTML vs editor)', {
+          courseId,
+          assignmentId,
+          descLength: desc.length,
+          aslDataMarker: desc.includes('data-asl-express'),
+          repairNotes: parsed.repairNotes,
+        });
+        return null;
+      }
+      return { ...parsed.config, instructions: parsed.visibleHtml };
+    }
+    return null;
+  }
+
+  /** True when videoPromptConfig has enough structure for deck mode (matches infer heuristics). */
+  private hasDeckShapedVideoPromptConfig(vpc: VideoPromptConfig | undefined): boolean {
+    if (!vpc) return false;
+    if (Array.isArray(vpc.selectedDecks) && vpc.selectedDecks.length > 0) return true;
+    if (
+      Array.isArray(vpc.storedPromptBanks) &&
+      vpc.storedPromptBanks.some((b) => Array.isArray(b) && b.length > 0)
+    ) {
+      return true;
+    }
+    if (Array.isArray(vpc.staticFallbackPrompts) && vpc.staticFallbackPrompts.length > 0) return true;
+    return false;
+  }
+
+  /**
+   * Canvas GET assignment + description embed and course Prompt Manager settings blob can disagree:
+   * a partial/empty description (or student-visible HTML) may parse without deck fields while
+   * `legacyBlob.configs[id]` still holds the teacher-saved deck config. Merge so we do not drop blob decks.
+   */
+  private mergeDescriptionAndBlobPromptConfig(
+    fromDesc: PromptConfigJson | null,
+    fromBlob: PromptConfigJson | null,
+  ): PromptConfigJson | null {
+    if (!fromDesc && !fromBlob) return null;
+    if (!fromBlob) return fromDesc ? { ...fromDesc } : null;
+    if (!fromDesc) return { ...fromBlob };
+
+    const descDecks = this.hasDeckShapedVideoPromptConfig(fromDesc.videoPromptConfig);
+    const blobDecks = this.hasDeckShapedVideoPromptConfig(fromBlob.videoPromptConfig);
+    const descVid = (fromDesc.youtubePromptConfig?.videoId ?? '').trim();
+    const blobVid = (fromBlob.youtubePromptConfig?.videoId ?? '').trim();
+    const descHasYt = !!descVid;
+    const blobHasYt = !!blobVid;
+
+    const out: PromptConfigJson = {
+      ...fromBlob,
+      ...fromDesc,
+      instructions: fromDesc.instructions ?? fromBlob.instructions,
+    };
+
+    if (descDecks) {
+      out.videoPromptConfig = fromDesc.videoPromptConfig;
+    } else if (blobDecks) {
+      out.videoPromptConfig = fromBlob.videoPromptConfig;
+    } else {
+      out.videoPromptConfig = fromDesc.videoPromptConfig ?? fromBlob.videoPromptConfig;
+    }
+
+    if (descHasYt) {
+      out.youtubePromptConfig = fromDesc.youtubePromptConfig;
+    } else if (blobHasYt) {
+      out.youtubePromptConfig = fromBlob.youtubePromptConfig;
+    } else {
+      out.youtubePromptConfig = fromDesc.youtubePromptConfig ?? fromBlob.youtubePromptConfig;
+    }
+
+    if (!fromDesc.promptMode) {
+      if (blobDecks && fromBlob.promptMode) out.promptMode = fromBlob.promptMode;
+      else if (blobHasYt && fromBlob.promptMode) out.promptMode = fromBlob.promptMode;
+    }
+
+    return out;
   }
 
   private async loadPromptConfigForAssignment(
@@ -593,8 +672,17 @@ export class PromptService {
       domainOverride,
       token,
     );
-    if (fromDesc) return fromDesc;
-    return legacyBlob?.configs?.[assignmentId] ?? null;
+    const fromBlob = legacyBlob?.configs?.[assignmentId] ?? null;
+    const descDeck = this.hasDeckShapedVideoPromptConfig(fromDesc?.videoPromptConfig);
+    const blobDeck = this.hasDeckShapedVideoPromptConfig(fromBlob?.videoPromptConfig);
+    const merged = this.mergeDescriptionAndBlobPromptConfig(fromDesc, fromBlob);
+    if (merged && blobDeck && !descDeck) {
+      appendLtiLog('prompt-decks', 'loadPromptConfig: deck fields taken from course settings blob (description lacked deck shape)', {
+        courseId,
+        assignmentId,
+      });
+    }
+    return merged;
   }
 
   /**
