@@ -22,6 +22,12 @@
     "verify:webm-prompt-codec": "tsx --tsconfig apps/api/tsconfig.json apps/api/src/scripts/verify-webm-prompt-codec.ts"
   },
   "private": true,
+  "overrides": {
+    "uuid": "^14.0.0",
+    "react-quill": {
+      "quill": "2.0.3"
+    }
+  },
   "dependencies": {
     "@deepgram/sdk": "^5.0.0",
     "@nestjs/common": "^11.1.18",
