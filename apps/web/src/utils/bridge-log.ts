@@ -45,6 +45,8 @@ const BRIDGE_LTI_LOG_SCOPES = [
   'prompt-import-trace',
   /** Student TimerPage: raw GET /config + classification (prompt mode / phase). */
   'student-prompt-type',
+  /** Student deck live-build + hydrate (TimerPage). */
+  'student-deck-live-build',
 ] as const;
 
 export function ltiLogLineMatchesBridgeFilter(line: string): boolean {
@@ -75,10 +77,28 @@ function isBridgeClientDiagnosticsEnabled(): boolean {
   }
 }
 
-export function appendBridgeLog(tag: string, message: string, extra?: Record<string, unknown>): void {
-  if (!isBridgeClientDiagnosticsEnabled()) return;
+/**
+ * Tags that must log even when not in Developer app mode (e.g. student Timer / promptMode).
+ * Otherwise students never hit appendBridgeLog and teachers see no lines in the server LTI buffer.
+ */
+/** Log + POST to /api/debug/lti-log even when `aslExpressAppMode` is not `developer` (student prompter, etc.). */
+function shouldAlwaysBridgeLog(tag: string): boolean {
+  return tag.startsWith('student-');
+}
 
+export function appendBridgeLog(tag: string, message: string, extra?: Record<string, unknown>): void {
   const fullMessage = `${message}${extra ? ` ${JSON.stringify(extra)}` : ''}`;
+
+  if (shouldAlwaysBridgeLog(tag)) {
+    try {
+      console.info(`[ASL Bridge] [${tag}]`, message, extra ?? '');
+    } catch {
+      /* ignore */
+    }
+  } else if (!isBridgeClientDiagnosticsEnabled()) {
+    return;
+  }
+
   void fetch('/api/debug/lti-log', {
     method: 'POST',
     credentials: 'include',

@@ -434,7 +434,7 @@ export default function TimerPage({ context }: TimerPageProps) {
         if (isDeckSubmit && deckTimeline && deckTimeline.length > 0) {
           const withVid = deckTimeline.filter((r) => (r.videoId ?? '').trim().length > 0).length;
           appendBridgeLog(
-            'deck-live-build',
+            'student-deck-live-build',
             'OK: deckTimeline at submit (sent to /submit and upload-video form)',
             {
               outcome: 'success',
@@ -712,7 +712,7 @@ export default function TimerPage({ context }: TimerPageProps) {
           if (livePrompts.length > 0) {
             setLastApiResult('POST /api/prompt/build-deck-prompts', 200, true);
             const preSummary = summaryDeckPromptsForLiveBuildBridge('pre-hydrate', livePrompts);
-            appendBridgeLog('deck-live-build', 'OK: live build — prompts from API before hydrateDeckPromptVideoIds', {
+            appendBridgeLog('student-deck-live-build', 'OK: live build — prompts from API before hydrateDeckPromptVideoIds', {
               outcome: 'success',
               assignmentId: targetAssignmentId ?? '(none)',
               warning: result.warning ?? null,
@@ -720,7 +720,7 @@ export default function TimerPage({ context }: TimerPageProps) {
             });
             const hydrated = await hydrateDeckPromptVideoIds(livePrompts, selectedDecksForHydration);
             const postSummary = summaryDeckPromptsForLiveBuildBridge('post-hydrate', hydrated);
-            appendBridgeLog('deck-live-build', 'OK: live build — prompts after hydrateDeckPromptVideoIds (used for recording + submit)', {
+            appendBridgeLog('student-deck-live-build', 'OK: live build — prompts after hydrateDeckPromptVideoIds (used for recording + submit)', {
               outcome: 'success',
               assignmentId: targetAssignmentId ?? '(none)',
               videoIdsAddedByHydrate: postSummary.withVideoIdCount - preSummary.withVideoIdCount,
@@ -730,7 +730,7 @@ export default function TimerPage({ context }: TimerPageProps) {
             });
             const missingVid = hydrated.filter((p) => !(p.videoId ?? '').trim());
             if (missingVid.length > 0) {
-              appendBridgeLog('deck-live-build', 'ALERT: prompts still missing videoId after hydrate', {
+              appendBridgeLog('student-deck-live-build', 'ALERT: prompts still missing videoId after hydrate', {
                 outcome: 'warn',
                 missingCount: missingVid.length,
                 total: hydrated.length,
@@ -758,7 +758,7 @@ export default function TimerPage({ context }: TimerPageProps) {
           }
           console.error('Failed to build deck prompts:', e);
           appendBridgeLog(
-            'deck-live-build',
+            'student-deck-live-build',
             'ALERT: Live deck build failed — prompts not loaded (no stored-bank / static fallback).',
             {
               outcome: 'fail',

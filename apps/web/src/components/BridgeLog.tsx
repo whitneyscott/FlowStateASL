@@ -133,6 +133,26 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
     } else {
       newLines.push(...pit);
     }
+    newLines.push('');
+    newLines.push('--- Student prompt mode / Timer (tag student-prompt-type) ---');
+    const spt = ltiLog.filter((line) => line.includes('] [student-prompt-type] '));
+    if (spt.length === 0) {
+      newLines.push(
+        '(no student-prompt-type lines yet — open the student prompter/Timer; lines also go to the browser console as [ASL Bridge])',
+      );
+    } else {
+      newLines.push(...spt);
+    }
+    newLines.push('');
+    newLines.push('--- Student deck live build (tag student-deck-live-build) ---');
+    const sdl = ltiLog.filter((line) => line.includes('] [student-deck-live-build] '));
+    if (sdl.length === 0) {
+      newLines.push(
+        '(no student-deck-live-build lines yet — deck mode POST /build-deck-prompts; console: [ASL Bridge])',
+      );
+    } else {
+      newLines.push(...sdl);
+    }
     setLines(newLines);
   }, [ltiLog, debugVersion]);
 
