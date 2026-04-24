@@ -597,6 +597,34 @@ export class PromptService {
   }
 
   /**
+   * Module placement for Prompt Manager is not stored in the assignment description embed.
+   * Resolve the first Canvas module (by position) that contains this assignment as an Assignment module item.
+   */
+  private async resolveLiveModuleIdForAssignment(
+    courseId: string,
+    assignmentId: string,
+    domainOverride: string | undefined,
+    token: string,
+  ): Promise<string> {
+    try {
+      const mid = await this.canvas.findFirstModuleIdContainingAssignment(
+        courseId,
+        assignmentId,
+        domainOverride,
+        token,
+      );
+      return mid ?? '';
+    } catch (e) {
+      appendLtiLog('prompt', 'resolveLiveModuleIdForAssignment: Canvas modules scan failed', {
+        courseId,
+        assignmentId,
+        error: String(e),
+      });
+      return '';
+    }
+  }
+
+  /**
    * Learners often upload with Canvas OAuth; they may be unable to read the Prompt Manager Settings
    * assignment, so `configs[assignmentId]` is missing from the first blob read. Mirror getConfig: fall back
    * to the course-stored teacher token so sign-to-voice still resolves after the teacher enables it.
@@ -1149,6 +1177,15 @@ export class PromptService {
     // Backward compatibility: default promptMode to 'text' if not present
     if (config && !config.promptMode) {
       config = { ...config, promptMode: 'text' };
+    }
+    if (config) {
+      const liveModuleId = await this.resolveLiveModuleIdForAssignment(
+        ctx.courseId,
+        assignmentId,
+        domainOverride,
+        resolvedToken,
+      );
+      config = { ...config, moduleId: liveModuleId };
     }
     if (config?.promptMode === 'decks') {
       const rawTotal = Number(config.videoPromptConfig?.totalCards);
