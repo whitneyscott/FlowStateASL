@@ -534,9 +534,13 @@ export class PromptService {
     if (token) {
       const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
       const resolved = await this.resolveAssignmentIdForContext(ctx, token, domainOverride);
+      const assignmentName = resolved.assignmentId
+        ? await this.canvasAssignmentNameForLog(ctx.courseId, resolved.assignmentId, domainOverride, token)
+        : '(none)';
       appendLtiLog('prompt', 'getPrompterAssignmentId: fallback resolution', {
         source: resolved.source,
         assignmentId: resolved.assignmentId ?? '(none)',
+        assignmentName,
         resourceLinkId: (ctx.resourceLinkId ?? '').trim() || '(none)',
         moduleId: (ctx.moduleId ?? '').trim() || '(none)',
       });
@@ -570,6 +574,23 @@ export class PromptService {
     return { ...parsed.config, instructions: parsed.visibleHtml };
   }
 
+  /** Canvas `name` for Bridge / LTI logs (IDs alone are not human-transparent). */
+  private async canvasAssignmentNameForLog(
+    courseId: string,
+    assignmentId: string,
+    domainOverride: string | undefined,
+    token: string,
+  ): Promise<string> {
+    if (!courseId || !assignmentId) return '(none)';
+    try {
+      const a = await this.canvas.getAssignment(courseId, assignmentId, domainOverride, token);
+      const n = (a?.name ?? '').trim();
+      return n || '(unnamed)';
+    } catch {
+      return '(unavailable)';
+    }
+  }
+
   private async readPromptConfigFromAssignmentDescription(
     courseId: string,
     assignmentId: string,
@@ -577,6 +598,7 @@ export class PromptService {
     token: string,
   ): Promise<PromptConfigJson | null> {
     const raw = await this.canvas.getAssignment(courseId, assignmentId, domainOverride, token);
+    const assignmentName = (raw?.name ?? '').trim() || '(unnamed)';
     const desc = raw?.description;
     if (typeof desc === 'string' && desc.trim()) {
       const parsed = parseAssignmentDescriptionForPromptManager(desc);
@@ -584,6 +606,7 @@ export class PromptService {
         appendLtiLog('student-prompt-type', 'readPromptConfig: non-empty description but no ASL config (check assignment id / Canvas HTML vs editor)', {
           courseId,
           assignmentId,
+          assignmentName,
           descLength: desc.length,
           aslDataMarker: desc.includes('data-asl-express'),
           repairNotes: parsed.repairNotes,
@@ -677,9 +700,16 @@ export class PromptService {
     const blobDeck = this.hasDeckShapedVideoPromptConfig(fromBlob?.videoPromptConfig);
     const merged = this.mergeDescriptionAndBlobPromptConfig(fromDesc, fromBlob);
     if (merged && blobDeck && !descDeck) {
+      const assignmentName = await this.canvasAssignmentNameForLog(
+        courseId,
+        assignmentId,
+        domainOverride,
+        token,
+      );
       appendLtiLog('prompt-decks', 'loadPromptConfig: deck fields taken from course settings blob (description lacked deck shape)', {
         courseId,
         assignmentId,
+        assignmentName,
       });
     }
     return merged;
@@ -1130,9 +1160,16 @@ export class PromptService {
         token,
       );
       if (fromResourceLink.assignmentId) {
+        const assignmentName = await this.canvasAssignmentNameForLog(
+          ctx.courseId,
+          fromResourceLink.assignmentId,
+          domainOverride,
+          token,
+        );
         appendLtiLog('prompt', 'resolveAssignmentIdForContext: resolved from resource link', {
           resourceLinkId,
           assignmentId: fromResourceLink.assignmentId,
+          assignmentName,
           source: fromResourceLink.source ?? '(unknown)',
           matchedField: fromResourceLink.matchedField ?? '(unknown)',
         });
@@ -1178,8 +1215,15 @@ export class PromptService {
             blob = teacherBlob;
             resolved = teacherResolved;
             assignmentId = teacherResolved.assignmentId;
+            const assignmentName = await this.canvasAssignmentNameForLog(
+              ctx.courseId,
+              teacherResolved.assignmentId,
+              domainOverride,
+              teacherTok,
+            );
             appendLtiLog('prompt', 'getConfig: assignment resolution via course-stored token', {
               assignmentId,
+              assignmentName,
               source: teacherResolved.source,
             });
           }
@@ -1200,9 +1244,19 @@ export class PromptService {
         resolvedToken,
       );
     }
+    let assignmentNameForLog = '(none)';
+    if (assignmentId) {
+      assignmentNameForLog = await this.canvasAssignmentNameForLog(
+        ctx.courseId,
+        assignmentId,
+        domainOverride,
+        resolvedToken,
+      );
+    }
     appendLtiLog('prompt', 'getConfig: assignment resolution', {
       source: resolved.source,
       assignmentId: assignmentId || '(none)',
+      assignmentName: assignmentNameForLog,
       assignmentIdFromCtx: (ctx.assignmentId ?? '').trim() || '(none)',
       assignmentIdFromMap: (blob?.resourceLinkAssignmentMap?.[(ctx.resourceLinkId ?? '').trim()] ?? '').trim() || '(none)',
       assignmentIdFromLisResult: this.extractAssignmentIdFromLisResult(ctx) ?? '(none)',
@@ -1256,12 +1310,14 @@ export class PromptService {
           if (config) {
             appendLtiLog('prompt', 'getConfig: assignment config from Prompt Manager via course-stored token', {
               assignmentId,
+              assignmentName: assignmentNameForLog,
               promptMode: config.promptMode ?? '(unset)',
             });
           }
         } catch (e) {
           appendLtiLog('prompt', 'getConfig: course-stored token Prompt Manager read failed (non-fatal)', {
             assignmentId,
+            assignmentName: assignmentNameForLog,
             error: String(e),
           });
         }
@@ -1275,6 +1331,7 @@ export class PromptService {
       config = { ...config, promptMode: inferred };
       appendLtiLog('student-prompt-type', 'getConfig: inferred promptMode (was absent on loaded config)', {
         assignmentId,
+        assignmentName: assignmentNameForLog,
         inferred,
       });
     }
@@ -1331,6 +1388,7 @@ export class PromptService {
         try {
           appendLtiLog('prompt-decks', 'getConfig: generating missing fallback banks for legacy deck config', {
             assignmentId,
+            assignmentName: assignmentNameForLog,
             selectedDeckCount: selectedDecks.length,
             totalCards,
           });
@@ -1373,6 +1431,7 @@ export class PromptService {
             };
             appendLtiLog('prompt-decks', 'getConfig: persisted fallback banks for legacy deck config', {
               assignmentId,
+              assignmentName: assignmentNameForLog,
               bankCount: banks.length,
               staticFallbackCount: staticFallbackPrompts.length,
             });
@@ -1380,6 +1439,7 @@ export class PromptService {
         } catch (err) {
           appendLtiLog('prompt-decks', 'getConfig: failed to backfill fallback banks (non-fatal)', {
             assignmentId,
+            assignmentName: assignmentNameForLog,
             error: String(err),
           });
         }
@@ -1387,6 +1447,7 @@ export class PromptService {
     }
     appendLtiLog('prompt-decks', 'getConfig: deck mode snapshot', {
       assignmentId,
+      assignmentName: assignmentNameForLog,
       promptMode: config?.promptMode ?? '(none)',
       selectedDeckCount: config?.videoPromptConfig?.selectedDecks?.length ?? 0,
       hasStoredBanks: Array.isArray(config?.videoPromptConfig?.storedPromptBanks),
@@ -2442,7 +2503,14 @@ export class PromptService {
       );
     }
     const assignmentId = await this.getPrompterAssignmentId(ctx);
-    appendLtiLog('prompt-submit', 'submit: got assignmentId', { assignmentId });
+    const domainOverrideSubmit = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
+    const submissionAssignmentName = await this.canvasAssignmentNameForLog(
+      ctx.courseId,
+      assignmentId,
+      domainOverrideSubmit,
+      token,
+    );
+    appendLtiLog('prompt-submit', 'submit: got assignmentId', { assignmentId, assignmentName: submissionAssignmentName });
     let sanitizedDeckTimeline = this.sanitizeDeckTimelineInput(deckTimeline);
     sanitizedDeckTimeline = await this.enrichDeckTimelineVideoIds(ctx, sanitizedDeckTimeline);
     const bodyString = buildHumanReadableSubmissionBodyText({
@@ -2451,6 +2519,7 @@ export class PromptService {
     });
     appendLtiLog('prompt-submit', 'submit: human-readable Canvas body', {
       assignmentId,
+      assignmentName: submissionAssignmentName,
       deckRows: sanitizedDeckTimeline?.length ?? 0,
       bodyChars: bodyString.length,
     });
@@ -2459,6 +2528,7 @@ export class PromptService {
 
     appendLtiLog('prompt-submit', 'submit DONE', {
       assignmentId,
+      assignmentName: submissionAssignmentName,
       deckTimelineStored: sanitizedDeckTimeline?.length ?? 0,
     });
   }
