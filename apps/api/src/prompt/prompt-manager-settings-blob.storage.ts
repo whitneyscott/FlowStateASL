@@ -53,6 +53,17 @@ export function extractPromptManagerSettingsBlobFromCanvasContent(raw: string): 
   return null;
 }
 
+/**
+ * Parse PM settings JSON from an already-fetched Canvas assignment (avoids a duplicate getAssignment).
+ */
+export function promptManagerBlobFromAssignmentDescription(
+  assignment: { description?: string } | null | undefined,
+): PromptManagerSettingsBlob | null {
+  if (!assignment) return null;
+  const raw = assignment.description?.trim() ?? '';
+  return extractPromptManagerSettingsBlobFromCanvasContent(raw);
+}
+
 /** Read a Prompt Manager settings blob from any Canvas assignment description (e.g. orphan "Settings" assignment). */
 export async function readPromptManagerSettingsBlobFromCanvasAssignmentDescription(
   canvas: CanvasService,
@@ -62,8 +73,7 @@ export async function readPromptManagerSettingsBlobFromCanvasAssignmentDescripti
   token: string,
 ): Promise<PromptManagerSettingsBlob | null> {
   const assignment = await canvas.getAssignment(courseId, assignmentId, domainOverride, token);
-  const raw = assignment?.description?.trim() ?? '';
-  return extractPromptManagerSettingsBlobFromCanvasContent(raw);
+  return promptManagerBlobFromAssignmentDescription(assignment);
 }
 
 export async function ensurePromptManagerSettingsAssignmentId(

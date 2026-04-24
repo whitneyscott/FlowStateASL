@@ -66,6 +66,7 @@ import {
   readPromptManagerSettingsBlobFromCanvas,
   readPromptManagerSettingsBlobFromCanvasAssignmentDescription,
   readPromptManagerSettingsBlobWithEmbedsResolved,
+  promptManagerBlobFromAssignmentDescription,
   writePromptManagerSettingsBlobToCanvas,
 } from './prompt-manager-settings-blob.storage';
 import {
@@ -198,6 +199,10 @@ function toCanvasIso8601(raw: string | undefined): string | undefined {
 export class PromptService {
   private readonly deckSourceCache = new Map<string, { cards: DeckCardSource[]; expiresAt: number }>();
   private readonly deckSourceInflight = new Map<string, Promise<DeckCardSource[]>>();
+  /** Coalesces `listAssignmentsForPromptImport` across import UI + POST within a short window. */
+  private readonly assignmentImportListCache = new Map<string, { list: CanvasAssignmentBrief[]; expiresAt: number }>();
+  private readonly assignmentImportListInflight = new Map<string, Promise<CanvasAssignmentBrief[]>>();
+  private static readonly ASSIGNMENT_IMPORT_LIST_TTL_MS = 45_000;
 
   constructor(
     @Inject(ASSESSMENT_REPOSITORY) private readonly assessmentRepo: IAssessmentRepository,
@@ -212,6 +217,41 @@ export class PromptService {
     @InjectRepository(SproutPlaylistVideoEntity)
     private readonly sproutPlaylistVideoRepo: Repository<SproutPlaylistVideoEntity>,
   ) {}
+
+  private assignmentImportListCacheKey(courseId: string, token: string): string {
+    return `${courseId}\u0000${token}`;
+  }
+
+  private async listAssignmentsForPromptImportCached(
+    courseId: string,
+    domainOverride: string | undefined,
+    token: string,
+  ): Promise<CanvasAssignmentBrief[]> {
+    const key = this.assignmentImportListCacheKey(courseId, token);
+    const now = Date.now();
+    const cached = this.assignmentImportListCache.get(key);
+    if (cached && cached.expiresAt > now) {
+      return cached.list;
+    }
+    const inflight = this.assignmentImportListInflight.get(key);
+    if (inflight) return inflight;
+    const p = this.canvas
+      .listAssignmentsForPromptImport(courseId, domainOverride, token)
+      .then((list) => {
+        this.assignmentImportListInflight.delete(key);
+        this.assignmentImportListCache.set(key, {
+          list,
+          expiresAt: Date.now() + PromptService.ASSIGNMENT_IMPORT_LIST_TTL_MS,
+        });
+        return list;
+      })
+      .catch((err) => {
+        this.assignmentImportListInflight.delete(key);
+        throw err;
+      });
+    this.assignmentImportListInflight.set(key, p);
+    return p;
+  }
 
   /**
    * SSRF guard for unauthenticated video-proxy: Instructure CDN/hosting + optional school host
@@ -522,6 +562,13 @@ export class PromptService {
     await migrateMonolithicPromptBlobToPerAssignmentEmbeds(this.canvas, courseId, domainOverride, token);
   }
 
+  private promptConfigFromAssignmentDescriptionString(description: string | undefined): PromptConfigJson | null {
+    if (typeof description !== 'string' || !description.trim()) return null;
+    const parsed = parseAssignmentDescriptionForPromptManager(description);
+    if (!parsed.config) return null;
+    return { ...parsed.config, instructions: parsed.visibleHtml };
+  }
+
   private async readPromptConfigFromAssignmentDescription(
     courseId: string,
     assignmentId: string,
@@ -529,11 +576,7 @@ export class PromptService {
     token: string,
   ): Promise<PromptConfigJson | null> {
     const raw = await this.canvas.getAssignment(courseId, assignmentId, domainOverride, token);
-    const d = raw?.description;
-    if (typeof d !== 'string' || !d.trim()) return null;
-    const parsed = parseAssignmentDescriptionForPromptManager(d);
-    if (!parsed.config) return null;
-    return { ...parsed.config, instructions: parsed.visibleHtml };
+    return this.promptConfigFromAssignmentDescriptionString(raw?.description);
   }
 
   private async loadPromptConfigForAssignment(
@@ -4132,7 +4175,7 @@ export class PromptService {
     let assignmentNamesById: Map<string, string> | null = null;
     let fullCourseList: CanvasAssignmentBrief[] = [];
     try {
-      fullCourseList = await this.canvas.listAssignmentsForPromptImport(ctx.courseId, domainOverride, token);
+      fullCourseList = await this.listAssignmentsForPromptImportCached(ctx.courseId, domainOverride, token);
       if (fullCourseList.length > 0) {
         assignmentNamesById = new Map(
           fullCourseList.map((a) => [String(a.id).trim(), String(a.name ?? '').trim()]),
@@ -4147,31 +4190,43 @@ export class PromptService {
         error: String(err),
       });
     }
-    for (const aid of assignmentIds) {
-      let assignmentExists = false;
-      let assignmentNameFromCanvas: string | undefined;
-      if (assignmentNamesById) {
-        assignmentNameFromCanvas = assignmentNamesById.get(aid);
-        assignmentExists = assignmentNameFromCanvas != null;
-      } else {
-        const assign = await this.canvas.getAssignment(ctx.courseId, aid, domainOverride, token);
-        assignmentExists = !!assign;
-        assignmentNameFromCanvas = assign?.name;
-      }
-      if (!assignmentExists) continue;
-      let list: Array<{ user_id?: number; attachment?: { url?: string; download_url?: string }; attachments?: Array<{ url?: string; download_url?: string }>; versioned_attachments?: Array<Array<{ url?: string; download_url?: string }>>; workflow_state?: string }> = [];
-      try {
-        list = await this.canvas.listSubmissions(ctx.courseId, aid, domainOverride, token);
-      } catch {
-        /* assignment exists but submissions may fail; use empty list */
-      }
-      const name = assignmentNameFromCanvas ?? configs[aid]?.assignmentName ?? `Assignment ${aid}`;
-      const withFiles = list.filter(
-        (s) => submissionHasFile(s) || !!this.deepLinkFileStore.getSubmissionToken(ctx.courseId, aid, String(s.user_id ?? ''))
-      );
-      const submissionCount = withFiles.length;
-      const ungradedCount = withFiles.filter((s) => s.workflow_state !== 'graded').length;
-      result.push({ id: aid, name, submissionCount, ungradedCount });
+    type SubRow = {
+      user_id?: number;
+      attachment?: { url?: string; download_url?: string };
+      attachments?: Array<{ url?: string; download_url?: string }>;
+      versioned_attachments?: Array<Array<{ url?: string; download_url?: string }>>;
+      workflow_state?: string;
+    };
+    const configuredRows = await Promise.all(
+      assignmentIds.map(async (aid) => {
+        let assignmentExists = false;
+        let assignmentNameFromCanvas: string | undefined;
+        if (assignmentNamesById) {
+          assignmentNameFromCanvas = assignmentNamesById.get(aid);
+          assignmentExists = assignmentNameFromCanvas != null;
+        } else {
+          const assign = await this.canvas.getAssignment(ctx.courseId, aid, domainOverride, token);
+          assignmentExists = !!assign;
+          assignmentNameFromCanvas = assign?.name;
+        }
+        if (!assignmentExists) return null;
+        let list: SubRow[] = [];
+        try {
+          list = await this.canvas.listSubmissions(ctx.courseId, aid, domainOverride, token);
+        } catch {
+          /* assignment exists but submissions may fail; use empty list */
+        }
+        const name = assignmentNameFromCanvas ?? configs[aid]?.assignmentName ?? `Assignment ${aid}`;
+        const withFiles = list.filter(
+          (s) => submissionHasFile(s) || !!this.deepLinkFileStore.getSubmissionToken(ctx.courseId, aid, String(s.user_id ?? '')),
+        );
+        const submissionCount = withFiles.length;
+        const ungradedCount = withFiles.filter((s) => s.workflow_state !== 'graded').length;
+        return { id: aid, name, submissionCount, ungradedCount };
+      }),
+    );
+    for (const row of configuredRows) {
+      if (row) result.push(row);
     }
     result.sort((a, b) => a.name.localeCompare(b.name));
     appendLtiLog('viewer', 'getConfiguredAssignments', {
@@ -4786,11 +4841,11 @@ export class PromptService {
       throw new BadRequestException('Nothing to import after skip list');
     }
 
-    const targetList = await this.canvas.listAssignmentsForPromptImport(ctx.courseId, domainOverride, token);
+    const targetList = await this.listAssignmentsForPromptImportCached(ctx.courseId, domainOverride, token);
     const targetIds = new Set(targetList.map((a) => a.id));
     let sourceList: CanvasAssignmentBrief[] | null = null;
     if (sourceCourseTrim) {
-      sourceList = await this.canvas.listAssignmentsForPromptImport(sourceCourseTrim, domainOverride, token);
+      sourceList = await this.listAssignmentsForPromptImportCached(sourceCourseTrim, domainOverride, token);
     } else if (sourceAssignmentTrim) {
       sourceList = targetList;
     }
@@ -5088,7 +5143,7 @@ export class PromptService {
       throw new ForbiddenException('Canvas OAuth token required');
     }
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
-    const all = await this.canvas.listAssignmentsForPromptImport(ctx.courseId, domainOverride, token);
+    const all = await this.listAssignmentsForPromptImportCached(ctx.courseId, domainOverride, token);
     return buildCanvasImportListsFromAssignments(all);
   }
 
@@ -5115,15 +5170,10 @@ export class PromptService {
       throw new ForbiddenException('Canvas OAuth token required');
     }
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
-    const blob = await readPromptManagerSettingsBlobFromCanvasAssignmentDescription(
-      this.canvas,
-      ctx.courseId,
-      sourceId,
-      domainOverride,
-      token,
-    );
+    const { assignment: sourceAssignRow } = await this.getAssignmentForImportHydration(ctx, sourceId, domainOverride, token);
+    const blob = promptManagerBlobFromAssignmentDescription(sourceAssignRow);
     const keys = new Set(Object.keys(blob?.configs ?? {}));
-    const all = await this.canvas.listAssignmentsForPromptImport(ctx.courseId, domainOverride, token);
+    const all = await this.listAssignmentsForPromptImportCached(ctx.courseId, domainOverride, token);
     const byName = (a: CanvasAssignmentBrief, b: CanvasAssignmentBrief) => a.name.localeCompare(b.name);
     const tid = (targetAssignmentId ?? '').trim();
     const targetCanvasModuleId = tid
@@ -5173,20 +5223,15 @@ export class PromptService {
     }
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
     await this.ensureMigrated(ctx.courseId, domainOverride, token);
-    const rawSource = await readPromptManagerSettingsBlobFromCanvasAssignmentDescription(
-      this.canvas,
-      ctx.courseId,
-      sourceAid,
-      domainOverride,
-      token,
-    );
-    const { blob: sourceBlob } = repairPromptManagerSettingsBlobFromUnknown(rawSource ?? {});
+    const assignmentImportList = await this.listAssignmentsForPromptImportCached(ctx.courseId, domainOverride, token);
+    const { assignment: sourceFetchedRaw, tokenSource: sourceAssignTokenSource } =
+      await this.getAssignmentForImportHydration(ctx, sourceAid, domainOverride, token);
+    if (!sourceFetchedRaw) {
+      throw new BadRequestException('Could not resolve source assignment fields for import');
+    }
+    const rawSourcePm = promptManagerBlobFromAssignmentDescription(sourceFetchedRaw);
+    const { blob: sourceBlob } = repairPromptManagerSettingsBlobFromUnknown(rawSourcePm ?? {});
     const sourceConfigs = sourceBlob.configs ?? {};
-    const assignmentImportList = await this.canvas.listAssignmentsForPromptImport(
-      ctx.courseId,
-      domainOverride,
-      token,
-    );
     const sourceListRow = assignmentImportList.find((a) => a.id === sourceAid);
     if (!sourceListRow) {
       throw new BadRequestException('Source assignment not found in this course');
@@ -5195,21 +5240,16 @@ export class PromptService {
     if (!targetListRow) {
       throw new BadRequestException('Target assignment not found in this course');
     }
-    const sourceRow: CanvasAssignmentBrief = sourceListRow;
     const targetRow: CanvasAssignmentBrief = targetListRow;
-    const { assignment: sourceFetched, tokenSource: sourceAssignTokenSource } =
-      await this.getAssignmentForImportHydration(ctx, sourceAid, domainOverride, token);
-    const sourceAssign = this.mergeCourseAssignmentListRowWithFetchedAssignment(sourceListRow, sourceFetched);
+    const sourceAssign = this.mergeCourseAssignmentListRowWithFetchedAssignment(sourceListRow, sourceFetchedRaw);
     if (!sourceAssign) {
       throw new BadRequestException('Could not resolve source assignment fields for import');
     }
     const targetBlob = await readPromptManagerSettingsBlobFromCanvas(this.canvas, ctx.courseId, domainOverride, token);
-    const priorFromDescription = await this.readPromptConfigFromAssignmentDescription(
-      ctx.courseId,
-      targetAid,
-      domainOverride,
-      token,
-    );
+    const priorFromDescription =
+      targetAid === sourceAid
+        ? this.promptConfigFromAssignmentDescriptionString(sourceFetchedRaw.description)
+        : await this.readPromptConfigFromAssignmentDescription(ctx.courseId, targetAid, domainOverride, token);
     const priorInBlob = targetBlob?.configs?.[targetAid];
     const priorTarget = priorInBlob ?? priorFromDescription;
     const priorExists =
@@ -5233,13 +5273,11 @@ export class PromptService {
     };
     const strategy = resolveStrategy();
 
-    const detectedCanvasModuleId = await this.canvas.findFirstModuleIdContainingAssignment(
-      ctx.courseId,
-      targetAid,
-      domainOverride,
-      token,
-    );
     const manualModuleId = (dto.moduleId ?? '').trim();
+    const skipModuleMembershipProbe = dto.dryRun !== true && manualModuleId.length > 0;
+    const detectedCanvasModuleId = skipModuleMembershipProbe
+      ? null
+      : await this.canvas.findFirstModuleIdContainingAssignment(ctx.courseId, targetAid, domainOverride, token);
 
     if (dto.dryRun) {
       return {
@@ -5305,16 +5343,20 @@ export class PromptService {
     if (strategy === 'from_source') {
       // Legacy/source-blob path: still hydrate from target assignment so target-side Canvas metadata wins.
       try {
-        const { assignment: targetAssign, tokenSource } = await this.getAssignmentForImportHydration(
-          ctx,
-          targetAid,
-          domainOverride,
-          token,
-        );
-        if (!targetAssign) {
-          throw new BadRequestException(
-            'Could not read the target assignment from Canvas, so assignment description could not be imported into Instructions. Re-authorize Canvas token and retry.',
-          );
+        let targetAssign: NonNullable<Awaited<ReturnType<CanvasService['getAssignment']>>>;
+        let tokenSource: 'effective' | 'course_stored' | 'none';
+        if (targetAid === sourceAid) {
+          targetAssign = sourceFetchedRaw;
+          tokenSource = sourceAssignTokenSource;
+        } else {
+          const h = await this.getAssignmentForImportHydration(ctx, targetAid, domainOverride, token);
+          if (!h.assignment) {
+            throw new BadRequestException(
+              'Could not read the target assignment from Canvas, so assignment description could not be imported into Instructions. Re-authorize Canvas token and retry.',
+            );
+          }
+          targetAssign = h.assignment;
+          tokenSource = h.tokenSource;
         }
         merged = this.applyCanvasAssignmentImportHydration(merged, targetAssign);
         appendLtiLog('prompt-import', 'importSinglePromptAssignmentFromSourceAssignment: instructions hydrated from assignment description', {
@@ -5417,7 +5459,7 @@ export class PromptService {
     }
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
     await this.ensureMigrated(ctx.courseId, domainOverride, token);
-    const list = await this.canvas.listAssignmentsForPromptImport(ctx.courseId, domainOverride, token);
+    const list = await this.listAssignmentsForPromptImportCached(ctx.courseId, domainOverride, token);
     const matches = scanTrueWayAssignments(list);
     if (matches.length === 0) {
       return { updated: 0, matches: [] };

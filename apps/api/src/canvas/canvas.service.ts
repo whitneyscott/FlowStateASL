@@ -1517,10 +1517,15 @@ export class CanvasService {
     if (Number.isNaN(aid)) return null;
     const modules = await this.listModules(courseId, domainOverride, tokenOverride);
     const sorted = [...modules].sort((a, b) => a.position - b.position);
-    for (const m of sorted) {
-      const items = await this.listModuleItems(courseId, String(m.id), domainOverride, tokenOverride);
+    const itemsByModule = await Promise.all(
+      sorted.map(async (m) => ({
+        moduleId: String(m.id),
+        items: await this.listModuleItems(courseId, String(m.id), domainOverride, tokenOverride),
+      })),
+    );
+    for (const { moduleId, items } of itemsByModule) {
       const hit = items.some((i) => i.type === 'Assignment' && i.content_id === aid);
-      if (hit) return String(m.id);
+      if (hit) return moduleId;
     }
     return null;
   }
