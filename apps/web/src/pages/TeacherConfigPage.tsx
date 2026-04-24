@@ -1040,13 +1040,17 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       setImportModalMessage('Select a source assignment to import.');
       return;
     }
+    if (!mid) {
+      setImportModalMessage('Select a Canvas module. The Prompter tool is added above the assignment in that module (same as saving a new assignment).');
+      return;
+    }
     setImportModalBusy(true);
     setImportModalMessage(null);
     try {
       await promptApi.importSinglePromptAssignment({
         sourceAssignmentId: sid,
         targetAssignmentId: sid,
-        ...(mid ? { moduleId: mid } : {}),
+        moduleId: mid,
         dryRun: false,
       });
       await loadAssignments();
@@ -1941,14 +1945,14 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                 </option>
               ))}
             </select>
-            <label className="prompter-settings-label">Module (optional override)</label>
+            <label className="prompter-settings-label">Module (required)</label>
             <select
               className="prompter-settings-input"
               value={importModuleId}
               onChange={(e) => setImportModuleId(e.target.value)}
               disabled={importModalBusy}
             >
-              <option value="">— Auto-detect module from Canvas (or select one) —</option>
+              <option value="">— Select module —</option>
               {modules.map((m) => (
                 <option key={m.id} value={String(m.id)}>
                   {m.name}
@@ -1962,7 +1966,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
               <button
                 type="button"
                 className="prompter-btn-ready"
-                disabled={importModalBusy || !importSourceAssignmentId.trim()}
+                disabled={importModalBusy || !importSourceAssignmentId.trim() || !importModuleId.trim()}
                 onClick={() => void handleImportModalSingleMerge()}
               >
                 {importModalBusy ? (

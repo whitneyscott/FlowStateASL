@@ -725,6 +725,8 @@ export async function importSinglePromptAssignment(body: {
 
 export async function importPromptManagerSettingsBlob(body: {
   mode: 'merge' | 'replace_selected';
+  /** Required when not dry-run: Canvas module id for assignment + Prompter LTI placement. */
+  targetModuleId?: string;
   blob?: Record<string, unknown>;
   sourceCourseId?: string;
   sourceAssignmentId?: string;

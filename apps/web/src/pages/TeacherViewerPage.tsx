@@ -561,6 +561,20 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   const current = gradingMode ? submissions[index] : mySubmission;
   const noSubmissionsInGradingMode = gradingMode && submissions.length === 0;
 
+  const promptUsedResolved = useMemo(
+    () => getPromptFromComments(current?.body, current?.submissionComments, current?.promptHtml),
+    [current?.body, current?.submissionComments, current?.promptHtml],
+  );
+
+  useEffect(() => {
+    if (!current?.userId) return;
+    appendViewerBridgeLog('grading-display:sidebar_prompt_resolved', {
+      userId: current.userId,
+      resolvedChars: promptUsedResolved.length,
+      isNoPromptRecorded: promptUsedResolved === 'No prompt recorded.',
+    });
+  }, [current?.userId, promptUsedResolved]);
+
   useEffect(() => {
     if (!gradingMode || submissions.length === 0) {
       setGradingPrefetchByUserId(new Map());
@@ -606,6 +620,56 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   useEffect(() => {
     setCaptionHelpOpen(false);
   }, [current?.userId, assignmentId]);
+
+  /** Trace: server-resolved prompt vs what the sidebar will render after `getPromptFromComments`. */
+  useEffect(() => {
+    if (!gradingMode || !current?.userId) return;
+    appendViewerBridgeLog('grading-display:submission_row', {
+      userId: current.userId,
+      hasVideoUrl: !!current.videoUrl,
+      promptHtmlFromApiChars: (current.promptHtml ?? '').length,
+      hasMediaStimulus: !!current.mediaStimulus,
+      deckTimelineLen: current.deckTimeline?.length ?? 0,
+      videoDurationSeconds: current.videoDurationSeconds ?? null,
+      durationSource: current.durationSource ?? null,
+    });
+  }, [
+    gradingMode,
+    current?.userId,
+    current?.videoUrl,
+    current?.promptHtml,
+    current?.mediaStimulus,
+    current?.deckTimeline,
+    current?.videoDurationSeconds,
+    current?.durationSource,
+  ]);
+
+  useEffect(() => {
+    if (!gradingMode || !current?.videoUrl || !current.userId) return;
+    const el = videoRef.current;
+    if (!el) return;
+    const onLoadedMeta = () => {
+      appendViewerBridgeLog('grading-video:loadedmetadata', {
+        userId: current.userId,
+        mediaSeconds: Number.isFinite(el.duration) ? el.duration : null,
+        videoReadyState: el.readyState,
+        srcPrefix: (el.currentSrc || el.src || '').slice(0, 120),
+      });
+    };
+    const onError = () => {
+      appendViewerBridgeLog('grading-video:element_error', {
+        userId: current.userId,
+        errorCode: el.error?.code ?? null,
+        message: el.error?.message ?? '',
+      });
+    };
+    el.addEventListener('loadedmetadata', onLoadedMeta);
+    el.addEventListener('error', onError);
+    return () => {
+      el.removeEventListener('loadedmetadata', onLoadedMeta);
+      el.removeEventListener('error', onError);
+    };
+  }, [gradingMode, current?.userId, current?.videoUrl, index]);
 
   useEffect(() => {
     setMachineCleanupConfirmed(false);
@@ -747,6 +811,18 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
         hasSproutAccountId: !!(assign?.sproutAccountId?.trim() ?? ''),
         rubricRows: Array.isArray(assign?.rubric) ? assign.rubric.length : 0,
       });
+      if (subsList.length > 0) {
+        appendViewerBridgeLog('loadTeacher:api_prompt_fields', {
+          assignmentId,
+          rows: subsList.slice(0, 24).map((s) => ({
+            userId: s.userId,
+            hasVideoUrl: !!s.videoUrl,
+            promptHtmlChars: (s.promptHtml ?? '').length,
+            hasMediaStimulus: !!s.mediaStimulus,
+            deckTimelineLen: Array.isArray(s.deckTimeline) ? s.deckTimeline.length : 0,
+          })),
+        });
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Load failed');
       setLastApiError('GET /api/prompt/submissions', 0, String(e));
@@ -1667,7 +1743,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     );
   }
 
-  const promptUsed = getPromptFromComments(current?.body, current?.submissionComments, current?.promptHtml);
+  const promptUsed = promptUsedResolved;
   const hasSubmissionNoVideo = current && !current.videoUrl;
 
   return (

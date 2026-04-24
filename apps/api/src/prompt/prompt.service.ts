@@ -2693,6 +2693,15 @@ export class PromptService {
     mediaStimulusResolutionSource: 'webm_metadata' | 'submission_body' | 'submission_comments' | 'none';
     deckTimeline?: Array<{ title: string; startSec: number; videoId?: string }>;
   }> {
+    const traceId = randomUUID();
+    appendLtiLog('webm-prompt-trace', 'resolve:start', {
+      traceId,
+      assignmentId: args.assignmentId,
+      userId: args.userId,
+      hasCanvasVideoUrl: !!(args.canvasVideoUrl ?? '').trim(),
+      bodyChars: (args.body ?? '').length,
+      submissionCommentCount: args.submissionComments?.length ?? 0,
+    });
     const merged = this.mergeBodyCommentAssignmentFallback(
       args.body,
       args.submissionComments,
@@ -2728,16 +2737,19 @@ export class PromptService {
 
     const url = (args.canvasVideoUrl ?? '').trim();
     if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      appendLtiLog('webm-prompt-trace', 'resolve:no_http_video_url', { traceId, userId: args.userId });
       appendLtiLog('webm-prompt', 'read: FAIL (no_canvas_http_video_url)', {
         userId: args.userId,
         assignmentId: args.assignmentId,
+        traceId,
       });
-      appendLtiLog('webm-prompt', 'PROMPT_SOURCE: assignment_fallback', { userId: args.userId });
+      appendLtiLog('webm-prompt', 'PROMPT_SOURCE: assignment_fallback', { userId: args.userId, traceId });
       return fallback();
     }
     if (url.includes('external_tools/retrieve')) {
-      appendLtiLog('webm-prompt', 'read: FAIL (lti_retrieve_url)', { userId: args.userId });
-      appendLtiLog('webm-prompt', 'PROMPT_SOURCE: assignment_fallback', { userId: args.userId });
+      appendLtiLog('webm-prompt-trace', 'resolve:lti_retrieve_url', { traceId, userId: args.userId });
+      appendLtiLog('webm-prompt', 'read: FAIL (lti_retrieve_url)', { userId: args.userId, traceId });
+      appendLtiLog('webm-prompt', 'PROMPT_SOURCE: assignment_fallback', { userId: args.userId, traceId });
       return fallback();
     }
 
@@ -2751,6 +2763,7 @@ export class PromptService {
       userId: args.userId,
       assignmentId: args.assignmentId,
       urlHost,
+      traceId,
     });
 
     const dl = await downloadAuthenticatedVideoToTempFile(
@@ -2759,18 +2772,21 @@ export class PromptService {
       DEFAULT_WEBM_PROBE_DOWNLOAD_MAX_BYTES,
     );
     if (!dl.ok) {
+      appendLtiLog('webm-prompt-trace', 'resolve:download_fail', { traceId, error: dl.error });
       appendLtiLog('webm-prompt', 'read: FAIL (download)', {
         userId: args.userId,
         error: dl.error,
+        traceId,
       });
-      appendLtiLog('webm-prompt', 'PROMPT_SOURCE: assignment_fallback', { userId: args.userId });
+      appendLtiLog('webm-prompt', 'PROMPT_SOURCE: assignment_fallback', { userId: args.userId, traceId });
       return fallback();
     }
     try {
       const probe = await ffprobeWebmPromptDataJson(dl.path);
       if (!probe) {
-        appendLtiLog('webm-prompt', 'read: FAIL (ffprobe)', { userId: args.userId });
-        appendLtiLog('webm-prompt', 'PROMPT_SOURCE: assignment_fallback', { userId: args.userId });
+        appendLtiLog('webm-prompt-trace', 'resolve:ffprobe_null', { traceId });
+        appendLtiLog('webm-prompt', 'read: FAIL (ffprobe)', { userId: args.userId, traceId });
+        appendLtiLog('webm-prompt', 'PROMPT_SOURCE: assignment_fallback', { userId: args.userId, traceId });
         return fallback();
       }
 
@@ -2805,25 +2821,33 @@ export class PromptService {
 
       const tagRaw = probe.promptDataTag;
       if (!tagRaw) {
-        appendLtiLog('webm-prompt', 'read: FAIL (missing_PROMPT_DATA_tag)', { userId: args.userId });
-        appendLtiLog('webm-prompt', 'PROMPT_SOURCE: assignment_fallback', { userId: args.userId });
+        appendLtiLog('webm-prompt-trace', 'resolve:missing_PROMPT_DATA_tag', { traceId });
+        appendLtiLog('webm-prompt', 'read: FAIL (missing_PROMPT_DATA_tag)', { userId: args.userId, traceId });
+        appendLtiLog('webm-prompt', 'PROMPT_SOURCE: assignment_fallback', { userId: args.userId, traceId });
         return fallback(captionsVtt);
       }
       const decoded = decodePromptDataFromFfmpegMetadataTag(tagRaw, PromptService.PROMPT_DATA_DECODE_MAX_UTF8);
       if (!decoded.ok) {
+        appendLtiLog('webm-prompt-trace', 'resolve:parse_PROMPT_DATA_fail', { traceId, error: decoded.error });
         appendLtiLog('webm-prompt', 'read: FAIL (parse_PROMPT_DATA)', {
           userId: args.userId,
           error: decoded.error,
+          traceId,
         });
-        appendLtiLog('webm-prompt', 'PROMPT_SOURCE: assignment_fallback', { userId: args.userId });
+        appendLtiLog('webm-prompt', 'PROMPT_SOURCE: assignment_fallback', { userId: args.userId, traceId });
         return fallback(captionsVtt);
       }
       if (String(decoded.obj.fsaslKind ?? '') !== FSASL_PROMPT_UPLOAD_KIND) {
+        appendLtiLog('webm-prompt-trace', 'resolve:unexpected_fsaslKind', {
+          traceId,
+          kind: String(decoded.obj.fsaslKind ?? ''),
+        });
         appendLtiLog('webm-prompt', 'read: FAIL (unexpected_fsaslKind)', {
           userId: args.userId,
           kind: String(decoded.obj.fsaslKind ?? ''),
+          traceId,
         });
-        appendLtiLog('webm-prompt', 'PROMPT_SOURCE: assignment_fallback', { userId: args.userId });
+        appendLtiLog('webm-prompt', 'PROMPT_SOURCE: assignment_fallback', { userId: args.userId, traceId });
         return fallback(captionsVtt);
       }
       const tagDeck = this.sanitizeDeckTimelineInput(
@@ -2839,9 +2863,25 @@ export class PromptService {
       const tagPromptHtml = (displayPrompt ?? fromTag.promptHtml ?? '').trim() || undefined;
       const hasPromptHtml = !!tagPromptHtml;
       const hasDuration = fromTag.videoDurationSeconds != null;
-      if (!hasPromptHtml && !hasDuration) {
-        appendLtiLog('webm-prompt', 'read: FAIL (empty_prompt_fields)', { userId: args.userId });
-        appendLtiLog('webm-prompt', 'PROMPT_SOURCE: assignment_fallback', { userId: args.userId });
+      const tagMsRaw = (decoded.obj as { mediaStimulus?: unknown }).mediaStimulus;
+      const tagMs = this.sanitizeMediaStimulusInput(tagMsRaw);
+      if (tagMsRaw != null && typeof tagMsRaw === 'object' && !tagMs) {
+        appendLtiLog('webm-prompt-trace', 'resolve:PROMPT_DATA_mediaStimulus_rejected', {
+          traceId,
+          userId: args.userId,
+          keys: Object.keys(tagMsRaw as Record<string, unknown>).slice(0, 20).join(','),
+        });
+      }
+      const hasTagMs = !!tagMs;
+      const hasDeckInTag = !!(tagDeck?.length);
+      if (!hasPromptHtml && !hasDuration && !hasTagMs && !hasDeckInTag) {
+        appendLtiLog('webm-prompt-trace', 'resolve:FAIL_empty_tag_fields', {
+          traceId,
+          userId: args.userId,
+          assignmentId: args.assignmentId,
+        });
+        appendLtiLog('webm-prompt', 'read: FAIL (empty_prompt_fields)', { userId: args.userId, traceId });
+        appendLtiLog('webm-prompt', 'PROMPT_SOURCE: assignment_fallback', { userId: args.userId, traceId });
         return fallback(captionsVtt);
       }
 
@@ -2849,12 +2889,19 @@ export class PromptService {
         userId: args.userId,
         assignmentId: args.assignmentId,
         promptDataUtf8Bytes: decoded.utf8ByteLength,
+        traceId,
       });
 
-      appendLtiLog('webm-prompt', 'PROMPT_SOURCE: webm_metadata', { userId: args.userId });
+      appendLtiLog('webm-prompt', 'PROMPT_SOURCE: webm_metadata', { userId: args.userId, traceId });
+      appendLtiLog('webm-prompt-trace', 'resolve:webm_metadata_ok', {
+        traceId,
+        hasPromptHtml,
+        hasDuration,
+        hasTagMs,
+        hasDeckInTag,
+        deckTimelineOut: deckTimeline?.length ?? 0,
+      });
 
-      const tagMs = this.sanitizeMediaStimulusInput((decoded.obj as { mediaStimulus?: unknown }).mediaStimulus);
-      const hasTagMs = !!tagMs;
       const mediaStimulus = hasTagMs ? tagMs : mergedMs.mediaStimulus;
       const mediaStimulusResolutionSource: 'webm_metadata' | 'submission_body' | 'submission_comments' | 'none' =
         hasTagMs ? 'webm_metadata' : mergedMs.mediaStimulusSource;
@@ -4648,6 +4695,7 @@ export class PromptService {
         removedSourceSettingsAssignment?: boolean;
         removeSourceAssignmentError?: string;
         submissionTypeUpdateFailures?: Array<{ assignmentId: string; error: string }>;
+        ltiPlacementFailures?: Array<{ assignmentId: string; error: string }>;
       }
   > {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
@@ -4789,13 +4837,23 @@ export class PromptService {
       );
     }
 
+    const targetModuleTrim = (dto.targetModuleId ?? '').trim();
+    if (!targetModuleTrim) {
+      throw new BadRequestException(
+        'targetModuleId is required when applying an import. Choose the Canvas module where each imported assignment and the Prompter tool placement should appear.',
+      );
+    }
+
     const remappedConfigs: Record<string, PromptConfigJson> = {};
     for (const oldId of sourceKeys) {
       const nid = map[oldId];
       if (!nid) continue;
       const base = sourceConfigs[oldId];
       if (!base) continue;
-      remappedConfigs[nid] = this.clearCrossCoursePromptFields({ ...base });
+      remappedConfigs[nid] = {
+        ...this.clearCrossCoursePromptFields({ ...base }),
+        moduleId: targetModuleTrim,
+      };
     }
 
     const targetBlob = await readPromptManagerSettingsBlobFromCanvas(this.canvas, ctx.courseId, domainOverride, token);
@@ -4928,6 +4986,30 @@ export class PromptService {
       }
     }
 
+    const ltiPlacementFailures: Array<{ assignmentId: string; error: string }> = [];
+    for (const aid of importedAssignmentIds) {
+      const c = mergedConfigs[aid];
+      const displayName = (c?.assignmentName ?? '').trim() || targetList.find((a) => a.id === aid)?.name || aid;
+      try {
+        await this.ensurePrompterLtiAboveAssignmentInModule(ctx, {
+          courseId: ctx.courseId,
+          assignmentId: aid,
+          moduleId: targetModuleTrim,
+          assignmentDisplayName: displayName,
+          domainOverride,
+          token,
+        });
+      } catch (e) {
+        const err = e instanceof Error ? e.message : String(e);
+        ltiPlacementFailures.push({ assignmentId: aid, error: err });
+        appendLtiLog('prompt-import', 'importPromptManagerSettingsBlob: Prompter module placement failed', {
+          assignmentId: aid,
+          moduleId: targetModuleTrim,
+          error: err,
+        });
+      }
+    }
+
     let removedSourceSettingsAssignment = false;
     let removeSourceAssignmentError: string | undefined;
     if (sourceAssignmentTrim) {
@@ -4960,6 +5042,8 @@ export class PromptService {
       sourceCourseId: sourceCourseTrim || null,
       sourceAssignmentId: sourceAssignmentTrim || null,
       importedKeys: Object.keys(remappedConfigs).length,
+      targetModuleId: targetModuleTrim,
+      ltiPlacementFailureCount: ltiPlacementFailures.length,
       removedSourceSettingsAssignment,
     });
 
@@ -4969,6 +5053,7 @@ export class PromptService {
       staleAssignmentIds,
       ...(instructionHydrationFailures.length > 0 ? { instructionHydrationFailures } : {}),
       ...(submissionTypeUpdateFailures.length > 0 ? { submissionTypeUpdateFailures } : {}),
+      ...(ltiPlacementFailures.length > 0 ? { ltiPlacementFailures } : {}),
       ...(sourceAssignmentTrim
         ? { removedSourceSettingsAssignment, ...(removeSourceAssignmentError ? { removeSourceAssignmentError } : {}) }
         : {}),
@@ -5155,7 +5240,6 @@ export class PromptService {
       token,
     );
     const manualModuleId = (dto.moduleId ?? '').trim();
-    const effectiveModuleId = manualModuleId || detectedCanvasModuleId || '';
 
     if (dto.dryRun) {
       return {
@@ -5163,17 +5247,17 @@ export class PromptService {
         sourceKey: sourceKey ?? null,
         targetAssignmentId: targetAid,
         assignmentName: targetListRow.name,
-        requiresModuleId: !effectiveModuleId,
+        requiresModuleId: !manualModuleId,
         detectedCanvasModuleId,
         strategy,
       };
     }
-    const moduleIdTrim = effectiveModuleId;
-    if (!moduleIdTrim) {
+    if (!manualModuleId) {
       throw new BadRequestException(
-        'This assignment is not in any Canvas module. Choose a module so the Prompter tool can be added above the assignment.',
+        'moduleId is required. Select the Canvas module where this assignment should appear and where the Prompter tool will be placed above it.',
       );
     }
+    const moduleIdTrim = manualModuleId;
     let merged: PromptConfigJson;
     if (sourceKey && base) {
       merged = this.clearCrossCoursePromptFields({ ...base });

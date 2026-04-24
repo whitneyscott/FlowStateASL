@@ -6,8 +6,8 @@ export interface ImportSinglePromptAssignmentDto {
   /** Defaults to sourceAssignmentId when omitted. */
   targetAssignmentId?: string;
   /**
-   * Optional override. When omitted, the API uses the Canvas module that already contains this assignment
-   * (first match in module order); if none, apply fails until the teacher picks a module.
+   * Required when applying (`dryRun` false). Canvas module where the assignment is placed and the
+   * Prompter tool is added above it (mirrors Prompt Manager save). Dry-run may omit this to preview only.
    */
   moduleId?: string;
   dryRun?: boolean;
