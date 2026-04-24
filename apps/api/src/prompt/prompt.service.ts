@@ -1026,9 +1026,8 @@ export class PromptService {
       blobOverride !== undefined
         ? blobOverride
         : await this.readPromptManagerSettingsBlob(ctx.courseId, domainOverride, token);
-    const fromBlob = this.resolveAssignmentIdFromBlob(ctx, blob);
-    if (fromBlob.assignmentId) return fromBlob;
     const resourceLinkId = (ctx.resourceLinkId ?? '').trim();
+    const fromBlob = this.resolveAssignmentIdFromBlob(ctx, blob);
     if (resourceLinkId) {
       const fromResourceLink = await this.canvas.resolveAssignmentIdForResourceLink(
         ctx.courseId,
@@ -1037,6 +1036,16 @@ export class PromptService {
         token,
       );
       if (fromResourceLink.assignmentId) {
+        if (fromBlob.assignmentId && fromBlob.assignmentId !== fromResourceLink.assignmentId) {
+          appendLtiLog('student-prompt-type', 'resolveAssignmentIdForContext: blob/map vs resource_link mismatch; preferring live Canvas mapping', {
+            resourceLinkId,
+            fromBlobAssignmentId: fromBlob.assignmentId,
+            fromBlobSource: fromBlob.source,
+            fromResourceLinkAssignmentId: fromResourceLink.assignmentId,
+            fromResourceLinkSource: fromResourceLink.source ?? '(unknown)',
+            matchedField: fromResourceLink.matchedField ?? '(unknown)',
+          });
+        }
         appendLtiLog('prompt', 'resolveAssignmentIdForContext: resolved from resource link', {
           resourceLinkId,
           assignmentId: fromResourceLink.assignmentId,
@@ -1046,6 +1055,7 @@ export class PromptService {
         return { assignmentId: fromResourceLink.assignmentId, source: 'resource_link_api' };
       }
     }
+    if (fromBlob.assignmentId) return fromBlob;
     const fromModuleItems = await this.resolveAssignmentIdFromModuleItems(ctx, token, domainOverride);
     if (fromModuleItems) return { assignmentId: fromModuleItems, source: 'module_item_url' };
     return fromBlob;
