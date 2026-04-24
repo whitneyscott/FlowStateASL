@@ -16,8 +16,8 @@ export function inferPromptModeFromStructuredConfig(cfg: PromptConfigJson): 'tex
   }
   const vpc = cfg.videoPromptConfig;
   const decks = vpc?.selectedDecks;
-  const tc = Math.floor(Number(vpc?.totalCards));
-  if (Array.isArray(decks) && decks.length > 0 && Number.isFinite(tc) && tc >= 1) return 'decks';
+  /** Non-empty selectedDecks is sufficient; totalCards may be omitted and is defaulted in getConfig. */
+  if (Array.isArray(decks) && decks.length > 0) return 'decks';
   const banks = vpc?.storedPromptBanks;
   if (Array.isArray(banks) && banks.some((b) => Array.isArray(b) && b.length > 0)) return 'decks';
   if (cfg.promptMode === 'decks') return 'decks';

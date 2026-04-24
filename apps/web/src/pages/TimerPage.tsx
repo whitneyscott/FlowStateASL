@@ -221,6 +221,43 @@ function appendDurationBridgeLog(message: string): void {
   appendBridgeLog('duration', message);
 }
 
+/** Bridge Debug: student Timer — raw config + rule breakdown (developer app mode only). */
+function bridgeLogStudentPromptDetect(
+  data: promptApi.PromptConfig | null,
+  requestAssignmentId: string | null | undefined,
+  targetAssignmentId: string | null,
+): void {
+  const pm = data?.promptMode ?? null;
+  const sd = data?.videoPromptConfig?.selectedDecks ?? [];
+  const y = data?.youtubePromptConfig;
+  const clipEnd = Math.floor(Number(y?.clipEndSec));
+  const clipStart = Math.max(0, Math.floor(Number(y?.clipStartSec ?? 0)));
+  const youtubeClipOk =
+    !!y?.videoId?.trim() && Number.isFinite(clipEnd) && clipEnd > clipStart;
+  appendBridgeLog('student-prompt-type', 'TimerPage: detect (GET /api/prompt/config)', {
+    requestAssignmentId: requestAssignmentId ?? null,
+    resolvedAssignmentId: targetAssignmentId,
+    promptMode: pm,
+    selectedDecksCount: sd.length,
+    selectedDeckIdsSample: sd.slice(0, 4).map((d) => d.id),
+    totalCards: data?.videoPromptConfig?.totalCards ?? null,
+    storedPromptBanksCount: data?.videoPromptConfig?.storedPromptBanks?.length ?? 0,
+    textPromptsCount: data?.prompts?.length ?? 0,
+    hasAccessCode: !!data?.accessCode?.trim(),
+    rules: {
+      promptModeEqDecks: pm === 'decks',
+      hasSelectedDecks: sd.length > 0,
+      clientClassifiesDeck: pm === 'decks' && sd.length > 0,
+      promptModeEqYoutube: pm === 'youtube',
+      clientClassifiesYoutube: pm === 'youtube' && youtubeClipOk,
+    },
+  });
+}
+
+function bridgeLogStudentPromptResult(payload: Record<string, unknown>): void {
+  appendBridgeLog('student-prompt-type', 'TimerPage: result', payload);
+}
+
 function mapSubmitErrorForStudent(message: string): string {
   const lower = message.toLowerCase();
   if (lower.includes('server busy')) return 'Many students are submitting right now. Wait about 30 seconds, then try again.';
@@ -641,6 +678,12 @@ export default function TimerPage({ context }: TimerPageProps) {
         (data?.resolvedAssignmentId?.trim() ?? '') || ltiOrUrlAssignmentId || null;
       const selectedDecksForHydration = data?.videoPromptConfig?.selectedDecks ?? [];
 
+      bridgeLogStudentPromptDetect(data, ltiOrUrlAssignmentId, targetAssignmentId);
+
+      let deckBuildStatus: 'skipped' | 'ok' | 'empty' | 'error' = 'skipped';
+      let deckBuildDetail: string | null = null;
+      let livePromptCount = 0;
+
       const isDeckAssignment =
         data?.promptMode === 'decks' &&
         (data.videoPromptConfig?.selectedDecks?.length ?? 0) > 0;
@@ -700,11 +743,19 @@ export default function TimerPage({ context }: TimerPageProps) {
             }
             setDeckPrompts(hydrated);
             setDeckLiveBuildError(null);
+            deckBuildStatus = 'ok';
+            livePromptCount = hydrated.length;
           } else {
+            deckBuildStatus = 'empty';
+            deckBuildDetail = result.warning || 'live build returned zero prompts';
             throw new Error(result.warning || 'live build returned zero prompts');
           }
         } catch (e) {
           const errMsg = e instanceof Error ? e.message : String(e);
+          if (deckBuildStatus !== 'empty') {
+            deckBuildStatus = 'error';
+            deckBuildDetail = errMsg;
+          }
           console.error('Failed to build deck prompts:', e);
           appendBridgeLog(
             'deck-live-build',
@@ -725,31 +776,100 @@ export default function TimerPage({ context }: TimerPageProps) {
         }
       } else {
         setDeckPrompts([]);
+        if (data) {
+          if (data.promptMode !== 'decks') {
+            deckBuildDetail = 'skipping live build: promptMode is not "decks"';
+          } else if (!(data.videoPromptConfig?.selectedDecks && data.videoPromptConfig.selectedDecks.length > 0)) {
+            deckBuildDetail = 'skipping live build: no videoPromptConfig.selectedDecks';
+          } else {
+            deckBuildDetail = 'skipping live build: condition not met (unexpected)';
+          }
+        } else {
+          deckBuildDetail = 'no config data';
+        }
       }
 
       if (data && !data.accessCode?.trim()) {
         const gate = await resolveSubmissionEntryGate(data, targetAssignmentId);
         if (gate.kind === 'feedback' && targetAssignmentId) {
+          bridgeLogStudentPromptResult({
+            where: 'loadConfig',
+            isDeckAssignment,
+            isYoutubeAssignment,
+            studentDeckFlow: !!isDeckAssignment,
+            studentYoutubeFlow: !!isYoutubeAssignment,
+            deckBuildStatus,
+            deckBuildDetail,
+            livePromptCount,
+            nextPhase: 'navigate_viewer',
+            gate: 'feedback',
+          });
           navigate(`/viewer?assignmentId=${encodeURIComponent(targetAssignmentId)}`);
           return;
         }
         if (gate.kind === 'chooser' && targetAssignmentId) {
+          bridgeLogStudentPromptResult({
+            where: 'loadConfig',
+            isDeckAssignment,
+            isYoutubeAssignment,
+            studentDeckFlow: !!isDeckAssignment,
+            studentYoutubeFlow: !!isYoutubeAssignment,
+            deckBuildStatus,
+            deckBuildDetail,
+            livePromptCount,
+            nextPhase: 'submissionChoice',
+            gate: 'chooser',
+            gateMeta: { allowed: gate.allowed, attempt: gate.attempt },
+          });
           setGateAssignmentId(targetAssignmentId);
           setGateChooserMeta({ allowed: gate.allowed, attempt: gate.attempt });
           setPhase('submissionChoice');
           return;
         }
+        const next = isDeckAssignment || isYoutubeAssignment ? 'preflight' : 'warmup';
+        bridgeLogStudentPromptResult({
+          where: 'loadConfig',
+          isDeckAssignment,
+          isYoutubeAssignment,
+          studentDeckFlow: !!isDeckAssignment,
+          studentYoutubeFlow: !!isYoutubeAssignment,
+          deckBuildStatus,
+          deckBuildDetail,
+          livePromptCount,
+          nextPhase: next,
+          gate: 'none',
+          accessCode: false,
+        });
         if (isDeckAssignment || isYoutubeAssignment) {
           setPhase('preflight');
         } else {
           setPhase('warmup');
           setSecondsLeft((data?.minutes ?? 5) * 60);
         }
+      } else if (data?.accessCode?.trim()) {
+        bridgeLogStudentPromptResult({
+          where: 'loadConfig',
+          isDeckAssignment,
+          isYoutubeAssignment,
+          studentDeckFlow: !!isDeckAssignment,
+          studentYoutubeFlow: !!isYoutubeAssignment,
+          deckBuildStatus,
+          deckBuildDetail,
+          livePromptCount,
+          nextPhase: 'access_gate',
+          note: 'Phase set after student enters access code (see verify-access result log).',
+          hasAccessCode: true,
+        });
       }
     } catch (e) {
       if (e instanceof promptApi.NeedsManualTokenError) {
         setShowManualTokenModal(true);
       }
+      bridgeLogStudentPromptResult({
+        where: 'loadConfig',
+        error: e instanceof Error ? e.message : String(e),
+        needsManualToken: e instanceof promptApi.NeedsManualTokenError,
+      });
       setConfig(null);
       setStudentDeckFlow(false);
       setStudentYoutubeFlow(false);
@@ -842,6 +962,14 @@ export default function TimerPage({ context }: TimerPageProps) {
         !!config.youtubePromptConfig?.videoId &&
         Math.floor(Number(config.youtubePromptConfig.clipEndSec)) >
           Math.max(0, Math.floor(Number(config.youtubePromptConfig.clipStartSec ?? 0)));
+      bridgeLogStudentPromptResult({
+        where: 'verifyAccess',
+        promptMode: config?.promptMode ?? null,
+        selectedDecksCount: config?.videoPromptConfig?.selectedDecks?.length ?? 0,
+        deckAfterAccess,
+        youtubeAfterAccess,
+        nextPhase: deckAfterAccess || youtubeAfterAccess ? 'preflight' : 'warmup',
+      });
       if (deckAfterAccess || youtubeAfterAccess) {
         setPhase('preflight');
       } else {

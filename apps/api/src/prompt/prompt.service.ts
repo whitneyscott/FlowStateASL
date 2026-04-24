@@ -1175,9 +1175,15 @@ export class PromptService {
       }
     }
 
-    // Backward compatibility: default promptMode to 'text' if not present
+    // Missing promptMode: infer from videoPromptConfig / youtubePromptConfig (embed may omit the field).
+    // Do not default to 'text' here — that skips the deck block below and breaks student GET /config for deck assignments.
     if (config && !config.promptMode) {
-      config = { ...config, promptMode: 'text' };
+      const inferred = inferPromptModeFromStructuredConfig(config);
+      config = { ...config, promptMode: inferred };
+      appendLtiLog('student-prompt-type', 'getConfig: inferred promptMode (was absent on loaded config)', {
+        assignmentId,
+        inferred,
+      });
     }
     if (config) {
       const liveModuleId = await this.resolveLiveModuleIdForAssignment(
@@ -1372,7 +1378,9 @@ export class PromptService {
           // Surface Canvas-attached rubric id; embed fallback when GET omits rubric (see also sanitize numeric rubricId).
           ...(effectiveRubricId ? { rubricId: effectiveRubricId } : {}),
         };
-        if (!hydrated.promptMode) hydrated.promptMode = 'text';
+        if (!hydrated.promptMode) {
+          hydrated.promptMode = inferPromptModeFromStructuredConfig(hydrated);
+        }
         return { ...hydrated, resolvedAssignmentId: assignmentId };
       }
     } catch {

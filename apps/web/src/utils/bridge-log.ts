@@ -43,6 +43,8 @@ const BRIDGE_LTI_LOG_SCOPES = [
   'webm-prompt',
   'sign-to-voice',
   'prompt-import-trace',
+  /** Student TimerPage: raw GET /config + classification (prompt mode / phase). */
+  'student-prompt-type',
 ] as const;
 
 export function ltiLogLineMatchesBridgeFilter(line: string): boolean {
