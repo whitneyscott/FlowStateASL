@@ -57,7 +57,7 @@ Every new Prompter API step MUST emit to the Bridge Debug Log via `appendLtiLog`
 ### Teacher Config Enhancements
 
 - [x] Full assignment options UI: points, assignment group, rubric, due/unlock/lock, attempts
-- [ ] Prompt reorder (drag-and-drop or up/down)
+- **Declined — prompt row “reorder” (drag/up-down):** the text **pool is a question bank**, not an ordered script. Each student is meant to get **one** prompt drawn from the set; row order in the config UI is not a teaching-sequence feature, so reorder controls are out of scope.
 - [ ] Rich text for prompts (Quill or equivalent)
 
 ### Recording + Submit Enhancements
