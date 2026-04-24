@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
@@ -985,10 +985,19 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     }
   }, [teacher, hasLti, loadAssignments]);
 
-  useEffect(() => {
-    if (!importModalOpen) return;
-    setImportModuleId((prev) => (prev.trim() ? prev : moduleId.trim()));
-  }, [importModalOpen, moduleId]);
+  /** Canvas module containing the assignment (for defaulting the import modal module picker). */
+  const resolveImportModuleIdForAssignment = useCallback(async (assignmentCanvasId: string): Promise<string> => {
+    const id = assignmentCanvasId.trim();
+    if (!id) return '';
+    try {
+      const opts = await promptApi.getAssignmentImportOptions(id, id);
+      const mid = opts.targetCanvasModuleId;
+      if (mid != null && String(mid).trim()) return String(mid);
+    } catch {
+      /* teacher can pick module manually */
+    }
+    return '';
+  }, []);
 
   const openImportModal = useCallback(async () => {
     if (!teacher || !hasLti) return;
@@ -1018,6 +1027,9 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         : '';
       const first = preferred || brief.allAssignments[0]?.id || '';
       setImportSourceAssignmentId(first);
+      if (first) {
+        setImportModuleId(await resolveImportModuleIdForAssignment(first));
+      }
     } catch (e) {
       setImportCanvasBrief(null);
       setImportSourceAssignmentId('');
@@ -1026,7 +1038,21 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     } finally {
       setImportModalBusy(false);
     }
-  }, [teacher, hasLti, modules.length, loadModules, assignmentId, loadAssignments]);
+  }, [teacher, hasLti, modules.length, loadModules, assignmentId, loadAssignments, resolveImportModuleIdForAssignment]);
+
+  const handleImportSourceAssignmentChange = useCallback(
+    async (e: ChangeEvent<HTMLSelectElement>) => {
+      const v = e.target.value;
+      setImportSourceAssignmentId(v);
+      setImportModalMessage(null);
+      if (!v.trim()) {
+        setImportModuleId('');
+        return;
+      }
+      setImportModuleId(await resolveImportModuleIdForAssignment(v));
+    },
+    [resolveImportModuleIdForAssignment],
+  );
 
   const closeImportModal = useCallback(() => {
     setImportModalOpen(false);
@@ -1941,10 +1967,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
             <select
               className="prompter-settings-input"
               value={importSourceAssignmentId}
-              onChange={(e) => {
-                setImportSourceAssignmentId(e.target.value);
-                setImportModalMessage(null);
-              }}
+              onChange={(e) => void handleImportSourceAssignmentChange(e)}
               disabled={importModalBusy || !(importCanvasBrief?.allAssignments.length ?? 0)}
             >
               <option value="">
