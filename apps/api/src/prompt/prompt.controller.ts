@@ -637,7 +637,6 @@ export class PromptController {
       sourceAssignmentId: resolvedSourceAssignmentId,
       targetAssignmentId: resolvedTargetAssignmentId,
       moduleId: dto.moduleId ?? '(none)',
-      dryRun: dto.dryRun === true,
       courseId: ctx.courseId,
     });
     try {

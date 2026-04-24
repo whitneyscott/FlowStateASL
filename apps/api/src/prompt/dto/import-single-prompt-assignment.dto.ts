@@ -6,9 +6,8 @@ export interface ImportSinglePromptAssignmentDto {
   /** Defaults to sourceAssignmentId when omitted. */
   targetAssignmentId?: string;
   /**
-   * Required when applying (`dryRun` false). Canvas module where the assignment is placed and the
-   * Prompter tool is added above it (mirrors Prompt Manager save). Dry-run may omit this to preview only.
+   * Required. Canvas module where the assignment is placed and the Prompter tool is added above it
+   * (mirrors Prompt Manager save).
    */
   moduleId?: string;
-  dryRun?: boolean;
 }

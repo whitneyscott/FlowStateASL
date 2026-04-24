@@ -5194,24 +5194,13 @@ export class PromptService {
   async importSinglePromptAssignmentFromSourceAssignment(
     ctx: LtiContext,
     dto: ImportSinglePromptAssignmentDto,
-  ): Promise<
-    | {
-        dryRun: true;
-        sourceKey: string | null;
-        targetAssignmentId: string;
-        assignmentName: string;
-        requiresModuleId: boolean;
-        detectedCanvasModuleId: string | null;
-        strategy: 'from_source' | 'from_source_assignment' | 'kept_existing' | 'created_defaults';
-      }
-    | {
-        imported: true;
-        sourceKey: string | null;
-        targetAssignmentId: string;
-        moduleId: string;
-        strategy: 'from_source' | 'from_source_assignment' | 'kept_existing' | 'created_defaults';
-      }
-  > {
+  ): Promise<{
+    imported: true;
+    sourceKey: string | null;
+    targetAssignmentId: string;
+    moduleId: string;
+    strategy: 'from_source' | 'from_source_assignment' | 'kept_existing' | 'created_defaults';
+  }> {
     const sourceAid = (dto.sourceAssignmentId ?? dto.sourceSettingsAssignmentId ?? '').trim();
     const targetAid = (dto.targetAssignmentId ?? '').trim() || sourceAid;
     if (!sourceAid) {
@@ -5274,22 +5263,6 @@ export class PromptService {
     const strategy = resolveStrategy();
 
     const manualModuleId = (dto.moduleId ?? '').trim();
-    const skipModuleMembershipProbe = dto.dryRun !== true && manualModuleId.length > 0;
-    const detectedCanvasModuleId = skipModuleMembershipProbe
-      ? null
-      : await this.canvas.findFirstModuleIdContainingAssignment(ctx.courseId, targetAid, domainOverride, token);
-
-    if (dto.dryRun) {
-      return {
-        dryRun: true,
-        sourceKey: sourceKey ?? null,
-        targetAssignmentId: targetAid,
-        assignmentName: targetListRow.name,
-        requiresModuleId: !manualModuleId,
-        detectedCanvasModuleId,
-        strategy,
-      };
-    }
     if (!manualModuleId) {
       throw new BadRequestException(
         'moduleId is required. Select the Canvas module where this assignment should appear and where the Prompter tool will be placed above it.',

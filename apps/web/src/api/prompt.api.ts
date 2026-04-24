@@ -704,7 +704,6 @@ export async function importSinglePromptAssignment(body: {
   sourceAssignmentId: string;
   targetAssignmentId?: string;
   moduleId?: string;
-  dryRun?: boolean;
 }): Promise<Record<string, unknown>> {
   const resolvedTargetAssignmentId =
     (body.targetAssignmentId ?? '').trim() || body.sourceAssignmentId.trim();
@@ -712,7 +711,6 @@ export async function importSinglePromptAssignment(body: {
     sourceAssignmentId: body.sourceAssignmentId,
     targetAssignmentId: resolvedTargetAssignmentId,
     moduleId: body.moduleId ?? null,
-    dryRun: body.dryRun ?? false,
   });
   const result = await fetchJsonWithOAuthRedirect<Record<string, unknown>>(`${base}/settings-blob/import-one-assignment`, {
     method: 'POST',

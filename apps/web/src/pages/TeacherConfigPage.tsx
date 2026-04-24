@@ -1080,7 +1080,6 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         sourceAssignmentId: sid,
         targetAssignmentId: sid,
         moduleId: mid,
-        dryRun: false,
       });
       await loadAssignments();
       await load(sid);
