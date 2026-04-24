@@ -102,6 +102,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const [importSourceAssignmentId, setImportSourceAssignmentId] = useState('');
   const [importModalBusy, setImportModalBusy] = useState(false);
   const [importModalMessage, setImportModalMessage] = useState<string | null>(null);
+  const [trueWayApplyMessage, setTrueWayApplyMessage] = useState<string | null>(null);
   const [importModuleId, setImportModuleId] = useState('');
 
   // Deck mode state
@@ -970,14 +971,14 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const handleApplyTrueWay = useCallback(async () => {
     if (!teacher || !hasLti) return;
     setImportBusy(true);
-    setImportInfo(null);
+    setTrueWayApplyMessage(null);
     try {
       const res = await promptApi.applyTrueWayTemplates();
       const n = typeof res.updated === 'number' ? res.updated : 0;
-      setImportInfo(n > 0 ? `Updated ${n} assignment(s) from titles.` : 'No matching assignments found.');
+      setTrueWayApplyMessage(n > 0 ? `Updated ${n} assignment(s) from titles.` : 'No matching assignments found.');
       await loadAssignments();
     } catch (e) {
-      setImportInfo(e instanceof Error ? e.message : String(e));
+      setTrueWayApplyMessage(e instanceof Error ? e.message : String(e));
       if (e instanceof promptApi.NeedsManualTokenError) setShowManualTokenModal(true);
     } finally {
       setImportBusy(false);
@@ -993,6 +994,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     if (!teacher || !hasLti) return;
     setImportModalOpen(true);
     setImportModalMessage(null);
+    setTrueWayApplyMessage(null);
     setImportModalBusy(true);
     setImportModuleId('');
     try {
@@ -1029,6 +1031,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const closeImportModal = useCallback(() => {
     setImportModalOpen(false);
     setImportModalMessage(null);
+    setTrueWayApplyMessage(null);
     setImportModuleId('');
   }, []);
 
@@ -1238,20 +1241,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         <h1 className="prompter-settings-page-title">Prompt Manager Settings</h1>
         {error && <div className="prompter-alert-error">{error}</div>}
         {saved && <div className="prompter-alert-success">Saved.</div>}
-
-        {teacher && hasLti && (
-          <div className="prompter-settings-card prompter-settings-card-compact" style={{ marginTop: '0.75rem' }}>
-            <h2 className="prompter-settings-card-title">Import</h2>
-            <p className="prompter-hint">
-              Use <strong>Import</strong> under Assignments to copy settings from another assignment in this course.
-            </p>
-            <div className="prompter-settings-actions-row prompter-settings-actions-row-mb-sm">
-              <button type="button" className="prompter-btn-secondary" disabled={importBusy} onClick={() => void handleApplyTrueWay()}>
-                {importBusy ? '…' : 'Apply TRUE+WAY title templates'}
-              </button>
-            </div>
-            {importInfo && <p className="prompter-hint" style={{ marginTop: 8 }}>{importInfo}</p>}
-          </div>
+        {teacher && hasLti && importInfo && (
+          <p className="prompter-hint" style={{ marginTop: '0.75rem' }}>{importInfo}</p>
         )}
 
         {showForm && (
@@ -1917,13 +1908,35 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
             <h3 className="prompter-settings-card-title" style={{ marginTop: 0 }}>
               Import Prompt Manager settings
             </h3>
+            <p className="prompter-hint">
+              For assignments whose titles match TRUE+WAY naming patterns, merge default Prompt Manager fields from the template.
+            </p>
+            <div className="prompter-settings-actions-row prompter-settings-actions-row-mb-sm">
+              <button
+                type="button"
+                className="prompter-btn-secondary"
+                disabled={importBusy || importModalBusy}
+                onClick={() => void handleApplyTrueWay()}
+              >
+                {importBusy ? '…' : 'Apply TRUE+WAY title templates'}
+              </button>
+            </div>
+            {trueWayApplyMessage && (
+              <p className="prompter-hint" style={{ marginTop: 8 }} role="status" aria-live="polite">
+                {trueWayApplyMessage}
+              </p>
+            )}
+            <hr style={{ border: 'none', borderTop: '1px solid rgba(0, 0, 0, 0.12)', margin: '1rem 0' }} />
+            <p className="prompter-hint">
+              Copy settings from another assignment in this course: choose a <strong>source assignment</strong> and{' '}
+              <strong>module</strong>, then <strong>Import selected source assignment</strong>.
+            </p>
             {importModalBusy && (
               <p className="prompter-hint" role="status" aria-live="polite">
                 <span className="prompter-inline-spinner" />
                 {' Import in progress…'}
               </p>
             )}
-            <p className="prompter-hint">Select one Canvas assignment to import.</p>
             <label className="prompter-settings-label">Source assignment</label>
             <select
               className="prompter-settings-input"
