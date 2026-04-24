@@ -1460,7 +1460,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                     ) : promptMode === 'decks' ? (
                       <div className="prompter-settings-section">
                         <p className="prompter-hint">
-                          <strong>Deck mode:</strong> students skip the long warm-up. After camera setup they see a short &quot;Get Ready!&quot; 3-2-1 countdown, then recording starts with the first prompt. Timing per card comes from each Sprout video.
+                          <strong>Deck mode:</strong> students skip the long warm-up. After camera setup, recording starts with the first prompt (no extra countdown). Timing per card comes from each Sprout video.
                         </p>
                       </div>
                     ) : (

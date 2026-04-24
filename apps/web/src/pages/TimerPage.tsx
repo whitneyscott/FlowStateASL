@@ -283,7 +283,7 @@ export default function TimerPage({ context }: TimerPageProps) {
   const [studentYoutubeFlow, setStudentYoutubeFlow] = useState(false);
   const [youtubeStimulusError, setYoutubeStimulusError] = useState<string | null>(null);
   const [studentYoutubeCaptionsOn, setStudentYoutubeCaptionsOn] = useState(false);
-  /** 3 → 2 → 1 → record (deck or YouTube flow). */
+  /** 3 → 2 → 1 → record (YouTube stimulus flow only; deck goes straight to record after preflight). */
   const [getReadyTick, setGetReadyTick] = useState(3);
   
   const streamRef = useRef<MediaStream | null>(null);
@@ -873,10 +873,8 @@ export default function TimerPage({ context }: TimerPageProps) {
 
   const startPreflight = () => {
     if (!streamRef.current) return;
-    const useDeckCountdown = studentDeckFlow && deckPrompts.length > 0;
-    const useYoutubeCountdown = studentYoutubeFlow;
-    if (useDeckCountdown || useYoutubeCountdown) {
-      setPromptIndex(0);
+    setPromptIndex(0);
+    if (studentYoutubeFlow) {
       setGetReadyTick(3);
       setPhase('getReady');
     } else {
