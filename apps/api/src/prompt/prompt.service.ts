@@ -1253,10 +1253,48 @@ export class PromptService {
         resolvedToken,
       );
     }
+    const resourceLinkIdTrim = (ctx.resourceLinkId ?? '').trim();
+    if (resourceLinkIdTrim && assignmentId && resolved.source !== 'resource_link_api') {
+      try {
+        const liveRl = await this.canvas.resolveAssignmentIdForResourceLink(
+          ctx.courseId,
+          resourceLinkIdTrim,
+          domainOverride,
+          resolvedToken,
+        );
+        if (liveRl.assignmentId && liveRl.assignmentId !== assignmentId) {
+          const liveRlName = await this.canvasAssignmentNameForLog(
+            ctx.courseId,
+            liveRl.assignmentId,
+            domainOverride,
+            resolvedToken,
+          );
+          appendLtiLog('student-prompt-type', 'getConfig: chosen assignmentId differs from Canvas lti_resource_links (blob/heuristic may be stale)', {
+            chosenSource: resolved.source,
+            chosenAssignmentId: assignmentId,
+            chosenAssignmentName: assignmentNameForLog,
+            liveResourceLinkAssignmentId: liveRl.assignmentId,
+            liveResourceLinkAssignmentName: liveRlName,
+            liveResourceLinkSource: liveRl.source ?? '(unknown)',
+            resourceLinkId: resourceLinkIdTrim,
+            blobUpdatedAt: blob?.updatedAt ?? '(none)',
+          });
+        }
+      } catch (e) {
+        appendLtiLog('student-prompt-type', 'getConfig: lti_resource_links cross-check failed (non-fatal)', {
+          error: String(e),
+        });
+      }
+    }
+    const resolutionUsesCourseBlobHeuristic = ['map', 'module', 'title', 'single', 'single_deck'].includes(
+      resolved.source,
+    );
     appendLtiLog('prompt', 'getConfig: assignment resolution', {
       source: resolved.source,
       assignmentId: assignmentId || '(none)',
       assignmentName: assignmentNameForLog,
+      resolutionUsesCourseBlobHeuristic,
+      blobUpdatedAt: blob?.updatedAt ?? '(none)',
       assignmentIdFromCtx: (ctx.assignmentId ?? '').trim() || '(none)',
       assignmentIdFromMap: (blob?.resourceLinkAssignmentMap?.[(ctx.resourceLinkId ?? '').trim()] ?? '').trim() || '(none)',
       assignmentIdFromLisResult: this.extractAssignmentIdFromLisResult(ctx) ?? '(none)',
@@ -1266,7 +1304,7 @@ export class PromptService {
       lisResultSourcedid: (ctx.lisResultSourcedid ?? '').trim() ? '(present)' : '(none)',
       lisOutcomeServiceUrl: (ctx.lisOutcomeServiceUrl ?? '').trim() ? '(present)' : '(none)',
       configCount: Object.keys(blob?.configs ?? {}).length,
-      resourceLinkId: (ctx.resourceLinkId ?? '').trim() || '(none)',
+      resourceLinkId: resourceLinkIdTrim || '(none)',
     });
     if (!assignmentId) {
       appendLtiLog('prompt-decks', 'getConfig: no assignment resolved', {
