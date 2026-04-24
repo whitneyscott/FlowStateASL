@@ -74,6 +74,7 @@ import {
   parseAssignmentDescriptionForPromptManager,
 } from './assignment-description-embed.util';
 import { repairPromptManagerSettingsBlobFromUnknown } from './prompt-settings-blob-repair.util';
+import { inferPromptModeFromStructuredConfig, mergeSourceEmbedForImport } from './prompt-mode-infer.util';
 import { resolveAssignmentIdByName, type CanvasAssignmentBrief } from './assignment-id-resolve.util';
 import type { ImportPromptManagerBlobDto } from './dto/import-prompt-manager-blob.dto';
 import type { ImportSinglePromptAssignmentDto } from './dto/import-single-prompt-assignment.dto';
@@ -5043,6 +5044,16 @@ export class PromptService {
 
     for (const aid of Object.keys(mergedConfigs)) {
       if (!targetIds.has(aid)) continue;
+      const c0 = mergedConfigs[aid];
+      if (!c0) continue;
+      const pm = c0.promptMode;
+      if (pm !== 'text' && pm !== 'decks' && pm !== 'youtube') {
+        mergedConfigs[aid] = { ...c0, promptMode: inferPromptModeFromStructuredConfig(c0) };
+      }
+    }
+
+    for (const aid of Object.keys(mergedConfigs)) {
+      if (!targetIds.has(aid)) continue;
       const c = mergedConfigs[aid];
       if (!c) continue;
       const inst = typeof c.instructions === 'string' ? c.instructions : '';
@@ -5418,6 +5429,31 @@ export class PromptService {
         throw e;
       }
     }
+
+    const fromSourceEmbed = this.promptConfigFromAssignmentDescriptionString(sourceFetchedRaw.description);
+    if (fromSourceEmbed) {
+      merged = mergeSourceEmbedForImport(merged, fromSourceEmbed, moduleIdTrim);
+      appendLtiLog('prompt-import', 'importSingle: merged ASL embed from source assignment description', {
+        sourceAssignmentId: sourceAid,
+        embedPromptMode: fromSourceEmbed.promptMode ?? '(none)',
+      });
+    }
+
+    const dtoMode = (dto.promptMode ?? '').toString().trim().toLowerCase();
+    if (dtoMode && dtoMode !== 'text' && dtoMode !== 'decks' && dtoMode !== 'youtube') {
+      throw new BadRequestException('promptMode must be text, decks, or youtube when provided.');
+    }
+    const chosenMode: 'text' | 'decks' | 'youtube' =
+      dtoMode === 'text' || dtoMode === 'decks' || dtoMode === 'youtube'
+        ? dtoMode
+        : inferPromptModeFromStructuredConfig(merged);
+    merged = { ...merged, promptMode: chosenMode };
+    appendLtiLog('prompt-import', 'importSingle: resolved promptMode', {
+      targetAssignmentId: targetAid,
+      promptMode: chosenMode,
+      teacherOverride: dtoMode === 'text' || dtoMode === 'decks' || dtoMode === 'youtube',
+    });
+
     const inst = typeof merged.instructions === 'string' ? merged.instructions : '';
     const fullD = mergeAssignmentDescriptionWithEmbeds(inst, merged, merged.prompts);
     try {
@@ -5447,6 +5483,7 @@ export class PromptService {
       configuredIdCount: outBlob.configuredAssignmentIds?.length ?? 0,
       targetConfig: {
         assignmentName: merged.assignmentName ?? '(none)',
+        promptMode: merged.promptMode ?? '(none)',
         pointsPossible: merged.pointsPossible ?? '(none)',
         allowedAttempts: merged.allowedAttempts ?? '(none)',
         instructionsLen: typeof merged.instructions === 'string' ? merged.instructions.length : 0,

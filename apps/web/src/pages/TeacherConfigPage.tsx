@@ -105,6 +105,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const [importModalMessage, setImportModalMessage] = useState<string | null>(null);
   const [trueWayApplyMessage, setTrueWayApplyMessage] = useState<string | null>(null);
   const [importModuleId, setImportModuleId] = useState('');
+  /** Import modal: Auto uses merged source embed + server infer; explicit values force `promptMode`. */
+  const [importPromptModeChoice, setImportPromptModeChoice] = useState<'auto' | 'text' | 'decks' | 'youtube'>('auto');
 
   // Deck mode state
   const [promptMode, setPromptMode] = useState<'text' | 'decks' | 'youtube'>('text');
@@ -1040,6 +1042,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setImportModalOpen(true);
     setImportModalMessage(null);
     setTrueWayApplyMessage(null);
+    setImportPromptModeChoice('auto');
     setImportModalBusy(true);
     setImportModuleId('');
     try {
@@ -1095,6 +1098,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setImportModalMessage(null);
     setTrueWayApplyMessage(null);
     setImportModuleId('');
+    setImportPromptModeChoice('auto');
   }, []);
 
   const handleImportModalSingleMerge = useCallback(async () => {
@@ -1116,6 +1120,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         sourceAssignmentId: sid,
         targetAssignmentId: sid,
         moduleId: mid,
+        ...(importPromptModeChoice !== 'auto' ? { promptMode: importPromptModeChoice } : {}),
       });
       await loadAssignments();
       await load(sid);
@@ -1142,6 +1147,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     hasLti,
     importSourceAssignmentId,
     importModuleId,
+    importPromptModeChoice,
     loadAssignments,
     load,
     setSearchParams,
@@ -1460,7 +1466,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                     ) : promptMode === 'decks' ? (
                       <div className="prompter-settings-section">
                         <p className="prompter-hint">
-                          <strong>Deck mode:</strong> students skip the long warm-up. After camera setup, recording starts with the first prompt (no extra countdown). Timing per card comes from each Sprout video.
+                          <strong>Deck mode:</strong> students skip the long warm-up. After camera setup they see a short &quot;Get Ready!&quot; 3-2-1 countdown, then recording starts with the first prompt. Timing per card comes from each Sprout video.
                         </p>
                       </div>
                     ) : (
@@ -2056,6 +2062,23 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
             {!modules.length && (
               <p className="prompter-hint">Loading modules…</p>
             )}
+            <label className="prompter-settings-label">Prompt type</label>
+            <p className="prompter-hint" style={{ marginTop: 4 }}>
+              Auto reads the source assignment’s hidden config (when present) and infers mode; pick a type only if you need to override.
+            </p>
+            <select
+              className="prompter-settings-input"
+              value={importPromptModeChoice}
+              onChange={(e) =>
+                setImportPromptModeChoice(e.target.value as 'auto' | 'text' | 'decks' | 'youtube')
+              }
+              disabled={importModalBusy}
+            >
+              <option value="auto">Auto (recommended)</option>
+              <option value="text">Text prompts</option>
+              <option value="decks">Deck prompts</option>
+              <option value="youtube">YouTube stimulus</option>
+            </select>
             <div className="prompter-settings-actions-row">
               <button
                 type="button"

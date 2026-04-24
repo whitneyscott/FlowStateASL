@@ -637,6 +637,7 @@ export class PromptController {
       sourceAssignmentId: resolvedSourceAssignmentId,
       targetAssignmentId: resolvedTargetAssignmentId,
       moduleId: dto.moduleId ?? '(none)',
+      promptMode: dto.promptMode ?? '(auto)',
       courseId: ctx.courseId,
     });
     try {

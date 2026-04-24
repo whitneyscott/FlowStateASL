@@ -722,6 +722,8 @@ export async function importSinglePromptAssignment(body: {
   sourceAssignmentId: string;
   targetAssignmentId?: string;
   moduleId?: string;
+  /** Omit for Auto (server infers after merging source ASL embed). */
+  promptMode?: 'text' | 'decks' | 'youtube';
 }): Promise<Record<string, unknown>> {
   const resolvedTargetAssignmentId =
     (body.targetAssignmentId ?? '').trim() || body.sourceAssignmentId.trim();
@@ -729,6 +731,7 @@ export async function importSinglePromptAssignment(body: {
     sourceAssignmentId: body.sourceAssignmentId,
     targetAssignmentId: resolvedTargetAssignmentId,
     moduleId: body.moduleId ?? null,
+    promptMode: body.promptMode ?? 'auto',
   });
   const result = await fetchJsonWithOAuthRedirect<Record<string, unknown>>(`${base}/settings-blob/import-one-assignment`, {
     method: 'POST',

@@ -10,4 +10,9 @@ export interface ImportSinglePromptAssignmentDto {
    * (mirrors Prompt Manager save).
    */
   moduleId?: string;
+  /**
+   * When set, forces `promptMode` on the imported embed after merging source data.
+   * Omit to use Auto: infer from structured fields (and ASL embed merged from source description).
+   */
+  promptMode?: 'text' | 'decks' | 'youtube';
 }
