@@ -2025,87 +2025,74 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
             )}
           </div>
 
-          {assignmentId && (
-            <div
-              className={`prompter-viewer-center-row prompter-viewer-center-row--title${viewerGradingStackOrder ? ' prompter-viewer-slot-assignment-title' : ''}`}
-            >
-              <h1 className="prompter-viewer-assignment-title">
-                {assignment?.name?.trim() || `Assignment ${assignmentId}`}
-              </h1>
-            </div>
-          )}
-
           {gradingMode && submissions.length > 0 && (
             <div
-              className={`prompter-viewer-center-row prompter-viewer-center-row--submission-nav${viewerGradingStackOrder ? ' prompter-viewer-slot-deck-later-nav' : ''}`}
+              className={`prompter-viewer-center-row prompter-viewer-center-row--grading-toolbar${viewerGradingStackOrder ? ' prompter-viewer-slot-grading-toolbar' : ''}`}
             >
-              <div className="prompter-viewer-submission-nav-inner">
-                <div className="prompter-viewer-dropdown-row prompter-viewer-dropdown-row--inline">
-                  <label htmlFor="submission-select">Submission:</label>
-                  <select
-                    id="submission-select"
-                    value={current?.userId ?? ''}
-                    onChange={handleStudentSelect}
-                  >
-                    <option value="">— Select student —</option>
-                    {submissions.map((s) => (
-                      <option key={s.userId} value={s.userId}>
-                        {s.userName ?? s.userId}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="prompter-viewer-nav-row prompter-viewer-nav-row--inline">
-                  <button
-                    type="button"
-                    onClick={() => setIndex((i) => Math.max(0, i - 1))}
-                    disabled={index <= 0}
-                    className={`prompter-viewer-nav-btn ${index <= 0 ? 'disabled' : ''}`}
-                  >
-                    ← Previous
-                  </button>
-                  <span className="prompter-viewer-nav-index">
-                    {index + 1} of {submissions.length}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setIndex((i) => Math.min(submissions.length - 1, i + 1))}
-                    disabled={index >= submissions.length - 1}
-                    className={`prompter-viewer-nav-btn ${index >= submissions.length - 1 ? 'disabled' : ''}`}
-                  >
-                    Next →
-                  </button>
-                </div>
+              <div className="prompter-viewer-dropdown-row prompter-viewer-dropdown-row--grading-toolbar">
+                <label htmlFor="submission-select">Submission:</label>
+                <select
+                  id="submission-select"
+                  value={current?.userId ?? ''}
+                  onChange={handleStudentSelect}
+                >
+                  <option value="">— Select student —</option>
+                  {submissions.map((s) => (
+                    <option key={s.userId} value={s.userId}>
+                      {s.userName ?? s.userId}
+                    </option>
+                  ))}
+                </select>
               </div>
-            </div>
-          )}
-
-          {gradingMode && current && (
-            <div
-              className={`prompter-viewer-center-row prompter-viewer-center-row--grade${viewerGradingStackOrder ? ' prompter-viewer-slot-deck-later-grade' : ''}`}
-            >
-              <div className="prompter-viewer-grade-row-full">
-                {pointsPossible != null && (
-                  <>
-                    <label htmlFor="grade-input">Grade:</label>
-                    <input
-                      id="grade-input"
-                      type="number"
-                      min={0}
-                      max={pointsPossible > 0 ? pointsPossible : undefined}
-                      step="any"
-                      value={gradeValue}
-                      onChange={(e) => setGradeValue(e.target.value)}
-                      placeholder="0"
-                    />
-                    <span className="prompter-viewer-points-label">/ {Math.round(pointsPossible)} pts</span>
-                    <button type="button" onClick={handleGrade} disabled={saving} className="prompter-viewer-grade-btn">
-                      Save grade
-                    </button>
-                    {gradeSaveStatus && <span className="prompter-viewer-save-status">{gradeSaveStatus}</span>}
-                  </>
-                )}
-                <div className="prompter-viewer-reset-inline">
+              <div className="prompter-viewer-nav-row prompter-viewer-nav-row--grading-toolbar">
+                <button
+                  type="button"
+                  onClick={() => setIndex((i) => Math.max(0, i - 1))}
+                  disabled={index <= 0}
+                  className={`prompter-viewer-nav-btn ${index <= 0 ? 'disabled' : ''}`}
+                >
+                  ← Previous
+                </button>
+                <span className="prompter-viewer-nav-index">
+                  {index + 1} of {submissions.length}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setIndex((i) => Math.min(submissions.length - 1, i + 1))}
+                  disabled={index >= submissions.length - 1}
+                  className={`prompter-viewer-nav-btn ${index >= submissions.length - 1 ? 'disabled' : ''}`}
+                >
+                  Next →
+                </button>
+              </div>
+              {current && pointsPossible != null && (
+                <div className="prompter-viewer-grade-row-full prompter-viewer-grade-row-full--grading-toolbar">
+                  <label htmlFor="grade-input">Grade:</label>
+                  <input
+                    id="grade-input"
+                    type="number"
+                    min={0}
+                    max={pointsPossible > 0 ? pointsPossible : undefined}
+                    step="any"
+                    value={gradeValue}
+                    onChange={(e) => setGradeValue(e.target.value)}
+                    placeholder="0"
+                  />
+                  <span className="prompter-viewer-points-label">/ {Math.round(pointsPossible)} pts</span>
+                  <button type="button" onClick={handleGrade} disabled={saving} className="prompter-viewer-grade-btn">
+                    Save grade
+                  </button>
+                  {gradeSaveStatus ? (
+                    <span
+                      className={`prompter-viewer-save-status${gradeSaveStatus.toLowerCase().includes('fail') ? ' prompter-viewer-save-status--error' : ''}`}
+                    >
+                      {gradeSaveStatus}
+                    </span>
+                  ) : null}
+                </div>
+              )}
+              {current && (
+                <div className="prompter-viewer-reset-row prompter-viewer-reset-row--grading-toolbar">
                   <button
                     type="button"
                     onClick={handleReset}
@@ -2114,9 +2101,25 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                   >
                     Reset student&apos;s attempt
                   </button>
-                  {resetStatus && <span className="prompter-viewer-reset-status">{resetStatus}</span>}
+                  {resetStatus ? (
+                    <span
+                      className={`prompter-viewer-reset-status${resetStatus.toLowerCase().includes('fail') ? ' prompter-viewer-reset-status--error' : ''}`}
+                    >
+                      {resetStatus}
+                    </span>
+                  ) : null}
                 </div>
-              </div>
+              )}
+            </div>
+          )}
+
+          {assignmentId && (
+            <div
+              className={`prompter-viewer-center-row prompter-viewer-center-row--title${viewerGradingStackOrder ? ' prompter-viewer-slot-assignment-title' : ''}`}
+            >
+              <h1 className="prompter-viewer-assignment-title">
+                {assignment?.name?.trim() || `Assignment ${assignmentId}`}
+              </h1>
             </div>
           )}
 

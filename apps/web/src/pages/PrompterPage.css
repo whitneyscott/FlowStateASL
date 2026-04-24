@@ -957,14 +957,17 @@
 }
 
 /**
- * Teacher grading: submission video first, then free-form comments, then optional caption tips
- * (collapsible), then deck active item / text prompt controls, then submission picker + course grade.
+ * Teacher grading: submission picker + nav + grade + reset at top (single toolbar), then assignment
+ * title, then video, then free-form comments, caption tips, deck / text prompt controls.
  */
 .prompter-viewer-center--viewer-grading-stack .prompter-viewer-slot-top {
   order: 1;
 }
-.prompter-viewer-center--viewer-grading-stack .prompter-viewer-slot-assignment-title {
+.prompter-viewer-center--viewer-grading-stack .prompter-viewer-slot-grading-toolbar {
   order: 2;
+}
+.prompter-viewer-center--viewer-grading-stack .prompter-viewer-slot-assignment-title {
+  order: 3;
 }
 .prompter-viewer-center--viewer-grading-stack .prompter-viewer-slot-submission-media {
   order: 10;
@@ -980,12 +983,6 @@
 }
 .prompter-viewer-center--viewer-grading-stack .prompter-viewer-slot-text-prompt-group {
   order: 24;
-}
-.prompter-viewer-center--viewer-grading-stack .prompter-viewer-slot-deck-later-nav {
-  order: 40;
-}
-.prompter-viewer-center--viewer-grading-stack .prompter-viewer-slot-deck-later-grade {
-  order: 50;
 }
 
 .prompter-viewer-caption-help-toggle {
@@ -1016,20 +1013,37 @@
   text-align: left;
 }
 
-.prompter-viewer-center-row--submission-nav {
-  margin-bottom: 12px;
-}
-
-.prompter-viewer-submission-nav-inner {
+.prompter-viewer-center-row--grading-toolbar {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 12px 16px;
-  justify-content: flex-start;
+  flex-direction: column;
+  align-items: stretch;
   width: 100%;
   max-width: 100%;
   min-width: 0;
   box-sizing: border-box;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  background: #fafafa;
+}
+
+.prompter-viewer-center-row--grading-toolbar .prompter-viewer-dropdown-row--grading-toolbar,
+.prompter-viewer-center-row--grading-toolbar .prompter-viewer-nav-row--grading-toolbar,
+.prompter-viewer-center-row--grading-toolbar .prompter-viewer-grade-row-full--grading-toolbar {
+  margin-bottom: 10px;
+}
+
+.prompter-viewer-center-row--grading-toolbar .prompter-viewer-reset-row--grading-toolbar {
+  margin-bottom: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.prompter-viewer-center-row--grading-toolbar .prompter-viewer-dropdown-row--grading-toolbar select {
+  max-width: 100%;
 }
 
 .prompter-viewer-center-row--grade {
@@ -1571,30 +1585,6 @@
   gap: 12px;
 }
 
-/* Submission strip: selector + prev/next share center width; later .dropdown-row select / .nav-row rules lose to this. */
-.prompter-viewer-submission-nav-inner .prompter-viewer-dropdown-row--inline {
-  margin-bottom: 0;
-  width: auto;
-  max-width: 100%;
-  flex: 1 1 220px;
-  min-width: 0;
-}
-
-.prompter-viewer-submission-nav-inner .prompter-viewer-dropdown-row--inline select {
-  flex: 1 1 8rem;
-  min-width: 0;
-  max-width: 100%;
-}
-
-.prompter-viewer-submission-nav-inner .prompter-viewer-nav-row--inline {
-  width: auto;
-  max-width: 100%;
-  flex: 0 1 auto;
-  min-width: 0;
-  margin-bottom: 0;
-  flex-wrap: wrap;
-}
-
 .prompter-viewer-nav-btn {
   padding: 8px 16px;
   background: var(--prompter-canvas-blue);
@@ -1660,6 +1650,11 @@
   color: #0a0;
 }
 
+.prompter-viewer-save-status--error {
+  color: #b00000;
+  font-weight: 600;
+}
+
 .prompter-viewer-reset-inline {
   display: flex;
   align-items: center;
@@ -1697,6 +1692,11 @@
 .prompter-viewer-reset-status {
   font-size: 13px;
   margin-left: 10px;
+}
+
+.prompter-viewer-reset-status--error {
+  color: #b00000;
+  font-weight: 600;
 }
 
 .prompter-viewer-error-box {
