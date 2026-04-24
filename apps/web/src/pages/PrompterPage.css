@@ -449,16 +449,49 @@
   border-radius: 6px 6px 0 0;
   border-color: #ccc;
   background: #fafafa;
+  font-size: 14px;
 }
 
 .prompter-prompt-rte-wrap .ql-container {
   border-radius: 0 0 6px 6px;
   border-color: #ccc;
-  font-size: 15px;
+  font-family: inherit;
+  font-size: 1rem;
+  line-height: 1.55;
 }
 
 .prompter-prompt-rte-wrap .ql-editor {
   min-height: 4.5rem;
+  font-size: 1rem;
+  line-height: 1.55;
+  color: #222;
+}
+
+.prompter-prompt-rte-wrap .ql-editor p,
+.prompter-prompt-rte-wrap .ql-editor li {
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.prompter-prompt-rte-wrap .ql-editor h1 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin: 0.45em 0 0.3em;
+  line-height: 1.25;
+}
+
+.prompter-prompt-rte-wrap .ql-editor h2 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin: 0.45em 0 0.3em;
+  line-height: 1.3;
+}
+
+.prompter-prompt-rte-wrap .ql-editor h3 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin: 0.45em 0 0.3em;
+  line-height: 1.35;
 }
 
 .prompter-instructions-rte .ql-editor {

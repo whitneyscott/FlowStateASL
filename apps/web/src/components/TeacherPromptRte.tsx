@@ -3,6 +3,7 @@ import 'react-quill/dist/quill.snow.css';
 
 const MODULES = {
   toolbar: [
+    [{ header: [1, 2, 3, false] }],
     ['bold', 'italic', 'underline'],
     [{ list: 'ordered' }, { list: 'bullet' }],
     ['link'],
@@ -10,7 +11,7 @@ const MODULES = {
   ],
 };
 
-const FORMATS = ['bold', 'italic', 'underline', 'list', 'bullet', 'link'];
+const FORMATS = ['header', 'bold', 'italic', 'underline', 'list', 'bullet', 'link'];
 
 type TeacherPromptRteProps = {
   value: string;
