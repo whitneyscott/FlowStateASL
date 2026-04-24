@@ -33,10 +33,15 @@ export function useLtiContext() {
         if (data?.authToken) {
           setAuthToken(data.authToken);
         }
-        console.log('[useLtiContext] loaded:', {
+        // assignmentId is what Timer/prompt config use—include it for student deck vs text debugging.
+        console.info('[useLtiContext] loaded', {
           source: bootNonce ? 'boot_nonce' : 'bearer',
           courseId: data?.courseId,
+          assignmentId: data?.assignmentId,
+          resourceLinkId: data?.resourceLinkId,
+          toolType: data?.toolType,
           userId: data?.userId,
+          roles: data?.roles,
           hasContext: !!(data?.courseId && data?.userId !== 'standalone'),
         });
         setContext(data);
