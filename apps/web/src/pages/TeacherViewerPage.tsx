@@ -1320,14 +1320,15 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   }, [activeDeckSproutVideoId, activeDeckSproutSecurityToken]);
 
   /** Sprout embed needs video id + security token (per Sprout `embed_code`), not the Canvas/env “account” id. */
-  const showStudentSourceCardButton =
-    !teacher && !!activeDeckPrompt && !!activeDeckSproutVideoId && !!activeDeckSproutSecurityToken;
+  const showSourceCardButton =
+    !!activeDeckPrompt && !!activeDeckSproutVideoId && !!activeDeckSproutSecurityToken;
 
-  // Bridge diagnostics: student "Show me the card" gating (active segment, Sprout id + security token on timeline).
+  // Bridge diagnostics: "Show me the card" gating (active segment, Sprout id + security token on timeline).
   const showMeCardDiagSigRef = useRef('');
   useEffect(() => {
-    if (teacher || !isDeckPromptMode || !assignmentId) return;
+    if (!isDeckPromptMode || !assignmentId) return;
     const sig = [
+      String(!!teacher),
       String(assignmentId),
       String(current?.userId ?? ''),
       String(isDeckPromptMode),
@@ -1335,12 +1336,12 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
       String(activeDeckPrompt?.title ?? ''),
       String(!!activeDeckSproutVideoId),
       String(!!activeDeckSproutSecurityToken),
-      String(!!showStudentSourceCardButton),
+      String(!!showSourceCardButton),
     ].join('|');
     if (sig === showMeCardDiagSigRef.current) return;
     showMeCardDiagSigRef.current = sig;
-    appendViewerBridgeLog('ShowMeCard (student) gate snapshot', {
-      teacher: false,
+    appendViewerBridgeLog('ShowMeCard gate snapshot', {
+      teacher: !!teacher,
       assignmentId,
       userId: current?.userId ?? '(none)',
       isDeckPromptMode,
@@ -1349,7 +1350,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
       activeDeckPromptStartSec: activeDeckPrompt ? Math.floor(activeDeckPrompt.startSec) : null,
       hasActiveDeckSproutVideoId: !!activeDeckSproutVideoId,
       hasActiveDeckSproutSecurityToken: !!activeDeckSproutSecurityToken,
-      showStudentSourceCardButton,
+      showSourceCardButton,
     });
   }, [
     teacher,
@@ -1361,7 +1362,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     activeDeckPrompt?.title,
     activeDeckSproutVideoId,
     activeDeckSproutSecurityToken,
-    showStudentSourceCardButton,
+    showSourceCardButton,
   ]);
 
   const rubricPromptIndexMap = useMemo(
@@ -2386,7 +2387,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                             className="prompter-viewer-active-item-prompt-html"
                             dangerouslySetInnerHTML={{ __html: activeDeckPrompt.title || '—' }}
                           />
-                          {showStudentSourceCardButton && (
+                          {showSourceCardButton && (
                             <button
                               type="button"
                               className="prompter-viewer-show-source-card-btn prompter-viewer-show-source-card-btn--inline-prompt"
@@ -2420,7 +2421,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                           className="prompter-viewer-active-item-prompt-html"
                           dangerouslySetInnerHTML={{ __html: activeDeckPrompt.title || '—' }}
                         />
-                        {showStudentSourceCardButton && (
+                        {showSourceCardButton && (
                           <button
                             type="button"
                             className="prompter-viewer-show-source-card-btn prompter-viewer-show-source-card-btn--inline-prompt"
