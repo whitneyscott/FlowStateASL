@@ -2500,19 +2500,21 @@
   border: 0;
 }
 
+.prompter-viewer-sprout-beside-model-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.75rem 1rem;
+  text-align: center;
+  font-size: 0.9rem;
+  line-height: 1.35;
+  color: rgba(255, 255, 255, 0.72);
+}
+
 .prompter-viewer-center-row--student-sprout-beside-toggle {
   margin: 0.5rem 0 0.25rem;
-}
-
-/* Single-column submission: same video element as dual mode; expand to full width of the wrap. */
-.prompter-viewer-sprout-beside-dual--submission-only .prompter-viewer-sprout-beside-dual-cols {
-  flex-wrap: nowrap;
-}
-
-.prompter-viewer-sprout-beside-dual--submission-only .prompter-viewer-sprout-beside-dual-sub-col {
-  flex: 1 1 100%;
-  max-width: 100%;
-  min-width: 0;
 }
 
 .prompter-viewer-youtube-dual-hint {
