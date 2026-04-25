@@ -2504,6 +2504,17 @@
   margin: 0.5rem 0 0.25rem;
 }
 
+/* Single-column submission: same video element as dual mode; expand to full width of the wrap. */
+.prompter-viewer-sprout-beside-dual--submission-only .prompter-viewer-sprout-beside-dual-cols {
+  flex-wrap: nowrap;
+}
+
+.prompter-viewer-sprout-beside-dual--submission-only .prompter-viewer-sprout-beside-dual-sub-col {
+  flex: 1 1 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
 .prompter-viewer-youtube-dual-hint {
   font-size: 0.88rem;
   color: rgba(0, 0, 0, 0.65);

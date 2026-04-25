@@ -2329,27 +2329,41 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                 {noSubmissionsInGradingMode ? (
                   <p className="prompter-viewer-no-video">No submissions for this assignment.</p>
                 ) : current?.videoUrl ? (
-                  showStudentIncorrectSproutDual ? (
-                    <div className="prompter-viewer-youtube-dual prompter-viewer-sprout-beside-dual">
-                      <div className="prompter-viewer-youtube-dual-cols">
-                        <div className="prompter-viewer-youtube-dual-col">
+                  !teacher && isDeckPromptMode && !youtubeDualLayout ? (
+                    <div
+                      className={
+                        'prompter-viewer-youtube-dual prompter-viewer-sprout-beside-dual' +
+                        (showStudentIncorrectSproutDual
+                          ? ''
+                          : ' prompter-viewer-sprout-beside-dual--submission-only')
+                      }
+                    >
+                      <div className="prompter-viewer-youtube-dual-cols prompter-viewer-sprout-beside-dual-cols">
+                        <div
+                          className="prompter-viewer-youtube-dual-col prompter-viewer-sprout-beside-dual-model-col"
+                          style={{ display: showStudentIncorrectSproutDual ? undefined : 'none' }}
+                        >
                           <h2 className="prompter-viewer-section-heading">Model (card)</h2>
                           <p className="prompter-viewer-hint-muted">Matches the deck item at the current playhead.</p>
                           <div className="prompter-viewer-youtube-dual-frame">
-                            <iframe
-                              key={`beside-sprout-${activeDeckIndex}-${activeDeckSproutVideoId}`}
-                              title="Sprout model for this card"
-                              src={studentBesideSproutEmbedSrc}
-                              className="prompter-viewer-sprout-beside-embed"
-                              allow="fullscreen; autoplay; encrypted-media"
-                              referrerPolicy="strict-origin-when-cross-origin"
-                            />
+                            {showStudentIncorrectSproutDual && studentBesideSproutEmbedSrc ? (
+                              <iframe
+                                key={`beside-sprout-${activeDeckIndex}-${activeDeckSproutVideoId}`}
+                                title="Sprout model for this card"
+                                src={studentBesideSproutEmbedSrc}
+                                className="prompter-viewer-sprout-beside-embed"
+                                allow="fullscreen; autoplay; encrypted-media"
+                                referrerPolicy="strict-origin-when-cross-origin"
+                              />
+                            ) : null}
                           </div>
                         </div>
-                        <div className="prompter-viewer-youtube-dual-col">
-                          <h2 className="prompter-viewer-section-heading">Your recording</h2>
+                        <div className="prompter-viewer-youtube-dual-col prompter-viewer-sprout-beside-dual-sub-col">
+                          {showStudentIncorrectSproutDual ? (
+                            <h2 className="prompter-viewer-section-heading">Your recording</h2>
+                          ) : null}
                           <GradingVideoPlayer
-                            hideControls
+                            hideControls={showStudentIncorrectSproutDual}
                             src={current.videoUrl}
                             videoKey={current.userId ?? ''}
                             videoRef={videoRef}
@@ -2359,26 +2373,26 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                           />
                         </div>
                       </div>
-                      <div className="prompter-viewer-youtube-dual-toolbar prompter-viewer-youtube-dual-toolbar--transport">
-                        <GradingPlaybackBar
-                          videoRef={videoRef}
-                          videoKey={current.userId ?? ''}
-                          videoDurationSeconds={current.videoDurationSeconds}
-                          durationSource={current.durationSource}
-                        />
-                      </div>
+                      {showStudentIncorrectSproutDual ? (
+                        <div className="prompter-viewer-youtube-dual-toolbar prompter-viewer-youtube-dual-toolbar--transport">
+                          <GradingPlaybackBar
+                            videoRef={videoRef}
+                            videoKey={current.userId ?? ''}
+                            videoDurationSeconds={current.videoDurationSeconds}
+                            durationSource={current.durationSource}
+                          />
+                        </div>
+                      ) : null}
                     </div>
                   ) : (
-                    <>
-                      <GradingVideoPlayer
-                        src={current.videoUrl}
-                        videoKey={current.userId ?? ''}
-                        videoRef={videoRef}
-                        videoDurationSeconds={current.videoDurationSeconds}
-                        durationSource={current.durationSource}
-                        captionsVtt={submissionCaptionsForPlayer}
-                      />
-                    </>
+                    <GradingVideoPlayer
+                      src={current.videoUrl}
+                      videoKey={current.userId ?? ''}
+                      videoRef={videoRef}
+                      videoDurationSeconds={current.videoDurationSeconds}
+                      durationSource={current.durationSource}
+                      captionsVtt={submissionCaptionsForPlayer}
+                    />
                   )
                 ) : hasSubmissionNoVideo ? (
                   <div className="prompter-viewer-processing">
