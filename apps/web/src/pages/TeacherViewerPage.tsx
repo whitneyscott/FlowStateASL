@@ -547,6 +547,8 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   const resizeDebugLastSentAtRef = useRef(0);
   const [textPromptVisible, setTextPromptVisible] = useState(false);
   const [captionHelpOpen, setCaptionHelpOpen] = useState(false);
+  /** Student: side-by-side model video when the active deck card has a not–full-credit rubric score. */
+  const [showIncorrectSourceBeside, setShowIncorrectSourceBeside] = useState(false);
   const [sourceCardPreview, setSourceCardPreview] = useState<{
     videoId: string;
     securityToken: string;
@@ -1462,6 +1464,41 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     return matches.sort((a, b) => a - b)[0];
   }, [activeDeckIndex, resolvedRubricDeckIndexMap, rubricPromptIndexMap]);
 
+  const activeCardRubricNotFullCredit = useMemo(() => {
+    if (activeDeckRubricRowIndex < 0 || activeDeckRubricRowIndex >= rubric.length) return false;
+    const c = rubric[activeDeckRubricRowIndex];
+    const critId = String(c.id ?? activeDeckRubricRowIndex);
+    return criterionRubricRowIsIncorrect(c, critId, rubricDraft, rubricAssessment);
+  }, [activeDeckRubricRowIndex, rubric, rubricDraft, rubricAssessment]);
+
+  const showStudentIncorrectSproutDual = useMemo(
+    () =>
+      !teacher &&
+      isDeckPromptMode &&
+      !youtubeDualLayout &&
+      showIncorrectSourceBeside &&
+      activeCardRubricNotFullCredit &&
+      !!current?.videoUrl &&
+      !!activeDeckSproutVideoId &&
+      !!activeDeckSproutSecurityToken,
+    [
+      teacher,
+      isDeckPromptMode,
+      youtubeDualLayout,
+      showIncorrectSourceBeside,
+      activeCardRubricNotFullCredit,
+      current?.videoUrl,
+      activeDeckSproutVideoId,
+      activeDeckSproutSecurityToken,
+    ],
+  );
+
+  const studentBesideSproutEmbedSrc = useMemo(() => {
+    if (!activeDeckSproutVideoId || !activeDeckSproutSecurityToken) return '';
+    const base = buildSproutVideoEmbedUrl(activeDeckSproutVideoId, activeDeckSproutSecurityToken);
+    return base.includes('?') ? `${base}&autoPlay=true&showControls=false` : `${base}?autoPlay=true&showControls=false`;
+  }, [activeDeckSproutVideoId, activeDeckSproutSecurityToken]);
+
   useLayoutEffect(() => {
     deckFeedbackAnchorRef.current = {
       isDeckPromptMode,
@@ -2271,20 +2308,78 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                 </div>
               )}
 
+              {!teacher &&
+                isDeckPromptMode &&
+                !youtubeDualLayout &&
+                rubric.length > 0 &&
+                current?.videoUrl && (
+                  <div className="prompter-viewer-center-row prompter-viewer-center-row--student-sprout-beside-toggle">
+                    <label className="prompter-viewer-cc-toggle">
+                      <input
+                        type="checkbox"
+                        checked={showIncorrectSourceBeside}
+                        onChange={(e) => setShowIncorrectSourceBeside(e.target.checked)}
+                      />{' '}
+                      Show model video beside my recording for cards that aren&apos;t at full credit
+                    </label>
+                  </div>
+                )}
+
               <div className="prompter-viewer-video-wrap">
                 {noSubmissionsInGradingMode ? (
                   <p className="prompter-viewer-no-video">No submissions for this assignment.</p>
                 ) : current?.videoUrl ? (
-                  <>
-                    <GradingVideoPlayer
-                      src={current.videoUrl}
-                      videoKey={current.userId ?? ''}
-                      videoRef={videoRef}
-                      videoDurationSeconds={current.videoDurationSeconds}
-                      durationSource={current.durationSource}
-                      captionsVtt={submissionCaptionsForPlayer}
-                    />
-                  </>
+                  showStudentIncorrectSproutDual ? (
+                    <div className="prompter-viewer-youtube-dual prompter-viewer-sprout-beside-dual">
+                      <div className="prompter-viewer-youtube-dual-cols">
+                        <div className="prompter-viewer-youtube-dual-col">
+                          <h2 className="prompter-viewer-section-heading">Model (card)</h2>
+                          <p className="prompter-viewer-hint-muted">Matches the deck item at the current playhead.</p>
+                          <div className="prompter-viewer-youtube-dual-frame">
+                            <iframe
+                              key={`beside-sprout-${activeDeckIndex}-${activeDeckSproutVideoId}`}
+                              title="Sprout model for this card"
+                              src={studentBesideSproutEmbedSrc}
+                              className="prompter-viewer-sprout-beside-embed"
+                              allow="fullscreen; autoplay; encrypted-media"
+                              referrerPolicy="strict-origin-when-cross-origin"
+                            />
+                          </div>
+                        </div>
+                        <div className="prompter-viewer-youtube-dual-col">
+                          <h2 className="prompter-viewer-section-heading">Your recording</h2>
+                          <GradingVideoPlayer
+                            hideControls
+                            src={current.videoUrl}
+                            videoKey={current.userId ?? ''}
+                            videoRef={videoRef}
+                            videoDurationSeconds={current.videoDurationSeconds}
+                            durationSource={current.durationSource}
+                            captionsVtt={submissionCaptionsForPlayer}
+                          />
+                        </div>
+                      </div>
+                      <div className="prompter-viewer-youtube-dual-toolbar prompter-viewer-youtube-dual-toolbar--transport">
+                        <GradingPlaybackBar
+                          videoRef={videoRef}
+                          videoKey={current.userId ?? ''}
+                          videoDurationSeconds={current.videoDurationSeconds}
+                          durationSource={current.durationSource}
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <GradingVideoPlayer
+                        src={current.videoUrl}
+                        videoKey={current.userId ?? ''}
+                        videoRef={videoRef}
+                        videoDurationSeconds={current.videoDurationSeconds}
+                        durationSource={current.durationSource}
+                        captionsVtt={submissionCaptionsForPlayer}
+                      />
+                    </>
+                  )
                 ) : hasSubmissionNoVideo ? (
                   <div className="prompter-viewer-processing">
                     <p>Your submission is being processed. Video will appear shortly. Refresh the page to check.</p>
