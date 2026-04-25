@@ -6,18 +6,20 @@ import './SproutSourceCardModal.css';
 export interface SproutSourceCardModalProps {
   isOpen: boolean;
   onClose: () => void;
-  sproutAccountId: string;
+  /** Sprout API video id (first path segment). */
   videoId: string;
+  /** Sprout security token (second path segment in embed URL). */
+  securityToken: string;
 }
 
 /**
- * Full-screen-style overlay with Sprout embed for the deck source card (student and teacher when opened from rubric).
+ * Full-screen-style overlay with Sprout embed for the deck source card.
  */
 export function SproutSourceCardModal({
   isOpen,
   onClose,
-  sproutAccountId,
   videoId,
+  securityToken,
 }: SproutSourceCardModalProps) {
   const titleId = useId();
   const closeBtnRef = useRef<HTMLButtonElement>(null);
@@ -34,26 +36,25 @@ export function SproutSourceCardModal({
   useEffect(() => {
     if (!isOpen) return;
     closeBtnRef.current?.focus();
-  }, [isOpen, videoId]);
+  }, [isOpen, videoId, securityToken]);
 
   useEffect(() => {
-    if (!isOpen || !videoId.trim() || !sproutAccountId.trim()) return;
-    const account = sproutAccountId.trim();
+    if (!isOpen || !videoId.trim() || !securityToken.trim()) return;
     const vid = videoId.trim();
-    const src = buildSproutVideoEmbedUrl(account, vid);
-    console.info('[SproutSourceCard] open embed', { sproutAccountId: account, videoId: vid, embedSrc: src });
+    const tok = securityToken.trim();
+    const src = buildSproutVideoEmbedUrl(vid, tok);
+    console.info('[SproutSourceCard] open embed', { videoId: vid, securityToken: tok, embedSrc: src });
     appendBridgeLog('sprout-source-card', 'Sprout source modal open', {
-      sproutAccountIdLen: account.length,
       videoId: vid,
       embedSrc: src,
     });
-  }, [isOpen, videoId, sproutAccountId]);
+  }, [isOpen, videoId, securityToken]);
 
-  if (!isOpen || !videoId.trim() || !sproutAccountId.trim()) {
+  if (!isOpen || !videoId.trim() || !securityToken.trim()) {
     return null;
   }
 
-  const src = buildSproutVideoEmbedUrl(sproutAccountId, videoId);
+  const src = buildSproutVideoEmbedUrl(videoId, securityToken);
 
   return (
     <div
@@ -85,7 +86,7 @@ export function SproutSourceCardModal({
         <div className="prompter-source-card-modal-body">
           <div className="prompter-source-card-modal-iframe-wrap">
             <iframe
-              key={videoId}
+              key={`${videoId}-${securityToken}`}
               title="Sprout source card video"
               src={src}
               allow="fullscreen; autoplay; encrypted-media"

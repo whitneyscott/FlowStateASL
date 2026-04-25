@@ -1,6 +1,7 @@
 /**
- * Sprout iframe URL is `https://videos.sproutvideo.com/embed/{videoId}/{securityToken}` (see Sprout API
- * `embed_code` and docs). It is not accountId/videoId.
+ * Sprout inline embed URL uses **video id** and **security token** (per Sprout API / embed_code),
+ * not the account id. See https://www.sproutvideo.com/docs/api.html — `embed_code` contains
+ * `videos.sproutvideo.com/embed/{id}/{security_token}`.
  */
 export function parseSproutEmbedPairFromEmbedCode(embedCode: string | null | undefined): {
   videoId: string;

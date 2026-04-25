@@ -8,6 +8,7 @@ import { ManualTokenModal } from '../components/ManualTokenModal';
 import { resolveLtiContextValue } from '../utils/lti-context';
 import { ltiTokenHeaders } from '../api/lti-token';
 import { appendBridgeLog } from '../utils/bridge-log';
+import { parseSproutEmbedPairFromEmbedCode } from '../utils/sprout-embed';
 import { nextDeckIndexAfterAdvance } from '../utils/deck-advance';
 import { YoutubeStimulusShell } from '../components/YoutubeStimulusShell';
 import { YoutubeIframePlayer } from '../components/YoutubeIframePlayer';
@@ -49,6 +50,7 @@ const DECK_FALLBACK_TOTAL_SECONDS = DECK_MIN_VIDEO_FLOOR_SECONDS + DECK_COGNITIV
 interface DeckPromptItem {
   title: string;
   videoId?: string;
+  securityToken?: string;
   /** Total seconds for this card (see server buildDeckPromptList). */
   duration: number;
 }
@@ -100,7 +102,7 @@ function toMb(sizeBytes: number): string {
   return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-type FlashcardPlaylistItem = { id?: string; title?: string };
+type FlashcardPlaylistItem = { id?: string; title?: string; embed?: string };
 
 /** When live build-deck-prompts returns rows without Sprout ids, hydrate from playlist cache (same source as Flashcards). */
 async function hydrateDeckPromptVideoIds(
@@ -109,9 +111,12 @@ async function hydrateDeckPromptVideoIds(
 ): Promise<DeckPromptItem[]> {
   if (!prompts.length || !selectedDecks.length) return prompts;
   const needsId = prompts.some((p) => !(p.videoId ?? '').trim());
-  if (!needsId) return prompts;
+  const needsToken = prompts.some(
+    (p) => (p.videoId ?? '').trim() && !(p.securityToken ?? '').trim(),
+  );
+  if (!needsId && !needsToken) return prompts;
 
-  const titleToIds = new Map<string, string[]>();
+  const titleToItems = new Map<string, Array<{ id: string; embed?: string }>>();
   const norm = (t: string) => t.toLowerCase().trim();
 
   await Promise.all(
@@ -130,9 +135,9 @@ async function hydrateDeckPromptVideoIds(
           const title = String(it.title ?? '').trim();
           if (!vid || !title) continue;
           const key = norm(title);
-          const arr = titleToIds.get(key) ?? [];
-          arr.push(vid);
-          titleToIds.set(key, arr);
+          const arr = titleToItems.get(key) ?? [];
+          arr.push({ id: vid, embed: it.embed });
+          titleToItems.set(key, arr);
         }
       } catch {
         /* best-effort only */
@@ -141,12 +146,24 @@ async function hydrateDeckPromptVideoIds(
   );
 
   return prompts.map((p) => {
-    const existing = (p.videoId ?? '').trim();
-    if (existing) return p;
-    const ids = titleToIds.get(norm(p.title));
-    const first = ids?.[0]?.trim();
-    if (!first) return p;
-    return { ...p, videoId: first };
+    const existingVid = (p.videoId ?? '').trim();
+    const items = titleToItems.get(norm(p.title));
+    const first = items?.[0];
+    if (existingVid) {
+      if ((p.securityToken ?? '').trim() || !first?.embed) return p;
+      const pair = parseSproutEmbedPairFromEmbedCode(first.embed);
+      if (pair && pair.videoId === existingVid) {
+        return { ...p, securityToken: pair.securityToken };
+      }
+      return p;
+    }
+    if (!first?.id) return p;
+    const vid = String(first.id).trim();
+    const pair = first.embed ? parseSproutEmbedPairFromEmbedCode(first.embed) : null;
+    if (pair && pair.videoId === vid) {
+      return { ...p, videoId: vid, securityToken: pair.securityToken };
+    }
+    return { ...p, videoId: vid };
   });
 }
 
@@ -332,7 +349,9 @@ export default function TimerPage({ context }: TimerPageProps) {
   const lastDeckTimelineRef = useRef<promptApi.DeckTimelineEntry[] | undefined>(undefined);
   /** MediaRecorder `onstart` time; used to mark deck card boundaries in the real recording timeline. */
   const recordStartPerfRef = useRef(0);
-  const deckBoundaryListRef = useRef<Array<{ title: string; startSec: number; videoId?: string }>>([]);
+  const deckBoundaryListRef = useRef<
+    Array<{ title: string; startSec: number; videoId?: string; securityToken?: string }>
+  >([]);
   const autoFinishFiredRef = useRef(false);
   /** Prevents double-handling when per-card timer hits 0 (React strict / re-renders). */
   const deckZeroHandledForIndexRef = useRef<number>(-1);
@@ -1088,10 +1107,12 @@ export default function TimerPage({ context }: TimerPageProps) {
       const nextItem = deckPrompts[nextPrompt];
       const title = nextItem?.title ?? '';
       const videoId = nextItem?.videoId?.trim();
+      const secTok = (nextItem?.securityToken ?? '').trim();
       deckBoundaryListRef.current.push({
         title,
         startSec: Math.round(elapsed * 1000) / 1000,
         ...(videoId ? { videoId } : {}),
+        ...(secTok ? { securityToken: secTok } : {}),
       });
       setPromptIndex(nextPrompt);
       // Avoid a frame where index advanced but seconds stayed 0 (would re-trigger this effect).
@@ -1138,10 +1159,14 @@ export default function TimerPage({ context }: TimerPageProps) {
       recordStartPerfRef.current = performance.now();
       deckBoundaryListRef.current = [];
       if (deckPrompts.length > 0) {
+        const p0 = deckPrompts[0];
+        const v0 = p0?.videoId?.trim();
+        const s0 = p0?.securityToken?.trim();
         deckBoundaryListRef.current.push({
-          title: deckPrompts[0]?.title ?? '',
+          title: p0?.title ?? '',
           startSec: 0,
-          ...(deckPrompts[0]?.videoId?.trim() ? { videoId: deckPrompts[0].videoId.trim() } : {}),
+          ...(v0 ? { videoId: v0 } : {}),
+          ...(s0 ? { securityToken: s0 } : {}),
         });
       }
       setCaptureProfile((prev) => ({
@@ -1172,6 +1197,7 @@ export default function TimerPage({ context }: TimerPageProps) {
                 title: e.title,
                 startSec: e.startSec,
                 ...(e.videoId ? { videoId: e.videoId } : {}),
+                ...(e.securityToken ? { securityToken: e.securityToken } : {}),
               }))
             : undefined;
         lastDeckTimelineRef.current = deckTimeline;

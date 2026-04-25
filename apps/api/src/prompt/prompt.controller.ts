@@ -278,7 +278,7 @@ export class PromptController {
           audioBitsPerSecond?: number;
         }
       | undefined;
-    let deckTimeline: Array<{ title: string; startSec: number; videoId?: string }> | undefined;
+    let deckTimeline: Array<{ title: string; startSec: number; videoId?: string; securityToken?: string }> | undefined;
     const rawDeck = body?.deckTimeline;
     if (typeof rawDeck === 'string' && rawDeck.trim()) {
       try {
@@ -289,10 +289,14 @@ export class PromptController {
               const vidRaw = (e as { videoId?: unknown })?.videoId;
               const videoId =
                 vidRaw != null && String(vidRaw).trim().length > 0 ? String(vidRaw).trim() : undefined;
+              const stRaw = (e as { securityToken?: unknown })?.securityToken;
+              const securityToken =
+                stRaw != null && String(stRaw).trim().length > 0 ? String(stRaw).trim() : undefined;
               return {
                 title: String((e as { title?: unknown })?.title ?? ''),
                 startSec: Number((e as { startSec?: unknown })?.startSec),
                 ...(videoId ? { videoId } : {}),
+                ...(securityToken ? { securityToken } : {}),
               };
             })
             .filter((r) => Number.isFinite(r.startSec));

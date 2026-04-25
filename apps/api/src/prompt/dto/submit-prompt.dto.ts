@@ -4,6 +4,8 @@ export class DeckTimelineEntryDto {
   startSec: number;
   /** Sprout video id for the prompt source clip (optional; older clients omit). */
   videoId?: string;
+  /** Sprout security token — second path segment in embed URL (optional; older clients omit). */
+  securityToken?: string;
 }
 
 export class SubmitPromptDto {

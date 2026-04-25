@@ -62,6 +62,8 @@ interface DeckTimelineEntry {
   startSec: number;
   /** Sprout source video id for this prompt (optional on older submissions). */
   videoId?: string;
+  /** Second Sprout embed path segment (optional on older submissions). */
+  securityToken?: string;
 }
 
 function deckTimelineFromParsedJson(parsed: { deckTimeline?: unknown }): DeckTimelineEntry[] {
@@ -70,12 +72,13 @@ function deckTimelineFromParsedJson(parsed: { deckTimeline?: unknown }): DeckTim
   const out: DeckTimelineEntry[] = [];
   for (const item of raw) {
     if (!item || typeof item !== 'object') continue;
-    const o = item as { title?: unknown; startSec?: unknown; videoId?: unknown };
+    const o = item as { title?: unknown; startSec?: unknown; videoId?: unknown; securityToken?: unknown };
     const title = String(o.title ?? '');
     const startSec = Number(o.startSec);
     if (!Number.isFinite(startSec)) continue;
     const vid = String(o.videoId ?? '').trim();
-    out.push({ title, startSec, ...(vid ? { videoId: vid } : {}) });
+    const st = String((o as { securityToken?: unknown }).securityToken ?? '').trim();
+    out.push({ title, startSec, ...(vid ? { videoId: vid } : {}), ...(st ? { securityToken: st } : {}) });
   }
   out.sort((a, b) => a.startSec - b.startSec);
   return out;
@@ -544,7 +547,10 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   const resizeDebugLastSentAtRef = useRef(0);
   const [textPromptVisible, setTextPromptVisible] = useState(false);
   const [captionHelpOpen, setCaptionHelpOpen] = useState(false);
-  const [sourceCardPreviewVideoId, setSourceCardPreviewVideoId] = useState<string | null>(null);
+  const [sourceCardPreview, setSourceCardPreview] = useState<{
+    videoId: string;
+    securityToken: string;
+  } | null>(null);
   const ytStimulusRef = useRef<YoutubeIframePlayerHandle>(null);
   const [teacherStimulusCaptions, setTeacherStimulusCaptions] = useState(false);
   const [studentStimulusCaptions, setStudentStimulusCaptions] = useState(false);
@@ -729,7 +735,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   }, [gradingMode, submissions, index, mySubmission]);
 
   useEffect(() => {
-    setSourceCardPreviewVideoId(null);
+    setSourceCardPreview(null);
   }, [rubricDraftBootstrapKey]);
 
   const currentRef = useRef(current);
@@ -1271,10 +1277,8 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     [currentTime, deckTimeline],
   );
 
-  const sproutAccountIdForEmbed = assignment?.sproutAccountId?.trim() ?? '';
-
   const closeSourceCardModal = useCallback(() => {
-    setSourceCardPreviewVideoId(null);
+    setSourceCardPreview(null);
   }, []);
 
   const activeDeckIndex = useMemo(() => {
@@ -1294,21 +1298,32 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     return '';
   }, [activeDeckPrompt, activeDeckIndex, deckTimeline]);
 
+  const activeDeckSproutSecurityToken = useMemo(() => {
+    if (!activeDeckPrompt) return '';
+    const st = (activeDeckPrompt as DeckTimelineEntry).securityToken?.trim();
+    if (st) return st;
+    if (activeDeckIndex >= 0 && deckTimeline[activeDeckIndex]?.securityToken?.trim()) {
+      return deckTimeline[activeDeckIndex].securityToken!.trim();
+    }
+    return '';
+  }, [activeDeckPrompt, activeDeckIndex, deckTimeline]);
+
   const openSourceCardModal = useCallback(() => {
     const vid = activeDeckSproutVideoId;
-    if (!vid || !sproutAccountIdForEmbed) return;
+    const tok = activeDeckSproutSecurityToken;
+    if (!vid || !tok) return;
     videoRef.current?.pause();
-    const acct = sproutAccountIdForEmbed.trim();
-    const src = buildSproutVideoEmbedUrl(acct, vid);
-    console.info('[TeacherViewer] Sprout source (active item)', { videoId: vid, sproutAccountId: acct, embedSrc: src });
+    const src = buildSproutVideoEmbedUrl(vid, tok);
+    console.info('[TeacherViewer] Sprout source (active item)', { videoId: vid, securityToken: tok, embedSrc: src });
     appendViewerBridgeLog('Sprout source card (active item)', { videoId: vid, embedSrc: src });
-    setSourceCardPreviewVideoId(vid);
-  }, [activeDeckSproutVideoId, sproutAccountIdForEmbed]);
+    setSourceCardPreview({ videoId: vid, securityToken: tok });
+  }, [activeDeckSproutVideoId, activeDeckSproutSecurityToken]);
 
-  /** Students (non-teacher) see "Show me the card" in /viewer; teachers use rubric "incorrect" row links. Same embed as Flashcards. */
-  const showStudentSourceCardButton = !teacher && !!sproutAccountIdForEmbed && !!activeDeckPrompt;
+  /** Sprout embed needs video id + security token (per Sprout `embed_code`), not the Canvas/env “account” id. */
+  const showStudentSourceCardButton =
+    !teacher && !!activeDeckPrompt && !!activeDeckSproutVideoId && !!activeDeckSproutSecurityToken;
 
-  // Bridge diagnostics: student "Show me the card" gating (Sprout account, active segment, video id on timeline).
+  // Bridge diagnostics: student "Show me the card" gating (active segment, Sprout id + security token on timeline).
   const showMeCardDiagSigRef = useRef('');
   useEffect(() => {
     if (teacher || !isDeckPromptMode || !assignmentId) return;
@@ -1318,8 +1333,8 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
       String(isDeckPromptMode),
       String(activeDeckPrompt?.startSec ?? ''),
       String(activeDeckPrompt?.title ?? ''),
-      String(!!sproutAccountIdForEmbed),
       String(!!activeDeckSproutVideoId),
+      String(!!activeDeckSproutSecurityToken),
       String(!!showStudentSourceCardButton),
     ].join('|');
     if (sig === showMeCardDiagSigRef.current) return;
@@ -1332,9 +1347,8 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
       deckTimelineLen: deckTimeline.length,
       activeDeckPromptPresent: !!activeDeckPrompt,
       activeDeckPromptStartSec: activeDeckPrompt ? Math.floor(activeDeckPrompt.startSec) : null,
-      hasSproutAccountIdForEmbed: !!sproutAccountIdForEmbed,
-      sproutAccountIdForEmbedLen: sproutAccountIdForEmbed.length,
       hasActiveDeckSproutVideoId: !!activeDeckSproutVideoId,
+      hasActiveDeckSproutSecurityToken: !!activeDeckSproutSecurityToken,
       showStudentSourceCardButton,
     });
   }, [
@@ -1345,8 +1359,8 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     current?.userId,
     activeDeckPrompt?.startSec,
     activeDeckPrompt?.title,
-    sproutAccountIdForEmbed,
     activeDeckSproutVideoId,
+    activeDeckSproutSecurityToken,
     showStudentSourceCardButton,
   ]);
 
@@ -1744,8 +1758,8 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                               <td>{mappedDeckPrompt ? formatTime(Math.floor(mappedDeckPrompt.startSec)) : '—'}</td>
                               <td onClick={(e) => e.stopPropagation()}>
                                 {mappedDeckPrompt &&
-                                sproutAccountIdForEmbed &&
                                 (mappedDeckPrompt.videoId ?? '').trim() &&
+                                (mappedDeckPrompt.securityToken ?? '').trim() &&
                                 criterionRubricRowIsIncorrect(c, critId, rubricDraft, rubricAssessment) ? (
                                   <a
                                     href="#sprout-source"
@@ -1755,16 +1769,15 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                                       e.preventDefault();
                                       e.stopPropagation();
                                       const vid = (mappedDeckPrompt.videoId ?? '').trim();
-                                      if (vid) {
+                                      const tok = (mappedDeckPrompt.securityToken ?? '').trim();
+                                      if (vid && tok) {
                                         videoRef.current?.pause();
-                                        const acct = sproutAccountIdForEmbed.trim();
-                                        const src = buildSproutVideoEmbedUrl(acct, vid);
+                                        const src = buildSproutVideoEmbedUrl(vid, tok);
                                         console.info('[TeacherViewer] Sprout source (incorrect rubric row)', {
                                           videoId: vid,
                                           rubricCriterionId: critId,
                                           mappedDeckIndex: mappedDeckIdx,
                                           deckStartSec: mappedDeckPrompt.startSec,
-                                          sproutAccountId: acct,
                                           embedSrc: src,
                                         });
                                         appendViewerBridgeLog('Sprout source card (incorrect rubric row)', {
@@ -1774,7 +1787,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                                           deckStartSec: mappedDeckPrompt.startSec,
                                           embedSrc: src,
                                         });
-                                        setSourceCardPreviewVideoId(vid);
+                                        setSourceCardPreview({ videoId: vid, securityToken: tok });
                                       }
                                     }}
                                   >
@@ -2377,12 +2390,12 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                             <button
                               type="button"
                               className="prompter-viewer-show-source-card-btn prompter-viewer-show-source-card-btn--inline-prompt"
-                              disabled={!sproutAccountIdForEmbed || !activeDeckSproutVideoId}
+                              disabled={!activeDeckSproutVideoId || !activeDeckSproutSecurityToken}
                               title={
-                                !sproutAccountIdForEmbed
-                                  ? 'Sprout embed is not configured for this environment'
-                                  : !activeDeckSproutVideoId
-                                    ? 'No Sprout source video is recorded for this card on the timeline'
+                                !activeDeckSproutVideoId
+                                  ? 'No Sprout source video is recorded for this card on the timeline'
+                                  : !activeDeckSproutSecurityToken
+                                    ? 'No Sprout security token for this card (sync decks or re-submit to refresh)'
                                     : 'Pause submission video and open the Sprout source for this card'
                               }
                               onClick={openSourceCardModal}
@@ -2411,12 +2424,12 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                           <button
                             type="button"
                             className="prompter-viewer-show-source-card-btn prompter-viewer-show-source-card-btn--inline-prompt"
-                            disabled={!sproutAccountIdForEmbed || !activeDeckSproutVideoId}
+                            disabled={!activeDeckSproutVideoId || !activeDeckSproutSecurityToken}
                             title={
-                              !sproutAccountIdForEmbed
-                                ? 'Sprout embed is not configured for this environment'
-                                : !activeDeckSproutVideoId
-                                  ? 'No Sprout source video is recorded for this card on the timeline'
+                              !activeDeckSproutVideoId
+                                ? 'No Sprout source video is recorded for this card on the timeline'
+                                : !activeDeckSproutSecurityToken
+                                  ? 'No Sprout security token for this card (sync decks or re-submit to refresh)'
                                   : 'Pause submission video and open the Sprout source for this card'
                             }
                             onClick={openSourceCardModal}
@@ -2473,10 +2486,10 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
         )}
       </div>
       <SproutSourceCardModal
-        isOpen={sourceCardPreviewVideoId != null}
+        isOpen={sourceCardPreview != null}
         onClose={closeSourceCardModal}
-        sproutAccountId={sproutAccountIdForEmbed}
-        videoId={sourceCardPreviewVideoId ?? ''}
+        videoId={sourceCardPreview?.videoId ?? ''}
+        securityToken={sourceCardPreview?.securityToken ?? ''}
       />
       {feedbackEditEntry && (
         <div

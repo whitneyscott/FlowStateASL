@@ -1,5 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import {
+  buildSproutVideoEmbedUrl,
+  parseSproutEmbedPairFromEmbedCode,
+} from '../common/utils/sprout-embed-url.util';
 import type {
   SproutPlaylist,
   SproutPlaylistListItem,
@@ -62,7 +66,14 @@ export class SproutVideoService {
   async fetchVideosByPlaylistId(
     playlistId: string,
   ): Promise<
-    Array<{ id: string; title: string; embed_code: string; durationSeconds: number | null }>
+    Array<{
+      id: string;
+      title: string;
+      embed_code: string;
+      /** Second path segment for `videos.sproutvideo.com/embed/{id}/{securityToken}`. */
+      securityToken: string;
+      durationSeconds: number | null;
+    }>
   > {
     const apiKey = this.config.get('SPROUT_KEY');
     if (!apiKey) throw new Error('SproutVideo not configured');
@@ -71,6 +82,7 @@ export class SproutVideoService {
       id: string;
       title: string;
       embed_code: string;
+      securityToken: string;
       durationSeconds: number | null;
     }> = [];
     const perPage = 100;
@@ -143,6 +155,7 @@ export class SproutVideoService {
           id?: string;
           title?: string;
           embed_code?: string;
+          security_token?: string;
           duration?: number | null;
           length?: number | null;
         }>;
@@ -159,10 +172,20 @@ export class SproutVideoService {
             : typeof v.length === 'number' && Number.isFinite(v.length) && v.length > 0
               ? v.length
               : null;
+        const idStr = String(v.id);
+        const embedCode = String(v.embed_code ?? '');
+        let securityToken = '';
+        const pair = parseSproutEmbedPairFromEmbedCode(embedCode);
+        if (pair && pair.videoId === idStr) {
+          securityToken = pair.securityToken;
+        } else if (typeof v.security_token === 'string' && v.security_token.trim()) {
+          securityToken = v.security_token.trim();
+        }
         all.push({
-          id: String(v.id),
+          id: idStr,
           title: String(v.title ?? 'Vocabulary Item'),
-          embed_code: String(v.embed_code ?? ''),
+          embed_code: embedCode,
+          securityToken,
           durationSeconds: raw,
         });
       }
@@ -460,7 +483,7 @@ export class SproutVideoService {
     if (!id) throw new Error('SproutVideo uploadVideo returned no id');
     const embedUrl =
       securityToken && id
-        ? `https://videos.sproutvideo.com/embed/${id}/${securityToken}`
+        ? buildSproutVideoEmbedUrl(id, securityToken)
         : (data.embed_code?.match(/src='([^']+)'/) ?? [])[1] ?? '';
     return { id, embedUrl: embedUrl || `https://videos.sproutvideo.com/embed/${id}` };
   }

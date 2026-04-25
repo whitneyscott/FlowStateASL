@@ -270,12 +270,6 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     const goToPlaylistView = viewAsPlaylist;
     setView(goToPlaylistView ? 'playlist' : 'study');
     setDeckTotalFromCache(null);
-    const sproutAccountId = courseSettings?.sproutAccountId;
-    const buildEmbed = (videoId: string) =>
-      sproutAccountId
-        ? `<iframe src="https://videos.sproutvideo.com/embed/${sproutAccountId}/${videoId}" class="sproutvideo-player" width="640" height="360" frameborder="0" allowfullscreen></iframe>`
-        : undefined;
-
     setDeckItemsLoading(true);
     try {
       const res = await fetch(
@@ -295,12 +289,7 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
         return;
       }
       let list: VideoItem[] = Array.isArray(data) ? data : [];
-      if (sproutAccountId) {
-        list = list.map((it) => ({
-          ...it,
-          embed: it.embed || (it.id ? buildEmbed(it.id) : undefined),
-        }));
-      }
+      /** `embed` must come from server (Sprout `embed_code` in cache). Do not synthesize from id alone — URL is `/embed/{videoId}/{securityToken}`, not account/id. */
       if (singleVersionPerAnswer) {
         const seen = new Set<string>();
         list = list.filter((item: VideoItem) => {

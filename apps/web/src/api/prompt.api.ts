@@ -138,6 +138,8 @@ export interface PromptConfig {
 export interface DeckPromptItem {
   title: string;
   videoId?: string;
+  /** Second path segment for Sprout embed (with videoId). */
+  securityToken?: string;
   duration: number;
 }
 
@@ -222,6 +224,8 @@ export interface DeckTimelineEntry {
   startSec: number;
   /** Sprout source video id for this prompt card (when deck mode used Sprout-backed items). */
   videoId?: string;
+  /** Sprout security token (second embed URL segment), when known. */
+  securityToken?: string;
 }
 
 export async function savePrompt(promptText: string, assignmentId?: string | null): Promise<void> {

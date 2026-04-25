@@ -28,6 +28,7 @@ import {
 } from '../common/utils/canvas-base-url.util';
 import { resolveCanvasApiUserId } from '../common/utils/canvas-api-user.util';
 import { getSproutAccountId } from '../common/utils/sprout-account-id.util';
+import { parseSproutEmbedPairFromEmbedCode } from '../common/utils/sprout-embed-url.util';
 import type { PromptConfigJson, PutPromptConfigDto, VideoPromptConfig } from './dto/prompt-config.dto';
 import { cleanupWebmVttMuxOutputPath } from './ffmpeg-captions.util';
 import { tryPreuploadSignToVoiceCaptionsMux } from './sign-to-voice-preupload.util';
@@ -111,6 +112,8 @@ interface DeckCardSource {
   id: string;
   title: string;
   durationSeconds: number | null;
+  /** Sprout security token (second embed path segment) when known. */
+  securityToken: string | null;
 }
 
 /** Canvas shows "submitted" when workflow_state is submitted or graded. Match that. */
@@ -406,11 +409,13 @@ export class PromptService {
         if (!key || seen.has(key)) continue;
         seen.add(key);
         const ds = v.durationSeconds;
+        const st = (v.securityToken ?? '').trim();
         deduped.push({
           id: v.id,
           title: v.title.trim(),
           durationSeconds:
             typeof ds === 'number' && Number.isFinite(ds) && ds > 0 ? ds : null,
+          securityToken: st.length > 0 ? st : null,
         });
       }
       this.deckSourceCache.set(deckId, {
@@ -2245,7 +2250,7 @@ export class PromptService {
     selectedDecks: Array<{ id: string; title: string }>,
     totalCards: number,
   ): Promise<{
-    prompts: Array<{ title: string; videoId?: string; duration: number }>;
+    prompts: Array<{ title: string; videoId?: string; securityToken?: string; duration: number }>;
     warning?: string;
   }> {
     // Suppressed: noisy on every deck build — controller logs request/result when needed.
@@ -2255,7 +2260,10 @@ export class PromptService {
     }
 
     // Step 1: Fetch all cards from each deck (Sprout list includes duration; also persisted in DB on sync)
-    const deckCards = new Map<string, Array<{ id: string; title: string; durationSeconds: number | null }>>();
+    const deckCards = new Map<
+      string,
+      Array<{ id: string; title: string; durationSeconds: number | null; securityToken: string | null }>
+    >();
     for (const deck of selectedDecks) {
       try {
         const deduped = await this.getDeckCardsWithCache(deck.id);
@@ -2276,7 +2284,12 @@ export class PromptService {
       Number.isFinite(requestedTotal) && requestedTotal > 0 ? Math.floor(requestedTotal) : 10;
 
     // Step 4: Round-robin selection across decks
-    const selected: Array<{ title: string; videoId?: string; durationSeconds?: number | null }> = [];
+    const selected: Array<{
+      title: string;
+      videoId?: string;
+      securityToken?: string;
+      durationSeconds?: number | null;
+    }> = [];
     const usedTitles = new Set<string>();
     const deckIndices = new Map<string, number>(); // Track current position in each deck
     selectedDecks.forEach(d => deckIndices.set(d.id, 0));
@@ -2295,9 +2308,11 @@ export class PromptService {
           const card = cards[idx];
           const key = card.title.toLowerCase().trim();
           if (!usedTitles.has(key)) {
+            const sec = (card.securityToken ?? '').trim();
             selected.push({
               title: card.title,
               videoId: card.id,
+              ...(sec ? { securityToken: sec } : {}),
               durationSeconds: card.durationSeconds ?? null,
             });
             usedTitles.add(key);
@@ -2364,6 +2379,7 @@ export class PromptService {
     const prompts = selected.map((s) => ({
       title: s.title,
       videoId: s.videoId,
+      ...(s.securityToken?.trim() ? { securityToken: s.securityToken.trim() } : {}),
       duration: this.deckCardTotalSeconds(resolveVideoSeconds(s)),
     }));
 
@@ -2427,8 +2443,10 @@ export class PromptService {
    * Preserves optional Sprout `videoId` per row when present (non-empty string).
    */
   private sanitizeDeckTimelineInput(
-    deckTimeline: Array<{ title?: unknown; startSec?: unknown; videoId?: unknown }> | undefined,
-  ): Array<{ title: string; startSec: number; videoId?: string }> | undefined {
+    deckTimeline:
+      | Array<{ title?: unknown; startSec?: unknown; videoId?: unknown; securityToken?: unknown }>
+      | undefined,
+  ): Array<{ title: string; startSec: number; videoId?: string; securityToken?: string }> | undefined {
     if (!Array.isArray(deckTimeline) || deckTimeline.length === 0) return undefined;
     const rows = deckTimeline
       .map((e) => {
@@ -2437,7 +2455,10 @@ export class PromptService {
         const vidRaw = (e as { videoId?: unknown }).videoId;
         const videoId =
           vidRaw != null && String(vidRaw).trim().length > 0 ? String(vidRaw).trim() : undefined;
-        return { title, startSec, videoId };
+        const stRaw = (e as { securityToken?: unknown }).securityToken;
+        const securityToken =
+          stRaw != null && String(stRaw).trim().length > 0 ? String(stRaw).trim() : undefined;
+        return { title, startSec, videoId, securityToken };
       })
       .filter((r) => Number.isFinite(r.startSec));
     if (rows.length === 0) return undefined;
@@ -2446,6 +2467,7 @@ export class PromptService {
       title: r.title,
       startSec: Math.round(r.startSec * 1000) / 1000,
       ...(r.videoId ? { videoId: r.videoId } : {}),
+      ...(r.securityToken ? { securityToken: r.securityToken } : {}),
     }));
   }
 
@@ -2455,8 +2477,8 @@ export class PromptService {
    */
   private async enrichDeckTimelineVideoIds(
     ctx: LtiContext,
-    rows: Array<{ title: string; startSec: number; videoId?: string }> | undefined,
-  ): Promise<Array<{ title: string; startSec: number; videoId?: string }> | undefined> {
+    rows: Array<{ title: string; startSec: number; videoId?: string; securityToken?: string }> | undefined,
+  ): Promise<Array<{ title: string; startSec: number; videoId?: string; securityToken?: string }> | undefined> {
     if (!rows?.length) return rows;
     const missing = rows.filter((r) => !(r.videoId ?? '').trim());
     if (missing.length > 0) {
@@ -2474,7 +2496,39 @@ export class PromptService {
       title: r.title,
       startSec: Math.round(r.startSec * 1000) / 1000,
       ...(r.videoId?.trim() ? { videoId: r.videoId.trim() } : {}),
+      ...(r.securityToken?.trim() ? { securityToken: r.securityToken.trim() } : {}),
     }));
+  }
+
+  /**
+   * Fills missing Sprout `securityToken` (embed second segment) from DB `embed_code` for viewer source-card iframe.
+   */
+  private async enrichDeckTimelineWithSproutTokensFromDb(
+    rows: Array<{ title: string; startSec: number; videoId?: string; securityToken?: string }> | undefined,
+  ): Promise<Array<{ title: string; startSec: number; videoId?: string; securityToken?: string }> | undefined> {
+    if (!rows?.length) return rows;
+    const need = rows.filter((r) => (r.videoId ?? '').trim() && !(r.securityToken ?? '').trim());
+    if (need.length === 0) return rows;
+    const ids = [...new Set(need.map((r) => String(r.videoId).trim()))].filter(Boolean);
+    if (ids.length === 0) return rows;
+    const found = await this.sproutPlaylistVideoRepo.find({
+      where: { videoId: In(ids) },
+      select: ['videoId', 'embedCode'],
+    });
+    const tokenByVideoId = new Map<string, string>();
+    for (const f of found) {
+      const pair = parseSproutEmbedPairFromEmbedCode(f.embedCode);
+      if (pair && pair.videoId === f.videoId) {
+        tokenByVideoId.set(f.videoId, pair.securityToken);
+      }
+    }
+    if (tokenByVideoId.size === 0) return rows;
+    return rows.map((r) => {
+      const vid = (r.videoId ?? '').trim();
+      if (!vid) return r;
+      const st = (r.securityToken ?? '').trim() || tokenByVideoId.get(vid);
+      return { ...r, ...(st ? { securityToken: st } : {}) };
+    });
   }
 
   /** v1: YouTube-only; extend with pdf|audio|video refs when media sequence ships. */
@@ -3769,7 +3823,7 @@ export class PromptService {
         clipEndSec: number;
         label?: string;
       };
-      deckTimeline?: Array<{ title: string; startSec: number; videoId?: string }>;
+      deckTimeline?: Array<{ title: string; startSec: number; videoId?: string; securityToken?: string }>;
     }>
   > {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
@@ -3868,6 +3922,10 @@ export class PromptService {
           mediaStimulusSource: resolved.mediaStimulusResolutionSource,
           hasMediaStimulus: !!resolved.mediaStimulus,
         });
+        let finalDeck = resolved.deckTimeline;
+        if (finalDeck?.length) {
+          finalDeck = (await this.enrichDeckTimelineWithSproutTokensFromDb(finalDeck)) ?? finalDeck;
+        }
         return {
           ...publicRow,
           promptHtml: resolved.promptHtml,
@@ -3875,7 +3933,7 @@ export class PromptService {
           durationSource: resolved.durationSource,
           ...(resolved.captionsVtt ? { captionsVtt: resolved.captionsVtt } : {}),
           ...(resolved.mediaStimulus ? { mediaStimulus: resolved.mediaStimulus } : {}),
-          ...(resolved.deckTimeline?.length ? { deckTimeline: resolved.deckTimeline } : {}),
+          ...(finalDeck?.length ? { deckTimeline: finalDeck } : {}),
         };
       }),
     );
@@ -4206,7 +4264,7 @@ export class PromptService {
       clipEndSec: number;
       label?: string;
     };
-    deckTimeline?: Array<{ title: string; startSec: number; videoId?: string }>;
+    deckTimeline?: Array<{ title: string; startSec: number; videoId?: string; securityToken?: string }>;
   } | null> {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
     if (!token) return null;
@@ -4274,6 +4332,10 @@ export class PromptService {
       mediaStimulusSource: resolved.mediaStimulusResolutionSource,
       hasMediaStimulus: !!resolved.mediaStimulus,
     });
+    let finalDeck = resolved.deckTimeline;
+    if (finalDeck?.length) {
+      finalDeck = (await this.enrichDeckTimelineWithSproutTokensFromDb(finalDeck)) ?? finalDeck;
+    }
     return {
       userId,
       body: sub.body,
@@ -4291,7 +4353,7 @@ export class PromptService {
       ...(allowedAttempts !== undefined ? { allowedAttempts } : {}),
       ...(resolved.captionsVtt ? { captionsVtt: resolved.captionsVtt } : {}),
       ...(resolved.mediaStimulus ? { mediaStimulus: resolved.mediaStimulus } : {}),
-      ...(resolved.deckTimeline?.length ? { deckTimeline: resolved.deckTimeline } : {}),
+      ...(finalDeck?.length ? { deckTimeline: finalDeck } : {}),
     };
   }
 
