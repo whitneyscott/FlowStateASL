@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef } from 'react';
 import { appendBridgeLog } from '../utils/bridge-log';
+import { buildSproutVideoEmbedUrl } from '../utils/sprout-embed';
 import './SproutSourceCardModal.css';
 
 export interface SproutSourceCardModalProps {
@@ -10,7 +11,7 @@ export interface SproutSourceCardModalProps {
 }
 
 /**
- * Full-screen-style overlay with Sprout embed for the deck source card (teacher grading).
+ * Full-screen-style overlay with Sprout embed for the deck source card (student and teacher when opened from rubric).
  */
 export function SproutSourceCardModal({
   isOpen,
@@ -39,7 +40,7 @@ export function SproutSourceCardModal({
     if (!isOpen || !videoId.trim() || !sproutAccountId.trim()) return;
     const account = sproutAccountId.trim();
     const vid = videoId.trim();
-    const src = `https://videos.sproutvideo.com/embed/${encodeURIComponent(account)}/${encodeURIComponent(vid)}`;
+    const src = buildSproutVideoEmbedUrl(account, vid);
     console.info('[SproutSourceCard] open embed', { sproutAccountId: account, videoId: vid, embedSrc: src });
     appendBridgeLog('sprout-source-card', 'Sprout source modal open', {
       sproutAccountIdLen: account.length,
@@ -52,7 +53,7 @@ export function SproutSourceCardModal({
     return null;
   }
 
-  const src = `https://videos.sproutvideo.com/embed/${encodeURIComponent(sproutAccountId.trim())}/${encodeURIComponent(videoId.trim())}`;
+  const src = buildSproutVideoEmbedUrl(sproutAccountId, videoId);
 
   return (
     <div

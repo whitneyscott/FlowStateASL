@@ -9,6 +9,7 @@ import { appendBridgeLog } from '../utils/bridge-log';
 import { GradingVideoPlayer } from '../components/GradingVideoPlayer';
 import { GradingPlaybackBar } from '../components/GradingPlaybackBar';
 import { SproutSourceCardModal } from '../components/SproutSourceCardModal';
+import { buildSproutVideoEmbedUrl } from '../utils/sprout-embed';
 import { YoutubeStimulusShell } from '../components/YoutubeStimulusShell';
 import { YoutubeIframePlayer, type YoutubeIframePlayerHandle } from '../components/YoutubeIframePlayer';
 import { AppBlockingLoader } from '../components/AppBlockingLoader';
@@ -1297,39 +1298,36 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     const vid = activeDeckSproutVideoId;
     if (!vid || !sproutAccountIdForEmbed) return;
     videoRef.current?.pause();
-    const src = `https://videos.sproutvideo.com/embed/${encodeURIComponent(sproutAccountIdForEmbed.trim())}/${encodeURIComponent(vid)}`;
-    console.info('[TeacherViewer] Sprout source (toolbar)', { videoId: vid, sproutAccountId: sproutAccountIdForEmbed.trim(), embedSrc: src });
-    appendViewerBridgeLog('Sprout source card (toolbar)', { videoId: vid, embedSrc: src });
+    const acct = sproutAccountIdForEmbed.trim();
+    const src = buildSproutVideoEmbedUrl(acct, vid);
+    console.info('[TeacherViewer] Sprout source (active item)', { videoId: vid, sproutAccountId: acct, embedSrc: src });
+    appendViewerBridgeLog('Sprout source card (active item)', { videoId: vid, embedSrc: src });
     setSourceCardPreviewVideoId(vid);
   }, [activeDeckSproutVideoId, sproutAccountIdForEmbed]);
 
-  /** Show control whenever teacher can preview Sprout and a deck card is active (enabled only if we have a video id). */
-  const showSourceCardControl = teacher && !!sproutAccountIdForEmbed && !!activeDeckPrompt;
+  /** Students (non-teacher) see "Show me the card" in /viewer; teachers use rubric "incorrect" row links. Same embed as Flashcards. */
+  const showStudentSourceCardButton = !teacher && !!sproutAccountIdForEmbed && !!activeDeckPrompt;
 
-  // Bridge diagnostics: emit one line per active card / gating change so we can debug "Show me the card"
-  // without guessing (Sprout account id, teacher role, active segment, and whether the button should render).
+  // Bridge diagnostics: student "Show me the card" gating (Sprout account, active segment, video id on timeline).
   const showMeCardDiagSigRef = useRef('');
   useEffect(() => {
-    if (!teacher || !gradingMode || !assignmentId) return;
+    if (teacher || !isDeckPromptMode || !assignmentId) return;
     const sig = [
       String(assignmentId),
       String(current?.userId ?? ''),
-      String(currentAttempt),
       String(isDeckPromptMode),
       String(activeDeckPrompt?.startSec ?? ''),
       String(activeDeckPrompt?.title ?? ''),
       String(!!sproutAccountIdForEmbed),
       String(!!activeDeckSproutVideoId),
-      String(!!showSourceCardControl),
+      String(!!showStudentSourceCardButton),
     ].join('|');
     if (sig === showMeCardDiagSigRef.current) return;
     showMeCardDiagSigRef.current = sig;
-    appendViewerBridgeLog('ShowMeCard gate snapshot', {
-      teacher: !!teacher,
-      gradingMode,
+    appendViewerBridgeLog('ShowMeCard (student) gate snapshot', {
+      teacher: false,
       assignmentId,
       userId: current?.userId ?? '(none)',
-      attempt: currentAttempt,
       isDeckPromptMode,
       deckTimelineLen: deckTimeline.length,
       activeDeckPromptPresent: !!activeDeckPrompt,
@@ -1337,21 +1335,19 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
       hasSproutAccountIdForEmbed: !!sproutAccountIdForEmbed,
       sproutAccountIdForEmbedLen: sproutAccountIdForEmbed.length,
       hasActiveDeckSproutVideoId: !!activeDeckSproutVideoId,
-      showSourceCardControl,
+      showStudentSourceCardButton,
     });
   }, [
     teacher,
-    gradingMode,
     assignmentId,
     isDeckPromptMode,
     deckTimeline.length,
     current?.userId,
-    currentAttempt,
     activeDeckPrompt?.startSec,
     activeDeckPrompt?.title,
     sproutAccountIdForEmbed,
     activeDeckSproutVideoId,
-    showSourceCardControl,
+    showStudentSourceCardButton,
   ]);
 
   const rubricPromptIndexMap = useMemo(
@@ -1762,7 +1758,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                                       if (vid) {
                                         videoRef.current?.pause();
                                         const acct = sproutAccountIdForEmbed.trim();
-                                        const src = `https://videos.sproutvideo.com/embed/${encodeURIComponent(acct)}/${encodeURIComponent(vid)}`;
+                                        const src = buildSproutVideoEmbedUrl(acct, vid);
                                         console.info('[TeacherViewer] Sprout source (incorrect rubric row)', {
                                           videoId: vid,
                                           rubricCriterionId: critId,
@@ -2377,7 +2373,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                             className="prompter-viewer-active-item-prompt-html"
                             dangerouslySetInnerHTML={{ __html: activeDeckPrompt.title || '—' }}
                           />
-                          {showSourceCardControl && (
+                          {showStudentSourceCardButton && (
                             <button
                               type="button"
                               className="prompter-viewer-show-source-card-btn prompter-viewer-show-source-card-btn--inline-prompt"
@@ -2411,7 +2407,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                           className="prompter-viewer-active-item-prompt-html"
                           dangerouslySetInnerHTML={{ __html: activeDeckPrompt.title || '—' }}
                         />
-                        {showSourceCardControl && (
+                        {showStudentSourceCardButton && (
                           <button
                             type="button"
                             className="prompter-viewer-show-source-card-btn prompter-viewer-show-source-card-btn--inline-prompt"
