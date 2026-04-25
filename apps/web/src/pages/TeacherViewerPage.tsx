@@ -2350,11 +2350,25 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                 ) : current?.videoUrl ? (
                   !teacher && isDeckPromptMode && !youtubeDualLayout ? (
                     <div className="prompter-viewer-youtube-dual prompter-viewer-sprout-beside-dual">
-                      <div className="prompter-viewer-youtube-dual-cols prompter-viewer-sprout-beside-dual-cols">
-                        <div className="prompter-viewer-youtube-dual-col prompter-viewer-sprout-beside-dual-model-col">
-                          <h2 className="prompter-viewer-section-heading">Model (card)</h2>
-                          <p className="prompter-viewer-hint-muted">Matches the deck item at the current playhead.</p>
-                          <div className="prompter-viewer-youtube-dual-frame">
+                      <div className="prompter-viewer-sprout-beside-dual-grid">
+                        <h2
+                          className="prompter-viewer-section-heading prompter-viewer-sprout-beside-dual-title prompter-viewer-sprout-beside-dual-title--model"
+                        >
+                          Model (card)
+                        </h2>
+                        <h2
+                          className="prompter-viewer-section-heading prompter-viewer-sprout-beside-dual-title prompter-viewer-sprout-beside-dual-title--yours"
+                        >
+                          Your recording
+                        </h2>
+                        <p className="prompter-viewer-hint-muted prompter-viewer-sprout-beside-dual-hint">
+                          Matches the deck item at the current playhead.
+                        </p>
+                        <div
+                          className="prompter-viewer-sprout-beside-dual-hint-spacer"
+                          aria-hidden="true"
+                        />
+                        <div className="prompter-viewer-sprout-beside-dual-movie prompter-viewer-youtube-dual-frame prompter-viewer-sprout-beside-dual-movie--model">
                             {showStudentBesideSproutModel && studentBesideSproutEmbedSrc ? (
                               <iframe
                                 key={`beside-sprout-${activeDeckIndex}-${activeDeckSproutVideoId}`}
@@ -2369,10 +2383,8 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                                 {studentBesideModelPlaceholderText}
                               </div>
                             )}
-                          </div>
                         </div>
-                        <div className="prompter-viewer-youtube-dual-col prompter-viewer-sprout-beside-dual-sub-col">
-                          <h2 className="prompter-viewer-section-heading">Your recording</h2>
+                        <div className="prompter-viewer-sprout-beside-dual-movie prompter-viewer-sprout-beside-dual-movie--submission">
                           <GradingVideoPlayer
                             hideControls
                             src={current.videoUrl}
