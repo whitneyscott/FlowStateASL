@@ -452,6 +452,21 @@
   font-size: 14px;
 }
 
+/* Font size dropdown (Quill SizeStyle — labels from data-value) */
+.prompter-prompt-rte-wrap .ql-snow .ql-picker.ql-size {
+  width: 92px;
+}
+
+.prompter-prompt-rte-wrap .ql-snow .ql-picker.ql-size .ql-picker-label::before,
+.prompter-prompt-rte-wrap .ql-snow .ql-picker.ql-size .ql-picker-item::before {
+  content: attr(data-value);
+}
+
+.prompter-prompt-rte-wrap .ql-snow .ql-picker.ql-size .ql-picker-label[data-value='false']::before,
+.prompter-prompt-rte-wrap .ql-snow .ql-picker.ql-size .ql-picker-item[data-value='false']::before {
+  content: 'Normal';
+}
+
 .prompter-prompt-rte-wrap .ql-container {
   border-radius: 0 0 6px 6px;
   border-color: #ccc;
