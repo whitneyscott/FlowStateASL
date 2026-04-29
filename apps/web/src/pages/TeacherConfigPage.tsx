@@ -68,47 +68,25 @@ function normalizePromptHtmlItem(input: unknown): string {
   return String(input);
 }
 
-function stripAslEmbedBlocks(html: string): string {
-  return html.replace(
-    /<div\b[^>]*\bdata-asl-express-v=["']1["'][^>]*>[\s\S]*?<\/div>/gi,
-    '',
-  );
-}
-
-function unwrapStandaloneQuillEditorRoot(html: string): string {
-  const trimmed = html.trim();
-  const m = trimmed.match(
-    /^<div\b[^>]*\bclass=["'][^"']*\bql-editor\b[^"']*["'][^>]*>([\s\S]*)<\/div>\s*$/i,
-  );
-  return m ? m[1] : html;
-}
-
-function sanitizePromptHtmlForQuill(input: string): string {
-  const noEmbeds = stripAslEmbedBlocks(input);
-  const unwrapped = unwrapStandaloneQuillEditorRoot(noEmbeds);
-  return unwrapped.trim();
-}
-
 function extractNormalizedPrompts(
   data: promptApi.PromptConfig & Record<string, unknown>,
-): { prompts: string[]; sourceField: string; rawPrompts: string[] } {
+): { prompts: string[]; sourceField: string } {
   const candidates: Array<{ field: string; value: unknown }> = [
     { field: 'prompts', value: data.prompts },
     { field: 'textPrompts', value: data.textPrompts },
     { field: 'promptPool', value: data.promptPool },
     { field: 'textPromptPool', value: data.textPromptPool },
   ];
-  let fallback: { prompts: string[]; sourceField: string; rawPrompts: string[] } | null = null;
+  let fallback: { prompts: string[]; sourceField: string } | null = null;
   for (const c of candidates) {
     if (!Array.isArray(c.value)) continue;
-    const rawPrompts = c.value.map((item) => normalizePromptHtmlItem(item));
-    const sanitized = rawPrompts.map((p) => sanitizePromptHtmlForQuill(p));
-    if (!fallback) fallback = { prompts: sanitized, sourceField: c.field, rawPrompts };
-    if (sanitized.some((p) => p.trim().length > 0)) {
-      return { prompts: sanitized, sourceField: c.field, rawPrompts };
+    const normalized = c.value.map((item) => normalizePromptHtmlItem(item));
+    if (!fallback) fallback = { prompts: normalized, sourceField: c.field };
+    if (normalized.some((p) => p.trim().length > 0)) {
+      return { prompts: normalized, sourceField: c.field };
     }
   }
-  return fallback ?? { prompts: [], sourceField: 'none', rawPrompts: [] };
+  return fallback ?? { prompts: [], sourceField: 'none' };
 }
 
 interface TeacherConfigPageProps {
@@ -373,16 +351,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
           assignmentId: id,
           promptMode: data.promptMode ?? null,
           sourceField: promptExtraction.sourceField,
-          containsAslEmbedBlocks: promptExtraction.rawPrompts.some((p) => /data-asl-express-v=["']1["']/i.test(p)),
-          containsStandaloneQlEditorRoot: promptExtraction.rawPrompts.some((p) =>
-            /<div\b[^>]*class=["'][^"']*\bql-editor\b/i.test(p.trim()),
-          ),
           normalizedPromptCount: normalizedPrompts.length,
-          rawSampleLengths: promptExtraction.rawPrompts.slice(0, 5).map((p) => p.length),
           sampleLengths: normalizedPrompts.slice(0, 5).map((p) => p.length),
-          samplePreview: normalizedPrompts
-            .slice(0, 2)
-            .map((p) => p.replace(/\s+/g, ' ').slice(0, 140)),
           itemTypeSample: Array.isArray(data.prompts)
             ? data.prompts.slice(0, 5).map((x) => (x == null ? 'nullish' : typeof x))
             : [],
