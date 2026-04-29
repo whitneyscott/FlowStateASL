@@ -6190,14 +6190,26 @@ export class PromptService {
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
     const meta = await this.canvas.getCanvasFileApiRecord(fileId, domainOverride, token);
     const ctxKind = (meta.context_type ?? '').toLowerCase();
-    if (ctxKind !== 'course' || String(meta.context_id ?? '') !== String(ctx.courseId ?? '').trim()) {
-      appendLtiLog('prompt-image-debug', 'streamCoursePromptImage context mismatch', {
+    const ctxId = String(meta.context_id ?? '').trim();
+    const requestedCourseId = String(ctx.courseId ?? '').trim();
+    const hasExplicitFileContext = !!ctxKind || !!ctxId;
+    if (hasExplicitFileContext) {
+      if (ctxKind !== 'course' || ctxId !== requestedCourseId) {
+        appendLtiLog('prompt-image-debug', 'streamCoursePromptImage context mismatch', {
+          fileId,
+          requestedCourseId,
+          fileContextType: meta.context_type ?? '(none)',
+          fileContextId: meta.context_id ?? '(none)',
+        });
+        throw new ForbiddenException('File is not in this course');
+      }
+    } else {
+      // Canvas sometimes omits context fields on file records. For signed `/view` URLs we already validate
+      // course id + signature, so do not hard-fail solely on missing file context metadata.
+      appendLtiLog('prompt-image-debug', 'streamCoursePromptImage context missing; proceeding via signed course check', {
         fileId,
-        requestedCourseId: ctx.courseId,
-        fileContextType: meta.context_type ?? '(none)',
-        fileContextId: meta.context_id ?? '(none)',
+        requestedCourseId,
       });
-      throw new ForbiddenException('File is not in this course');
     }
     const mime = (meta.content_type ?? '').trim().toLowerCase();
     if (!mime.startsWith('image/')) {
