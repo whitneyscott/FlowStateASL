@@ -2687,7 +2687,7 @@ export class PromptService {
       [selected[i], selected[j]] = [selected[j], selected[i]];
     }
 
-    // Timing: playlist response + batched video API + DB cache (sprout_playlist_videos.duration_seconds)
+    // Duration backfill: DB first (sprout_playlist_videos), then Sprout API only for ids still missing.
     const needsLookupIds = selected
       .filter(
         (s) =>
@@ -2697,8 +2697,23 @@ export class PromptService {
             s.durationSeconds <= 0),
       )
       .map((s) => s.videoId!);
-    const fromApi = await this.sproutVideo.getVideoDurations(needsLookupIds);
-    const fromDb = await this.loadVideoDurationsFromDb(needsLookupIds);
+    const needsLookupUniq = [...new Set(needsLookupIds.filter(Boolean))];
+    const fromDb = await this.loadVideoDurationsFromDb(needsLookupUniq);
+    const stillNeedingSprout = needsLookupUniq.filter((id) => {
+      const d = fromDb.get(id);
+      return !(typeof d === 'number' && Number.isFinite(d) && d > 0);
+    });
+    if (needsLookupUniq.length > 0 && stillNeedingSprout.length > 0) {
+      appendLtiLog('prompt-decks', 'buildDeckPromptList: duration backfill (DB then Sprout)', {
+        totalNeeding: needsLookupUniq.length,
+        fromDbCount: needsLookupUniq.length - stillNeedingSprout.length,
+        sproutBatchCount: stillNeedingSprout.length,
+      });
+    }
+    const fromApi =
+      stillNeedingSprout.length > 0
+        ? await this.sproutVideo.getVideoDurations(stillNeedingSprout)
+        : new Map<string, number>();
 
     const resolveVideoSeconds = (s: {
       videoId?: string;
@@ -2712,10 +2727,10 @@ export class PromptService {
         return s.durationSeconds;
       }
       if (s.videoId) {
-        const a = fromApi.get(s.videoId);
-        if (typeof a === 'number' && Number.isFinite(a) && a > 0) return a;
         const d = fromDb.get(s.videoId);
         if (typeof d === 'number' && Number.isFinite(d) && d > 0) return d;
+        const a = fromApi.get(s.videoId);
+        if (typeof a === 'number' && Number.isFinite(a) && a > 0) return a;
       }
       return null;
     };
