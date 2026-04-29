@@ -1038,6 +1038,7 @@ export class PromptController {
     @Res() res: Response,
     @Query('omitCanvasImport') omitCanvasImport?: string,
     @Query('omitCounts') omitCounts?: string,
+    @Query('omitCanvasIndex') omitCanvasIndex?: string,
   ) {
     appendLtiLog('viewer', 'GET configured-assignments');
     const ctx = this.getCtx(req);
@@ -1048,9 +1049,14 @@ export class PromptController {
         String(omitCanvasImport ?? '').toLowerCase() === 'yes';
       const omitCountsFlag =
         omitCounts === '1' || omitCounts === 'true' || String(omitCounts ?? '').toLowerCase() === 'yes';
+      const omitCanvasIndexFlag =
+        omitCanvasIndex === '1' ||
+        omitCanvasIndex === 'true' ||
+        String(omitCanvasIndex ?? '').toLowerCase() === 'yes';
       const payload = await this.prompt.getConfiguredAssignments(ctx, {
         omitCanvasImport: omit,
         omitCounts: omitCountsFlag,
+        omitCanvasIndex: omitCanvasIndexFlag,
       });
       return res.json(payload);
     } catch (err) {

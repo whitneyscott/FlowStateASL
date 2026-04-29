@@ -690,13 +690,15 @@ const configuredAssignmentsInflight = new Map<string, Promise<ConfiguredAssignme
 export async function getConfiguredAssignments(options?: {
   omitCanvasImport?: boolean;
   omitCounts?: boolean;
+  omitCanvasIndex?: boolean;
 }): Promise<ConfiguredAssignmentsResponse> {
-  const key = `${options?.omitCanvasImport ? 'omit' : 'full'}:${options?.omitCounts ? 'nocounts' : 'counts'}`;
+  const key = `${options?.omitCanvasImport ? 'omit' : 'full'}:${options?.omitCounts ? 'nocounts' : 'counts'}:${options?.omitCanvasIndex ? 'noindex' : 'index'}`;
   const existing = configuredAssignmentsInflight.get(key);
   if (existing) return existing;
   const q = new URLSearchParams();
   if (options?.omitCanvasImport) q.set('omitCanvasImport', '1');
   if (options?.omitCounts) q.set('omitCounts', '1');
+  if (options?.omitCanvasIndex) q.set('omitCanvasIndex', '1');
   const url = `${base}/configured-assignments${q.toString() ? `?${q.toString()}` : ''}`;
   const p = fetchJsonWithOAuthRedirect<ConfiguredAssignmentsResponse>(url).finally(() => {
     configuredAssignmentsInflight.delete(key);

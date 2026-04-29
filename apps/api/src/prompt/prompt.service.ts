@@ -4645,13 +4645,14 @@ export class PromptService {
   /** Teacher only. One Canvas assignment index fetch; configured rows + optional import lists for the client. */
   async getConfiguredAssignments(
     ctx: LtiContext,
-    options?: { omitCanvasImport?: boolean; omitCounts?: boolean },
+    options?: { omitCanvasImport?: boolean; omitCounts?: boolean; omitCanvasIndex?: boolean },
   ): Promise<{
     configured: Array<{ id: string; name: string; submissionCount: number; ungradedCount: number }>;
     canvasImport?: { allAssignments: CanvasAssignmentBrief[]; settingsTitleCandidates: CanvasAssignmentBrief[] };
   }> {
     const omitCanvasImport = options?.omitCanvasImport === true;
     const omitCounts = options?.omitCounts === true;
+    const omitCanvasIndex = options?.omitCanvasIndex === true;
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
     if (!token) {
       return omitCanvasImport
@@ -4669,6 +4670,25 @@ export class PromptService {
       ]),
     );
     const result: Array<{ id: string; name: string; submissionCount: number; ungradedCount: number }> = [];
+
+    /**
+     * Fast path (Prompt Settings boot): skip Canvas course assignment index and any per-assignment
+     * submissions reads. Uses stored assignmentName (when present) or a stable fallback label.
+     */
+    if (omitCanvasIndex) {
+      for (const aid of assignmentIds) {
+        const name = (configs[aid]?.assignmentName ?? '').trim() || `Assignment ${aid}`;
+        result.push({ id: aid, name, submissionCount: 0, ungradedCount: 0 });
+      }
+      result.sort((a, b) => a.name.localeCompare(b.name));
+      appendLtiLog('viewer', 'getConfiguredAssignments (omitCanvasIndex)', {
+        count: result.length,
+        omitCounts,
+        omitCanvasImport,
+      });
+      return { configured: result };
+    }
+
     let assignmentNamesById: Map<string, string> | null = null;
     let fullCourseList: CanvasAssignmentBrief[] = [];
     try {
