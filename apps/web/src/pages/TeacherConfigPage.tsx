@@ -78,10 +78,10 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const [error, setError] = useState<string | null>(null);
   const [minutes, setMinutes] = useState(5);
   const [prompts, setPrompts] = useState<string[]>([]);
-  /** Bumped when GET /config data is applied so react-quill remounts and shows async-loaded HTML. */
+  /** Bumped when GET /config data is applied so react-quill remounts when entering edit mode. */
   const [promptRteRemountKey, setPromptRteRemountKey] = useState(0);
-  /** Same string as each editor `value`; read-only preview proves whether blank UI is Quill vs missing state. */
-  const [showTextPromptHtmlPreview, setShowTextPromptHtmlPreview] = useState(false);
+  /** Text prompts: read-only HTML view by default; Quill only while this index is active (avoids Quill display bugs on load). */
+  const [editingTextPromptIndex, setEditingTextPromptIndex] = useState<number | null>(null);
   const [accessCode, setAccessCode] = useState('');
   const [moduleId, setModuleId] = useState<string>('');
   const [createModuleName, setCreateModuleName] = useState('');
@@ -169,6 +169,12 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     },
     [youtubeApiFailed, youtubePreviewDuration],
   );
+
+  useEffect(() => {
+    if (promptMode !== 'text') {
+      setEditingTextPromptIndex(null);
+    }
+  }, [promptMode]);
 
   const teacher = context && isTeacher(context.roles);
   const hasLti = context?.courseId && context.userId !== 'standalone';
@@ -278,6 +284,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       if (data) {
         setMinutes(data.minutes ?? 5);
         setPrompts(Array.isArray(data.prompts) ? data.prompts : []);
+        setEditingTextPromptIndex(null);
         setAccessCode(data.accessCode ?? '');
         setModuleId(data.moduleId ?? '');
         setAssignmentGroupId(data.assignmentGroupId ?? '');
@@ -369,6 +376,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       } else {
         setMinutes(5);
         setPrompts([]);
+        setEditingTextPromptIndex(null);
         setAccessCode('');
         setModuleId('');
         setAssignmentGroupId('');
@@ -735,14 +743,29 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const generateAccessCode = () =>
     setAccessCode(ASL_CODES[Math.floor(Math.random() * ASL_CODES.length)]);
 
-  const addPrompt = () => setPrompts((p) => [...p, '']);
+  const addPrompt = () => {
+    let newIndex = 0;
+    setPrompts((prev) => {
+      newIndex = prev.length;
+      return [...prev, ''];
+    });
+    setEditingTextPromptIndex(newIndex);
+  };
   const updatePrompt = (i: number, v: string) =>
     setPrompts((p) => {
       const next = [...p];
       next[i] = v;
       return next;
     });
-  const removePrompt = (i: number) => setPrompts((p) => p.filter((_, j) => j !== i));
+  const removePrompt = (i: number) => {
+    setPrompts((p) => p.filter((_, j) => j !== i));
+    setEditingTextPromptIndex((ed) => {
+      if (ed === null) return null;
+      if (ed === i) return null;
+      if (ed > i) return ed - 1;
+      return ed;
+    });
+  };
 
   const enterCreateMode = () => {
     setAssignmentActionMode('create');
@@ -751,6 +774,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setAssignmentName('ASL Express Assignment');
     setMinutes(5);
     setPrompts([]);
+    setEditingTextPromptIndex(null);
     setAccessCode('');
     setModuleId('');
     setAssignmentGroupId('');
@@ -840,6 +864,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setAssignmentName('ASL Express Assignment');
     setMinutes(5);
     setPrompts([]);
+    setEditingTextPromptIndex(null);
     setAccessCode('');
     setModuleId('');
     setAssignmentGroupId('');
@@ -928,6 +953,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     if (!teacher || !hasLti) return;
     setMinutes(5);
     setPrompts([]);
+    setEditingTextPromptIndex(null);
     setAccessCode('');
     setModuleId('');
     setAssignmentName('');
@@ -1618,36 +1644,54 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                           </button>
                         </div>
                         <p className="prompter-hint">
-                          Each prompt is rich text (saved as HTML). Students see it formatted during warm-up and
-                          recording.
+                          Each prompt is rich text (saved as HTML). The read-only view matches what students see; use
+                          Edit for the rich-text toolbar (Quill).
                         </p>
-                        <label className="prompter-settings-label prompter-settings-label-block prompter-prompt-proof-toggle">
-                          <input
-                            type="checkbox"
-                            checked={showTextPromptHtmlPreview}
-                            onChange={(e) => setShowTextPromptHtmlPreview(e.target.checked)}
-                          />
-                          {' '}
-                          Show read-only HTML preview (same data as the editor — if preview has text but Quill is empty,
-                          the failure is in the editor layer)
-                        </label>
                         {prompts.map((p, i) => (
-                          <div key={`${(assignmentId ?? 'a')}-${i}-${promptRteRemountKey}`} className="prompter-prompt-item-row">
+                          <div key={`${(assignmentId ?? 'a')}-text-prompt-${i}`} className="prompter-prompt-item-row">
                             <div className="prompter-prompt-editor-col">
-                              <TeacherPromptRte
-                                value={p}
-                                onChange={(html) => updatePrompt(i, html)}
-                                placeholder="Prompt text…"
-                                remountKey={`p-${(assignmentId ?? 'a')}-${i}-${promptRteRemountKey}`}
-                              />
-                              {showTextPromptHtmlPreview ? (
-                                <div className="prompter-prompt-html-proof" data-testid={`prompt-html-proof-${i}`}>
-                                  <div className="prompter-prompt-html-proof-label">
-                                    Read-only preview · {p.length} chars
+                              {editingTextPromptIndex === i ? (
+                                <>
+                                  <TeacherPromptRte
+                                    value={p}
+                                    onChange={(html) => updatePrompt(i, html)}
+                                    placeholder="Prompt text…"
+                                    remountKey={`p-${(assignmentId ?? 'a')}-${i}-${promptRteRemountKey}`}
+                                  />
+                                  <div className="prompter-prompt-edit-actions">
+                                    <button
+                                      type="button"
+                                      className="prompter-btn-secondary"
+                                      onClick={() => setEditingTextPromptIndex(null)}
+                                    >
+                                      Done editing
+                                    </button>
                                   </div>
-                                  <TeacherAuthoredHtmlBlock html={p} className="prompter-prompt-html prompter-prompt-html-proof-inner" />
-                                </div>
-                              ) : null}
+                                </>
+                              ) : (
+                                <>
+                                  <div
+                                    className="prompter-prompt-readonly-view"
+                                    data-testid={`prompt-html-proof-${i}`}
+                                  >
+                                    {p.trim() ? (
+                                      <TeacherAuthoredHtmlBlock
+                                        html={p}
+                                        className="prompter-prompt-html prompter-prompt-readonly-view-inner"
+                                      />
+                                    ) : (
+                                      <p className="prompter-prompt-empty-hint">Empty prompt — Edit to add rich text.</p>
+                                    )}
+                                  </div>
+                                  <button
+                                    type="button"
+                                    className="prompter-btn-secondary"
+                                    onClick={() => setEditingTextPromptIndex(i)}
+                                  >
+                                    Edit
+                                  </button>
+                                </>
+                              )}
                             </div>
                             <button type="button" onClick={() => removePrompt(i)} className="prompter-btn-remove">
                               Remove

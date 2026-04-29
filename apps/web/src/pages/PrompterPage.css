@@ -446,31 +446,32 @@
   gap: 8px;
 }
 
-.prompter-prompt-proof-toggle {
-  margin: 6px 0 4px;
-  font-size: 0.9rem;
-  color: #444;
-}
-
-.prompter-prompt-html-proof {
-  border: 1px dashed #bbb;
+.prompter-prompt-readonly-view {
+  border: 1px solid #ddd;
   border-radius: 6px;
-  padding: 8px 10px;
-  background: #f8f8f8;
-  max-height: 14rem;
+  padding: 10px 12px;
+  background: #fff;
+  max-height: 18rem;
   overflow: auto;
 }
 
-.prompter-prompt-html-proof-label {
-  font-size: 0.8rem;
-  color: #666;
-  margin-bottom: 6px;
-  font-family: ui-monospace, monospace;
-}
-
-.prompter-prompt-html-proof-inner {
+.prompter-prompt-readonly-view-inner {
   font-size: 0.95rem;
   line-height: 1.5;
+}
+
+.prompter-prompt-empty-hint {
+  margin: 0;
+  color: #888;
+  font-size: 0.95rem;
+  font-style: italic;
+}
+
+.prompter-prompt-edit-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
 }
 
 /* react-quill (teacher text prompts + instructions) */
