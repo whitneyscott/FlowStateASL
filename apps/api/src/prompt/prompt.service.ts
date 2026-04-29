@@ -1718,6 +1718,7 @@ export class PromptService {
         return applySignedCourseImageViewsToConfig(
           { ...hydrated, resolvedAssignmentId: assignmentId },
           ctx.courseId,
+          ctx.canvasBaseUrl ?? ctx.canvasDomain ?? null,
           this.config,
         );
       }
@@ -1744,7 +1745,12 @@ export class PromptService {
     }
     if (!config) return null;
     const withResolved = { ...config, resolvedAssignmentId: assignmentId };
-    return applySignedCourseImageViewsToConfig(withResolved, ctx.courseId, this.config);
+    return applySignedCourseImageViewsToConfig(
+      withResolved,
+      ctx.courseId,
+      ctx.canvasBaseUrl ?? ctx.canvasDomain ?? null,
+      this.config,
+    );
   }
 
   async putConfig(ctx: LtiContext, dto: PutPromptConfigDto): Promise<void> {
@@ -6152,7 +6158,13 @@ export class PromptService {
       bytes: file.buffer.length,
     });
     const base = `/api/prompt/course-files/${fileId}/view`;
-    const viewPath = appendSignedQueryToCourseImageViewPath(base, fileId, ctx.courseId, this.config);
+    const viewPath = appendSignedQueryToCourseImageViewPath(
+      base,
+      fileId,
+      ctx.courseId,
+      ctx.canvasBaseUrl ?? ctx.canvasDomain ?? null,
+      this.config,
+    );
     appendLtiLog('prompt-image-debug', 'uploadCoursePromptImage signed view path', {
       fileId,
       courseId: ctx.courseId,

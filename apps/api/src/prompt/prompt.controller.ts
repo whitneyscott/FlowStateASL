@@ -285,7 +285,13 @@ export class PromptController {
       return res.status(400).json({ message: 'Invalid file id' });
     }
     const base = `/api/prompt/course-files/${fid}/view`;
-    const path = appendSignedQueryToCourseImageViewPath(base, fid, ctx.courseId, this.config);
+    const path = appendSignedQueryToCourseImageViewPath(
+      base,
+      fid,
+      ctx.courseId,
+      ctx.canvasBaseUrl ?? ctx.canvasDomain ?? null,
+      this.config,
+    );
     appendLtiLog('prompt-image-debug', 'signed-view-path generated', {
       fileId: fid,
       courseId: ctx.courseId,
@@ -307,6 +313,7 @@ export class PromptController {
       fileId: fid,
       path: req.path,
       queryC: Array.isArray(req.query.c) ? req.query.c[0] : req.query.c,
+      queryB: Array.isArray(req.query.b) ? req.query.b[0] : req.query.b,
       queryE: Array.isArray(req.query.e) ? req.query.e[0] : req.query.e,
       hasSig: !!req.query.sig,
       signedOk,
@@ -317,8 +324,11 @@ export class PromptController {
     if (signedOk) {
       const cRaw = req.query.c;
       const courseId = Array.isArray(cRaw) ? String(cRaw[0] ?? '').trim() : String(cRaw ?? '').trim();
+      const bRaw = req.query.b;
+      const canvasBaseUrl = Array.isArray(bRaw) ? String(bRaw[0] ?? '').trim() : String(bRaw ?? '').trim();
       ctx = sanitizeLtiContext({
         courseId,
+        canvasBaseUrl,
         assignmentId: '',
         userId: '',
         resourceLinkId: '',
@@ -329,6 +339,7 @@ export class PromptController {
       appendLtiLog('prompt-image-debug', 'viewCoursePromptImage using signed context', {
         fileId: fid,
         courseId,
+        canvasBaseUrl: canvasBaseUrl || '(none)',
       });
     } else {
       ctx = this.getCtx(req);

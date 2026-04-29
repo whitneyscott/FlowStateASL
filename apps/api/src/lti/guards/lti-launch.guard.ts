@@ -39,6 +39,7 @@ export class LtiLaunchGuard implements CanActivate {
           fileId: m[1],
           signedOk: ok,
           hasC: !!req.query?.c,
+          hasB: !!req.query?.b,
           hasE: !!req.query?.e,
           hasSig: !!req.query?.sig,
           hasBearer: /^Bearer\s+/i.test(req.headers.authorization ?? ''),
