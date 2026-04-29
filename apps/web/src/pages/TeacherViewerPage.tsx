@@ -1731,7 +1731,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                     <option value="">— Select assignment —</option>
                     {configuredAssignments.map((a) => (
                       <option key={a.id} value={a.id}>
-                        {a.name} ({a.submissionCount} submissions)
+                        {a.name}
                       </option>
                     ))}
                   </select>
