@@ -36,6 +36,83 @@ function isTeacher(roles: string): boolean {
   return TEACHER_PATTERNS.some((p) => roles.toLowerCase().includes(p));
 }
 
+/** Client-side checks that mirror `handleSave` before the API runs — single source for messages, scroll targets, and inline hints. */
+type ConfigSaveBlocker = 'module' | 'deck' | 'youtube';
+type ConfigSaveYoutubeIssue = 'url' | 'clip';
+
+interface ConfigSaveClientValidation {
+  ok: boolean;
+  blocker: ConfigSaveBlocker | null;
+  message: string;
+  youtubeIssue: ConfigSaveYoutubeIssue | null;
+}
+
+function validateConfigSaveClient(input: {
+  moduleId: string;
+  promptMode: 'text' | 'decks' | 'youtube';
+  selectedDecksCount: number;
+  youtubeUrlOrId: string;
+  youtubeClipStartSec: number;
+  youtubeClipEndSec: number;
+}): ConfigSaveClientValidation {
+  if (!input.moduleId.trim()) {
+    return {
+      ok: false,
+      blocker: 'module',
+      message: 'Select a Canvas module. All assignments must be placed in a module.',
+      youtubeIssue: null,
+    };
+  }
+  if (input.promptMode === 'decks' && input.selectedDecksCount === 0) {
+    return {
+      ok: false,
+      blocker: 'deck',
+      message: 'Select at least one flashcard deck when using Deck Prompts.',
+      youtubeIssue: null,
+    };
+  }
+  if (input.promptMode === 'youtube') {
+    const raw = input.youtubeUrlOrId.trim();
+    if (!raw) {
+      return {
+        ok: false,
+        blocker: 'youtube',
+        message: 'Enter a YouTube URL or video ID.',
+        youtubeIssue: 'url',
+      };
+    }
+    try {
+      normalizeYoutubeInputToVideoIdClient(raw);
+    } catch (e) {
+      return {
+        ok: false,
+        blocker: 'youtube',
+        message: e instanceof Error ? e.message : 'Invalid YouTube URL or video ID.',
+        youtubeIssue: 'url',
+      };
+    }
+    const clipStart = Math.max(0, Math.floor(Number(input.youtubeClipStartSec)));
+    const clipEnd = Math.floor(Number(input.youtubeClipEndSec));
+    if (!Number.isFinite(clipEnd) || clipEnd <= clipStart) {
+      return {
+        ok: false,
+        blocker: 'youtube',
+        message: 'Clip end (seconds) must be greater than clip start by at least 1 second.',
+        youtubeIssue: 'clip',
+      };
+    }
+    if (clipEnd - clipStart > 86400) {
+      return {
+        ok: false,
+        blocker: 'youtube',
+        message: 'YouTube clip cannot span more than 24 hours.',
+        youtubeIssue: 'clip',
+      };
+    }
+  }
+  return { ok: true, blocker: null, message: '', youtubeIssue: null };
+}
+
 interface TeacherConfigPageProps {
   context: LtiContext | null;
 }
@@ -147,6 +224,14 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
 
   const [youtubePreviewRetryNonce, setYoutubePreviewRetryNonce] = useState(0);
   const youtubePreviewPlayerRef = useRef<YoutubeIframePlayerHandle>(null);
+  /** Phase 1: scroll/focus targets when Save (or create) is blocked by missing module / deck / YouTube settings. */
+  const configSaveModuleAnchorRef = useRef<HTMLDivElement | null>(null);
+  const moduleSelectRef = useRef<HTMLSelectElement | null>(null);
+  const configSaveDeckAnchorRef = useRef<HTMLDivElement | null>(null);
+  const configSaveYoutubeAnchorRef = useRef<HTMLDivElement | null>(null);
+  const youtubeUrlInputRef = useRef<HTMLInputElement | null>(null);
+  const youtubeClipEndInputRef = useRef<HTMLInputElement | null>(null);
+  const [configSaveFieldErrorsVisible, setConfigSaveFieldErrorsVisible] = useState(false);
 
   /** Preview player remounts only when video id or retry changes — clip edits use seek, not remount. */
   const youtubePreviewPlayerKey = useMemo(() => {
@@ -176,6 +261,25 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       setEditingTextPromptIndex(null);
     }
   }, [promptMode]);
+
+  const configSaveValidation = useMemo(
+    () =>
+      validateConfigSaveClient({
+        moduleId,
+        promptMode,
+        selectedDecksCount: selectedDecks.length,
+        youtubeUrlOrId,
+        youtubeClipStartSec,
+        youtubeClipEndSec,
+      }),
+    [moduleId, promptMode, selectedDecks.length, youtubeUrlOrId, youtubeClipStartSec, youtubeClipEndSec],
+  );
+
+  useEffect(() => {
+    if (configSaveValidation.ok) {
+      setConfigSaveFieldErrorsVisible(false);
+    }
+  }, [configSaveValidation.ok]);
 
   const teacher = context && isTeacher(context.roles);
   const hasLti = context?.courseId && context.userId !== 'standalone';
@@ -567,6 +671,26 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     }
   }, [pendingDeckFilterSeedIds, deckHierarchyPlaylists]);
 
+  const scrollToConfigSaveBlocker = useCallback((v: ConfigSaveClientValidation) => {
+    if (v.ok || !v.blocker) return;
+    requestAnimationFrame(() => {
+      if (v.blocker === 'module') {
+        configSaveModuleAnchorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        moduleSelectRef.current?.focus();
+      } else if (v.blocker === 'deck') {
+        configSaveDeckAnchorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        configSaveDeckAnchorRef.current?.focus();
+      } else if (v.blocker === 'youtube') {
+        configSaveYoutubeAnchorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        if (v.youtubeIssue === 'clip') {
+          youtubeClipEndInputRef.current?.focus();
+        } else {
+          youtubeUrlInputRef.current?.focus();
+        }
+      }
+    });
+  }, []);
+
   const handleYoutubeUrlBlur = () => {
     setYoutubeFieldError(null);
     const t = youtubeUrlOrId.trim();
@@ -593,36 +717,19 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
 
   const handleSave = async () => {
     if (!teacher || !hasLti) return;
-    if (!moduleId.trim()) {
-      setError('Select a Canvas module. All assignments must be placed in a module.');
+    const v = validateConfigSaveClient({
+      moduleId,
+      promptMode,
+      selectedDecksCount: selectedDecks.length,
+      youtubeUrlOrId,
+      youtubeClipStartSec,
+      youtubeClipEndSec,
+    });
+    if (!v.ok) {
+      setError(v.message);
+      setConfigSaveFieldErrorsVisible(true);
+      scrollToConfigSaveBlocker(v);
       return;
-    }
-    if (promptMode === 'decks' && selectedDecks.length === 0) {
-      setError('Select at least one flashcard deck when using Deck Prompts.');
-      return;
-    }
-    if (promptMode === 'youtube') {
-      const raw = youtubeUrlOrId.trim();
-      if (!raw) {
-        setError('Enter a YouTube URL or video ID.');
-        return;
-      }
-      try {
-        normalizeYoutubeInputToVideoIdClient(raw);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : 'Invalid YouTube URL or video ID.');
-        return;
-      }
-      const clipStart = Math.max(0, Math.floor(Number(youtubeClipStartSec)));
-      const clipEnd = Math.floor(Number(youtubeClipEndSec));
-      if (!Number.isFinite(clipEnd) || clipEnd <= clipStart) {
-        setError('Clip end (seconds) must be greater than clip start by at least 1 second.');
-        return;
-      }
-      if (clipEnd - clipStart > 86400) {
-        setError('YouTube clip cannot span more than 24 hours.');
-        return;
-      }
     }
     setSaving(true);
     setError(null);
@@ -827,6 +934,13 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     if (!teacher || !hasLti || creatingAssignment) return;
     if (!moduleId.trim()) {
       setError('Select a Canvas module. All assignments must be placed in a module.');
+      setConfigSaveFieldErrorsVisible(true);
+      scrollToConfigSaveBlocker({
+        ok: false,
+        blocker: 'module',
+        message: 'Select a Canvas module. All assignments must be placed in a module.',
+        youtubeIssue: null,
+      });
       return;
     }
     const name = createAssignName.trim() || 'ASL Express Assignment';
@@ -1283,13 +1397,28 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     </div>
   );
 
+  const moduleSaveInvalid = configSaveFieldErrorsVisible && !moduleId.trim();
+  const deckSaveInvalid =
+    configSaveFieldErrorsVisible && promptMode === 'decks' && configSaveValidation.blocker === 'deck';
+  const youtubeSaveInvalid =
+    configSaveFieldErrorsVisible && promptMode === 'youtube' && configSaveValidation.blocker === 'youtube';
+
   const moduleSelector = (
-    <div className="prompter-settings-section">
-      <label className="prompter-settings-label"><strong>Module:</strong></label>
+    <div
+      ref={configSaveModuleAnchorRef}
+      className={`prompter-settings-section${moduleSaveInvalid ? ' prompter-config-save-field-wrap--invalid' : ''}`}
+    >
+      <label className="prompter-settings-label" htmlFor="teacher-config-module-select">
+        <strong>Module:</strong>
+      </label>
       <select
+        id="teacher-config-module-select"
+        ref={moduleSelectRef}
         className="prompter-settings-input"
         value={moduleId}
         onChange={(e) => setModuleId(e.target.value)}
+        aria-invalid={moduleSaveInvalid}
+        aria-describedby={moduleSaveInvalid ? 'teacher-config-module-save-error' : undefined}
       >
         <option value="">— Select a module (required) —</option>
         {modules.map((m) => (
@@ -1298,6 +1427,11 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
           </option>
         ))}
       </select>
+      {moduleSaveInvalid && (
+        <p id="teacher-config-module-save-error" className="prompter-error-message" role="alert">
+          Choose a module before saving. The assignment must live in a Canvas module.
+        </p>
+      )}
       <button type="button" className="prompter-btn-start-sm prompter-btn-secondary prompter-btn-mt" onClick={() => setShowCreateModule((s) => !s)}>
         + Create new module
       </button>
@@ -1351,7 +1485,11 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     <div className="prompter-page">
       <div className="prompter-page-inner">
         <h1 className="prompter-settings-page-title">Prompt Manager Settings</h1>
-        {error && <div className="prompter-alert-error">{error}</div>}
+        {error && (
+          <div className="prompter-alert-error" role="alert" tabIndex={-1}>
+            {error}
+          </div>
+        )}
         {saved && <div className="prompter-alert-success">Saved.</div>}
         {teacher && hasLti && importInfo && (
           <p className="prompter-hint" style={{ marginTop: '0.75rem' }}>{importInfo}</p>
@@ -1704,8 +1842,19 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                         </div>
                       </>
                     ) : promptMode === 'decks' ? (
-                      <div className="prompter-settings-section prompter-deck-config-section">
+                      <div
+                        ref={configSaveDeckAnchorRef}
+                        tabIndex={-1}
+                        className={`prompter-settings-section prompter-deck-config-section${
+                          deckSaveInvalid ? ' prompter-config-save-field-wrap--invalid' : ''
+                        }`}
+                      >
                         <label className="prompter-settings-label"><strong>Deck Configuration</strong></label>
+                        {deckSaveInvalid && (
+                          <p className="prompter-error-message prompter-config-save-inline-error" role="alert">
+                            {configSaveValidation.message}
+                          </p>
+                        )}
                         <p className="prompter-hint">
                           Filter by curriculum, unit, and section (same as the flashcard deck browser), then add decks below.
                           Prompts use round-robin across all selected decks.
@@ -1847,7 +1996,18 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                         )}
                       </div>
                     ) : (
-                      <div className="prompter-settings-section prompter-youtube-config-section">
+                      <div
+                        ref={configSaveYoutubeAnchorRef}
+                        tabIndex={-1}
+                        className={`prompter-settings-section prompter-youtube-config-section${
+                          youtubeSaveInvalid ? ' prompter-config-save-field-wrap--invalid' : ''
+                        }`}
+                      >
+                        {youtubeSaveInvalid && (
+                          <p className="prompter-error-message prompter-config-save-inline-error" role="alert">
+                            {configSaveValidation.message}
+                          </p>
+                        )}
                         <aside className="prompter-youtube-length-callout" role="note">
                           <strong>Maximum video length: 35 minutes.</strong> Shorter, quick targeted assessments are
                           highly recommended. 2 to 3 minutes or even shorter can provide an excellent measure without
@@ -1858,12 +2018,17 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                         </label>
                         <input
                           id="youtube-url-or-id"
+                          ref={youtubeUrlInputRef}
                           type="text"
                           className="prompter-settings-input"
                           value={youtubeUrlOrId}
                           onChange={(e) => setYoutubeUrlOrId(e.target.value)}
                           onBlur={handleYoutubeUrlBlur}
                           placeholder="https://www.youtube.com/watch?v=… or paste embed code"
+                          aria-invalid={
+                            Boolean(youtubeFieldError) ||
+                            (youtubeSaveInvalid && configSaveValidation.youtubeIssue === 'url')
+                          }
                         />
                         {youtubeFieldError && <p className="prompter-error-message">{youtubeFieldError}</p>}
                         <div className="prompter-settings-field">
@@ -1986,6 +2151,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                           </label>
                           <input
                             id="youtube-clip-end"
+                            ref={youtubeClipEndInputRef}
                             type="number"
                             min={1}
                             max={86400}
@@ -2000,6 +2166,9 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                               seekYoutubePreview(v);
                             }}
                             className="prompter-settings-input prompter-settings-input-narrow"
+                            aria-invalid={
+                              Boolean(youtubeSaveInvalid && configSaveValidation.youtubeIssue === 'clip')
+                            }
                           />
                           <p className="prompter-hint">
                             Only this segment plays for students. Move the handles or type times to preview that moment in the

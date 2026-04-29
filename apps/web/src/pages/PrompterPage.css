@@ -293,6 +293,24 @@
   margin: 10px 0;
 }
 
+/* Save validation (Phase 1): highlight the section that blocks Save and keep copy next to the control. */
+.prompter-config-save-field-wrap--invalid {
+  padding: 10px;
+  margin: -4px -10px 12px;
+  border-radius: 8px;
+  outline: 2px solid var(--prompter-danger-red);
+  outline-offset: 2px;
+}
+
+.prompter-config-save-inline-error {
+  margin-top: 0;
+  margin-bottom: 8px;
+}
+
+.prompter-settings-input[aria-invalid='true'] {
+  border-color: var(--prompter-danger-red);
+}
+
 .prompter-info-message {
   color: #666;
   margin: 10px 0;
