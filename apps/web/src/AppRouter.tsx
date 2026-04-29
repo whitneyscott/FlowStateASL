@@ -1,4 +1,5 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import type { LtiContext } from '@aslexpress/shared-types';
 import { useLtiContext } from './hooks/useLtiContext';
 import { AppBlockingLoader } from './components/AppBlockingLoader';
 import { BridgeLog } from './components/BridgeLog';
@@ -8,6 +9,21 @@ import TimerPage from './pages/TimerPage';
 import TeacherConfigPage from './pages/TeacherConfigPage';
 import TeacherViewerPage from './pages/TeacherViewerPage';
 import PromptReviewPage from './pages/PromptReviewPage';
+
+const TEACHER_ROLE_RE =
+  /instructor|administrator|faculty|teacher|staff|contentdeveloper|teachingassistant|ta/i;
+
+/**
+ * Canvas often launches the prompter tool at `/prompter`. Students stay on the timer; instructors
+ * should land on Prompt Settings (`/config`) so the Assignments card is available without a separate nav bar.
+ */
+function PrompterRoute({ context }: { context: LtiContext }) {
+  const { search } = useLocation();
+  if (TEACHER_ROLE_RE.test(context.roles || '')) {
+    return <Navigate to={`/config${search}`} replace />;
+  }
+  return <TimerPage context={context} />;
+}
 
 export default function AppRouter() {
   const { context, loading, error } = useLtiContext();
@@ -43,7 +59,7 @@ export default function AppRouter() {
   }
 
   if (context.toolType === 'flashcards') {
-    const isTeacherRole = /instructor|administrator|faculty|teacher|staff|contentdeveloper|teachingassistant|ta/i.test(context.roles || '');
+    const isTeacherRole = TEACHER_ROLE_RE.test(context.roles || '');
     return (
       <div className="min-h-screen flex flex-col bg-zinc-900">
         {isTeacherRole && (
@@ -70,7 +86,7 @@ export default function AppRouter() {
     );
   }
 
-  const isTeacherRole = /instructor|administrator|faculty|teacher|staff|contentdeveloper|teachingassistant|ta/i.test(context.roles || '');
+  const isTeacherRole = TEACHER_ROLE_RE.test(context.roles || '');
   return (
     <div className="min-h-screen flex flex-col">
       {isTeacherRole && (
@@ -87,7 +103,7 @@ export default function AppRouter() {
         <BridgeLog context={context} loading={false} error={null} />
       </div>
       <Routes>
-        <Route path="/prompter" element={<TimerPage context={context} />} />
+        <Route path="/prompter" element={<PrompterRoute context={context} />} />
         <Route path="/config" element={<TeacherConfigPage context={context} />} />
         <Route path="/viewer" element={<TeacherViewerPage context={context} />} />
         <Route path="/prompt/review" element={<PromptReviewPage />} />
@@ -95,7 +111,7 @@ export default function AppRouter() {
           path="*"
           element={
             <Navigate
-              to={context && /instructor|administrator|faculty|teacher|staff|contentdeveloper|teachingassistant|ta/i.test(context.roles || '') ? '/config' : '/prompter'}
+              to={context && TEACHER_ROLE_RE.test(context.roles || '') ? '/config' : '/prompter'}
               replace
             />
           }
