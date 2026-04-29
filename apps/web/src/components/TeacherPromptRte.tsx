@@ -1,9 +1,34 @@
+import Quill from 'quill';
+import { SizeStyle } from 'quill/formats/size';
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
+
+/** Pixel font sizes for the inline `font-size` style (not heading levels). */
+const FONT_SIZES = [
+  '10px',
+  '11px',
+  '12px',
+  '13px',
+  '14px',
+  '15px',
+  '16px',
+  '18px',
+  '20px',
+  '22px',
+  '24px',
+  '28px',
+  '32px',
+  '36px',
+  '48px',
+] as const;
+
+SizeStyle.whitelist = [...FONT_SIZES];
+Quill.register('formats/size', SizeStyle, true);
 
 const MODULES = {
   toolbar: [
     [{ header: [1, 2, 3, false] }],
+    [{ size: [...FONT_SIZES, false] }],
     ['bold', 'italic', 'underline'],
     [{ list: 'ordered' }, { list: 'bullet' }],
     ['link'],
@@ -11,7 +36,7 @@ const MODULES = {
   ],
 };
 
-const FORMATS = ['header', 'bold', 'italic', 'underline', 'list', 'bullet', 'link'];
+const FORMATS = ['header', 'size', 'bold', 'italic', 'underline', 'list', 'bullet', 'link'];
 
 type TeacherPromptRteProps = {
   value: string;
