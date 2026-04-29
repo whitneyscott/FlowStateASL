@@ -144,6 +144,23 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
       newLines.push(...pmc);
     }
     newLines.push('');
+    newLines.push('--- Prompt image diagnostics (tag prompt-image-debug) ---');
+    const pid = ltiLog.filter((line) => line.includes('] [prompt-image-debug] '));
+    if (pid.length === 0) {
+      newLines.push(
+        '(no prompt-image-debug lines yet — try Insert image (upload or pick), then check for pickFile/upload, signed-path, guard-check, stream, and RTE image load lines)',
+      );
+    } else {
+      newLines.push(...pid);
+    }
+    newLines.push('');
+    newLines.push('--- Prompt image diagnostics raw tail (last 25) ---');
+    if (pid.length === 0) {
+      newLines.push('(raw tail empty)');
+    } else {
+      newLines.push(...pid.slice(-25));
+    }
+    newLines.push('');
     newLines.push('--- Student prompt mode / Timer (tag student-prompt-type) ---');
     const spt = ltiLog.filter((line) => line.includes('] [student-prompt-type] '));
     if (spt.length === 0) {
