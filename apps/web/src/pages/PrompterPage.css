@@ -438,6 +438,41 @@
   resize: vertical;
 }
 
+.prompter-prompt-editor-col {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.prompter-prompt-proof-toggle {
+  margin: 6px 0 4px;
+  font-size: 0.9rem;
+  color: #444;
+}
+
+.prompter-prompt-html-proof {
+  border: 1px dashed #bbb;
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: #f8f8f8;
+  max-height: 14rem;
+  overflow: auto;
+}
+
+.prompter-prompt-html-proof-label {
+  font-size: 0.8rem;
+  color: #666;
+  margin-bottom: 6px;
+  font-family: ui-monospace, monospace;
+}
+
+.prompter-prompt-html-proof-inner {
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
 /* react-quill (teacher text prompts + instructions) */
 .prompter-prompt-rte-wrap {
   flex: 1;

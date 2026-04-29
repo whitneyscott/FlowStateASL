@@ -15,6 +15,7 @@ import { YoutubeStimulusShell } from '../components/YoutubeStimulusShell';
 import { YoutubeIframePlayer, type YoutubeIframePlayerHandle } from '../components/YoutubeIframePlayer';
 import { YoutubeClipRangeEditor } from '../components/YoutubeClipRangeEditor';
 import { TeacherPromptRte } from '../components/TeacherPromptRte';
+import { TeacherAuthoredHtmlBlock } from '../components/TeacherAuthoredHtmlBlock';
 import '../components/TeacherSettings.css';
 import './PrompterPage.css';
 
@@ -79,6 +80,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const [prompts, setPrompts] = useState<string[]>([]);
   /** Bumped when GET /config data is applied so react-quill remounts and shows async-loaded HTML. */
   const [promptRteRemountKey, setPromptRteRemountKey] = useState(0);
+  /** Same string as each editor `value`; read-only preview proves whether blank UI is Quill vs missing state. */
+  const [showTextPromptHtmlPreview, setShowTextPromptHtmlPreview] = useState(false);
   const [accessCode, setAccessCode] = useState('');
   const [moduleId, setModuleId] = useState<string>('');
   const [createModuleName, setCreateModuleName] = useState('');
@@ -1618,14 +1621,34 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                           Each prompt is rich text (saved as HTML). Students see it formatted during warm-up and
                           recording.
                         </p>
+                        <label className="prompter-settings-label prompter-settings-label-block prompter-prompt-proof-toggle">
+                          <input
+                            type="checkbox"
+                            checked={showTextPromptHtmlPreview}
+                            onChange={(e) => setShowTextPromptHtmlPreview(e.target.checked)}
+                          />
+                          {' '}
+                          Show read-only HTML preview (same data as the editor — if preview has text but Quill is empty,
+                          the failure is in the editor layer)
+                        </label>
                         {prompts.map((p, i) => (
                           <div key={`${(assignmentId ?? 'a')}-${i}-${promptRteRemountKey}`} className="prompter-prompt-item-row">
-                            <TeacherPromptRte
-                              value={p}
-                              onChange={(html) => updatePrompt(i, html)}
-                              placeholder="Prompt text…"
-                              remountKey={`p-${(assignmentId ?? 'a')}-${i}-${promptRteRemountKey}`}
-                            />
+                            <div className="prompter-prompt-editor-col">
+                              <TeacherPromptRte
+                                value={p}
+                                onChange={(html) => updatePrompt(i, html)}
+                                placeholder="Prompt text…"
+                                remountKey={`p-${(assignmentId ?? 'a')}-${i}-${promptRteRemountKey}`}
+                              />
+                              {showTextPromptHtmlPreview ? (
+                                <div className="prompter-prompt-html-proof" data-testid={`prompt-html-proof-${i}`}>
+                                  <div className="prompter-prompt-html-proof-label">
+                                    Read-only preview · {p.length} chars
+                                  </div>
+                                  <TeacherAuthoredHtmlBlock html={p} className="prompter-prompt-html prompter-prompt-html-proof-inner" />
+                                </div>
+                              ) : null}
+                            </div>
                             <button type="button" onClick={() => removePrompt(i)} className="prompter-btn-remove">
                               Remove
                             </button>
