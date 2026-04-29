@@ -105,10 +105,9 @@ export function AppModeModal({
       <div className="app-mode-modal">
         <h2 id={titleId}>Application mode</h2>
         <p className="app-mode-modal-desc">
-          Applies to <strong>Prompt Manager</strong> and <strong>Flashcards</strong> in this app. <strong>Developer</strong>
-          shows the Bridge log for instructors (after password). Learners can use the separate <strong>Support:
-          diagnostic log</strong> control and the support password. Demo/Production do not use this modal for Bridge;
-          UX timing still posts in all app modes.
+          Applies to <strong>Prompt Manager</strong> and <strong>Flashcards</strong> in this app. Demo and Production
+          hide the Bridge debug log and related client diagnostics. Only <strong>Developer</strong> shows them (after
+          password). Production matches Demo for this UI — use it to mirror Canvas Bulk Editor workflows.
         </p>
 
         <label className="app-mode-option">

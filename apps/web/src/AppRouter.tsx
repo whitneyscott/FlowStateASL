@@ -3,7 +3,6 @@ import type { LtiContext } from '@aslexpress/shared-types';
 import { useLtiContext } from './hooks/useLtiContext';
 import { AppBlockingLoader } from './components/AppBlockingLoader';
 import { BridgeLog } from './components/BridgeLog';
-import { SupportBridgeLauncher } from './components/SupportBridgeLauncher';
 import { useAppMode } from './contexts/AppModeContext';
 import FlashcardsPage from './pages/FlashcardsPage';
 import TimerPage from './pages/TimerPage';
@@ -29,14 +28,10 @@ function PrompterRoute({ context }: { context: LtiContext }) {
 export default function AppRouter() {
   const { context, loading, error } = useLtiContext();
   const { openModeModal, appMode } = useAppMode();
-  const isTeacherRole = !!(context && TEACHER_ROLE_RE.test(context.roles || ''));
-  /** One `useLtiContext` only: SupportBridgeLauncher must not call it (boot_nonce is single-use). */
-  const showSupportBridgeButton = !loading && (!context || !isTeacherRole);
 
   if (loading) {
     return (
       <>
-        <SupportBridgeLauncher showSupportButton={showSupportBridgeButton} />
         <AppBlockingLoader active message="Loading course…" />
         <div className="min-h-screen flex flex-col items-center justify-center bg-gray-100 p-4" aria-hidden="true">
           <BridgeLog context={null} loading={true} error={null} />
@@ -48,7 +43,6 @@ export default function AppRouter() {
   if (error) {
     return (
       <div className="min-h-screen flex flex-col items-center bg-gray-100 p-4">
-        <SupportBridgeLauncher showSupportButton={showSupportBridgeButton} />
         <BridgeLog context={null} loading={false} error={error} />
         <p className="text-red-600 mt-4">{error}</p>
       </div>
@@ -58,7 +52,6 @@ export default function AppRouter() {
   if (!context) {
     return (
       <div className="min-h-screen flex flex-col items-center bg-gray-100 p-4">
-        <SupportBridgeLauncher showSupportButton={showSupportBridgeButton} />
         <BridgeLog context={null} loading={false} error={null} />
         <p className="text-gray-600 mt-4">Launch from Canvas LTI to continue.</p>
       </div>
@@ -66,9 +59,9 @@ export default function AppRouter() {
   }
 
   if (context.toolType === 'flashcards') {
+    const isTeacherRole = TEACHER_ROLE_RE.test(context.roles || '');
     return (
       <div className="min-h-screen flex flex-col bg-zinc-900">
-        <SupportBridgeLauncher showSupportButton={showSupportBridgeButton} />
         {isTeacherRole && (
           <button
             type="button"
@@ -93,9 +86,9 @@ export default function AppRouter() {
     );
   }
 
+  const isTeacherRole = TEACHER_ROLE_RE.test(context.roles || '');
   return (
     <div className="min-h-screen flex flex-col">
-      <SupportBridgeLauncher showSupportButton={showSupportBridgeButton} />
       {isTeacherRole && (
         <button
           type="button"

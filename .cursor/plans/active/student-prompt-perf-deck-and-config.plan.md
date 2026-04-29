@@ -73,3 +73,13 @@
 - [x] P1: **DB-first deck build** via `sprout_playlist_videos` + `DISTINCT ON` title dedupe; parallel deck fetches (concurrency 8); Sprout fallback when DB empty / error.
 - [x] **3a: read-time title dedupe in SQL** for sync table path; JS dedupe retained for Sprout-only path.
 - [ ] No regression: round-robin + `totalCards` still matches current behavior (verify in staging / large multi-deck assignment).
+
+## 6) Backlog — embed short keys (low priority, not scheduled)
+
+**Idea:** Version the hidden ASL config embed (e.g. `data-asl-express-v="2"` or internal `fmt` field) and persist **shorter key names** only in the HTML JSON (`t`/`v`/`d` for card rows, etc.), expanding to full [`PromptConfigJson`](../../apps/api/src/prompt/dto/prompt-config.dto.ts) immediately after `JSON.parse` in [`parseAssignmentDescriptionForPromptManager`](../../apps/api/src/prompt/assignment-description-embed.util.ts). Keep reading v1 (long keys) forever or until every assignment has been re-saved.
+
+**Why it’s optional:** Cuts `descLength` and Canvas description payload (on the order of **~15–35%** of the JSON body for very large deck embeds) and helps storage limits; **end-to-end `GET /config` latency** gains are usually **modest** (parsing 10k JSON is cheap vs Canvas RTT + `getAssignment`). Do this if profiling shows description size on the wire matters, or as a follow-up to squeeze bytes—not as the next big latency lever.
+
+**Context:** Deck-based prompt load after recent optimizations (fewer Canvas round trips, module-scan skip, minified JSON, getConfig cache, DB-first deck build, etc.) already compares well to **native Canvas quizzes** at similar “many items” scale—often **faster and more stable** than a huge quiz with question banks, which can be slower or fragile in the browser. Treat short-key embeds as **nice-to-have**, not a must.
+
+**If implemented:** add golden tests (v1 vs v2 → same normalized config; round-trip), and document the key map in one place beside the encode/decode helpers.

@@ -2,7 +2,6 @@ import { useState, useEffect, useRef } from 'react';
 import type { LtiContext } from '@aslexpress/shared-types';
 import { useAppMode } from '../contexts/AppModeContext';
 import { ltiTokenHeaders } from '../api/lti-token';
-import { readStudentBridgeEnabled } from '../utils/app-mode';
 import {
   clearBridgeClientFallbackLines,
   mergeBridgeLogLinesForDisplay,
@@ -27,17 +26,11 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
     /instructor|administrator|faculty|teacher|staff|contentdeveloper|teachingassistant|ta/i.test(
       context?.roles || '',
     );
-  const [studentBridge, setStudentBridge] = useState(() => readStudentBridgeEnabled());
-  useEffect(() => {
-    const sync = () => setStudentBridge(readStudentBridgeEnabled());
-    window.addEventListener('aslexpress:student-bridge-changed', sync);
-    return () => window.removeEventListener('aslexpress:student-bridge-changed', sync);
-  }, []);
   /**
-   * Teachers: Developer app mode. Support flow (AppRouter) sets `aslExpressStudentBridge` for students
-   * so Demo/Production can show the same panel.
+   * Bridge log only in password-gated Developer app mode. Demo and Production never show it — not even with
+   * ?debug=1 (that query previously bypassed the mode switch and confused “Production mode”).
    */
-  const showBridgeLogUi = (isTeacherRole && isDeveloperMode) || studentBridge;
+  const developerUi = isTeacherRole && isDeveloperMode;
   const canClearLog = isDeveloperMode;
   const [ltiLog, setLtiLog] = useState<string[]>([]);
   const [debugVersion, setDebugVersion] = useState<DebugVersion | null>(null);
@@ -46,14 +39,14 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
 
   const [expanded, setExpanded] = useState(true);
   useEffect(() => {
-    if (showBridgeLogUi) {
+    if (developerUi) {
       setExpanded(true);
       containerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
-  }, [showBridgeLogUi]);
+  }, [developerUi]);
 
   useEffect(() => {
-    if (!showBridgeLogUi) return;
+    if (!developerUi) return;
     let cancelled = false;
     const poll = async () => {
       try {
@@ -83,7 +76,7 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
       cancelled = true;
       clearInterval(id);
     };
-  }, [showBridgeLogUi]);
+  }, [developerUi]);
   const [copied, setCopied] = useState(false);
   const [clearingAuth, setClearingAuth] = useState(false);
 
@@ -192,7 +185,7 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
     const uxb = ltiLog.filter((line) => line.includes('] [ux-benchmark] '));
     if (uxb.length === 0) {
       newLines.push(
-        '(no ux-benchmark lines yet — open Timer / Flashcards / Prompt Settings; spans record in all app modes and post here. [UX BENCH] console only in Developer mode on teachers.)',
+        '(no ux-benchmark lines yet — switch to Developer mode, then load Prompt Settings / Timer / Flashcards. Lines also go to the browser console as [UX BENCH].)',
       );
     } else {
       newLines.push(...uxb.slice(-80));
@@ -202,7 +195,7 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
 
   const text = ['BRIDGE DEBUG LOG:', ...lines].join('\n');
 
-  if (!showBridgeLogUi) {
+  if (!developerUi) {
     return null;
   }
 

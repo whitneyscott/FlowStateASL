@@ -52,6 +52,8 @@ Every new Prompter API step MUST emit to the Bridge Debug Log via `appendLtiLog`
 
 ### Parking lot (technical)
 
+- [ ] **Optional (low priority):** Shorter key names in assignment-description embed JSON (v2) — see [student-prompt-perf-deck-and-config.plan.md](student-prompt-perf-deck-and-config.plan.md) section 6. Main payoff is smaller `descLength` / Canvas description storage; wall-clock student config is usually dominated by Canvas, not JSON key bytes.
+
 - **Done (Nest):** `getEffectiveCanvasToken(courseId, sessionToken)` — session OAuth first, else encrypted `course_settings.canvas_api_token` for that `courseId` only (no shared env tokens). Teacher OAuth is persisted per course; manual token path also persists. Prompter reads/submit/upload/viewer use this; **teacher-only** `putConfig` and create-assignment/module/group still require session OAuth only where enforced. Video upload uses Canvas `.../submissions/{userId}/files` init (PHP parity). `writeSubmissionBody` uses `as_user_id` when the token holder is not the student, with auth-style retry flip.
 
 ### Teacher Config Enhancements

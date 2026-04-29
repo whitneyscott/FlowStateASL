@@ -1417,33 +1417,46 @@
   min-width: 0;
 }
 
-/**
- * Teacher grading: submission picker + nav + grade + reset at top (single toolbar), then assignment
- * title, then video, then free-form comments, caption tips, deck / text prompt controls.
- */
-.prompter-viewer-center--viewer-grading-stack .prompter-viewer-slot-top {
-  order: 1;
-}
-.prompter-viewer-center--viewer-grading-stack .prompter-viewer-slot-grading-toolbar {
-  order: 2;
-}
-.prompter-viewer-center--viewer-grading-stack .prompter-viewer-slot-assignment-title {
-  order: 3;
-}
-.prompter-viewer-center--viewer-grading-stack .prompter-viewer-slot-submission-media {
+/* Center panel grading stack: lock a predictable top-to-bottom order. */
+.prompter-viewer-slot-top {
   order: 10;
 }
-.prompter-viewer-center--viewer-grading-stack .prompter-viewer-slot-freeform-group {
-  order: 15;
+
+.prompter-viewer-slot-grading-toolbar {
+  order: 20;
 }
-.prompter-viewer-center--viewer-grading-stack .prompter-viewer-slot-captions-disclosure {
-  order: 18;
+
+.prompter-viewer-slot-assignment-title {
+  order: 30;
 }
-.prompter-viewer-center--viewer-grading-stack .prompter-viewer-slot-deck-active-group {
-  order: 22;
+
+.prompter-viewer-slot-submission-media {
+  order: 40;
 }
-.prompter-viewer-center--viewer-grading-stack .prompter-viewer-slot-text-prompt-group {
-  order: 24;
+
+.prompter-viewer-slot-deck-active-group,
+.prompter-viewer-slot-nondeck-grading-group {
+  order: 50;
+}
+
+.prompter-viewer-slot-freeform-group {
+  order: 60;
+}
+
+.prompter-viewer-slot-captions-disclosure {
+  order: 70;
+}
+
+.prompter-viewer-slot-text-prompt-group {
+  order: 80;
+}
+
+/**
+ * Grading: quick (Correct/Incorrect) row and prompt are nested in slot-submission-media so they sit
+ * directly under the video; main column order follows source order (no flex order on children).
+ */
+.prompter-viewer-grading-below-submission {
+  margin-top: 10px;
 }
 
 .prompter-viewer-caption-help-toggle {
@@ -1580,6 +1593,51 @@
   max-width: 100%;
   min-width: 0;
   box-sizing: border-box;
+}
+
+/* Video, then full-width correct/incorrect row, then prompt (below the buttons). */
+.prompter-viewer-active-item-panel--stacked {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 12px;
+}
+.prompter-viewer-active-item-panel--stacked .prompter-viewer-active-item-ratings {
+  width: 100%;
+  flex: none;
+  max-width: 100%;
+  order: 1;
+}
+.prompter-viewer-active-item-panel--stacked .prompter-viewer-active-item-meta {
+  flex: none;
+  width: 100%;
+  max-width: 100%;
+  order: 2;
+}
+
+/* Deck mode: enforce exact top-to-bottom order in the middle panel active item block. */
+.prompter-viewer-slot-deck-active-group .prompter-viewer-active-item-panel--stacked {
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-areas:
+    "ratings"
+    "meta"
+    "comment";
+  row-gap: 12px;
+}
+
+.prompter-viewer-slot-deck-active-group .prompter-viewer-active-item-panel--stacked .prompter-viewer-active-item-ratings {
+  grid-area: ratings;
+  order: unset;
+}
+
+.prompter-viewer-slot-deck-active-group .prompter-viewer-active-item-panel--stacked .prompter-viewer-active-item-meta {
+  grid-area: meta;
+  order: unset;
+}
+
+.prompter-viewer-slot-deck-active-group .prompter-viewer-active-item-panel--stacked .prompter-viewer-criterion-comment-wrap {
+  grid-area: comment;
 }
 
 .prompter-viewer-active-item-panel--prompt-only {
@@ -2239,6 +2297,50 @@
   font-family: inherit;
   resize: vertical;
   min-height: 44px;
+}
+
+/* Text / YouTube (non-deck) rubric: directly under the student video, above timestamped feedback. */
+.prompter-viewer-nondeck-grading-panels {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+.prompter-viewer-nondeck-criterion-panel {
+  padding: 12px 14px;
+  background: #f6faff;
+  border: 1px solid #d7e7fb;
+  border-radius: 8px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-areas:
+    "title"
+    "ratings"
+    "comment";
+  row-gap: 8px;
+}
+.prompter-viewer-nondeck-criterion-panel > .prompter-viewer-nondeck-criterion-title {
+  grid-area: title;
+}
+.prompter-viewer-nondeck-criterion-panel > .prompter-viewer-rubric-ratings {
+  grid-area: ratings;
+}
+.prompter-viewer-nondeck-criterion-panel > .prompter-viewer-criterion-comment-wrap {
+  grid-area: comment;
+}
+.prompter-viewer-nondeck-criterion-ratings {
+  margin-top: 4px;
+}
+.prompter-viewer-text-timestamped-col--sidebar-only .prompter-viewer-hint--sidebar-timestamped {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #456;
 }
 
 .prompter-viewer-criterion-comment-save {
