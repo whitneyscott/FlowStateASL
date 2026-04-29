@@ -17,7 +17,7 @@ import { YoutubeClipRangeEditor } from '../components/YoutubeClipRangeEditor';
 import { TeacherPromptRte } from '../components/TeacherPromptRte';
 import { TeacherAuthoredHtmlBlock } from '../components/TeacherAuthoredHtmlBlock';
 import { sanitizeTeacherFeedbackHtml } from '../utils/teacher-feedback-html';
-import { measureUxAsync } from '../utils/ux-benchmark';
+import { measureUxAsync, startUxSpan } from '../utils/ux-benchmark';
 import '../components/TeacherSettings.css';
 import './PrompterPage.css';
 
@@ -712,29 +712,50 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     }
     if (bootCanvasListsReadyRef.current) {
       if (assignmentId) {
-        void load(assignmentId);
+        const span = startUxSpan('PromptSettings: switch assignment (total)', {
+          page: 'TeacherConfigPage',
+          assignmentId,
+        });
+        void load(assignmentId)
+          .then(() => span.end({ ok: true }))
+          .catch((e) => span.end({ ok: false, extra: { error: e instanceof Error ? e.message : String(e) } }));
       } else {
         setLoading(false);
       }
       return;
     }
     let cancelled = false;
+    const bootSpan = startUxSpan('PromptSettings: boot (total)', {
+      page: 'TeacherConfigPage',
+      assignmentId: assignmentId ?? null,
+    });
     void (async () => {
       await loadModules();
-      if (cancelled) return;
+      if (cancelled) {
+        bootSpan.end({ ok: true, extra: { cancelled: true, step: 'after_modules' } });
+        return;
+      }
       await loadAssignmentGroups();
-      if (cancelled) return;
+      if (cancelled) {
+        bootSpan.end({ ok: true, extra: { cancelled: true, step: 'after_groups' } });
+        return;
+      }
       await loadRubrics();
-      if (cancelled) return;
+      if (cancelled) {
+        bootSpan.end({ ok: true, extra: { cancelled: true, step: 'after_rubrics' } });
+        return;
+      }
       bootCanvasListsReadyRef.current = true;
       if (assignmentId) {
         await load(assignmentId);
       } else {
         setLoading(false);
       }
+      bootSpan.end({ ok: true });
     })().catch((e) => {
       console.warn('[TeacherConfig] boot sequence', e);
       if (!cancelled) setLoading(false);
+      bootSpan.end({ ok: false, extra: { error: e instanceof Error ? e.message : String(e) } });
     });
     return () => {
       cancelled = true;
@@ -936,6 +957,11 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
 
   const handleSave = async () => {
     if (!teacher || !hasLti) return;
+    const totalSpan = startUxSpan('PromptSettings: save (total)', {
+      page: 'TeacherConfigPage',
+      assignmentId: assignmentId ?? null,
+      createMode: !assignmentId,
+    });
     const v = validateConfigSaveClient({
       moduleId,
       promptMode,
@@ -948,6 +974,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       setError(v.message);
       setConfigSaveFieldErrorsVisible(true);
       scrollToConfigSaveBlocker(v);
+      totalSpan.end({ ok: false, extra: { reason: 'client_validation', blocker: v.blocker, youtubeIssue: v.youtubeIssue } });
       return;
     }
     setSaving(true);
@@ -1033,6 +1060,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         loadAssignmentGroups();
       }
       setConfigBaselineFingerprint(configFormFingerprint);
+      totalSpan.end({ ok: true, extra: { assignmentId: targetId ?? null } });
     } catch (e: unknown) {
       if (e instanceof promptApi.NeedsManualTokenError) {
         setShowManualTokenModal(true);
@@ -1041,6 +1069,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         setError(msg);
         setLastApiError('PUT /api/prompt/config', 0, msg);
       }
+      totalSpan.end({ ok: false, extra: { error: e instanceof Error ? e.message : String(e) } });
     } finally {
       setSaving(false);
     }
@@ -1430,6 +1459,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
 
   const openImportModal = useCallback(async () => {
     if (!teacher || !hasLti) return;
+    const totalSpan = startUxSpan('PromptSettings: open import modal (total)', { page: 'TeacherConfigPage' });
     setImportModalOpen(true);
     setImportModalMessage(null);
     setTrueWayApplyMessage(null);
@@ -1467,11 +1497,13 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
           ),
         );
       }
+      totalSpan.end({ ok: true });
     } catch (e) {
       setImportCanvasBrief(null);
       setImportSourceAssignmentId('');
       setImportModalMessage(e instanceof Error ? e.message : String(e));
       if (e instanceof promptApi.NeedsManualTokenError) setShowManualTokenModal(true);
+      totalSpan.end({ ok: false, extra: { error: e instanceof Error ? e.message : String(e) } });
     } finally {
       setImportModalBusy(false);
     }
@@ -1507,14 +1539,20 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
 
   const handleImportModalSingleMerge = useCallback(async () => {
     if (!teacher || !hasLti) return;
+    const totalSpan = startUxSpan('PromptSettings: import selected assignment (total)', {
+      page: 'TeacherConfigPage',
+      assignmentId: importSourceAssignmentId.trim() || null,
+    });
     const sid = importSourceAssignmentId.trim();
     const mid = importModuleId.trim();
     if (!sid) {
       setImportModalMessage('Select a source assignment to import.');
+      totalSpan.end({ ok: false, extra: { reason: 'missing_source' } });
       return;
     }
     if (!mid) {
       setImportModalMessage('Select a Canvas module. The Prompter tool is added above the assignment in that module (same as saving a new assignment).');
+      totalSpan.end({ ok: false, extra: { reason: 'missing_module' } });
       return;
     }
     setImportModalBusy(true);
@@ -1551,9 +1589,11 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         p.set('assignmentId', sid);
         return p;
       });
+      totalSpan.end({ ok: true });
     } catch (e) {
       setImportModalMessage(e instanceof Error ? e.message : String(e));
       if (e instanceof promptApi.NeedsManualTokenError) setShowManualTokenModal(true);
+      totalSpan.end({ ok: false, extra: { error: e instanceof Error ? e.message : String(e) } });
     } finally {
       setImportModalBusy(false);
     }
