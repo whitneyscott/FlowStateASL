@@ -245,6 +245,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   /** Set when config finishes loading in edit mode; used to show an unsaved-changes hint (Phase 4). */
   const [configBaselineFingerprint, setConfigBaselineFingerprint] = useState<string | null>(null);
   const prevLoadingForConfigBaselineRef = useRef(false);
+  /** Canvas lists (modules/groups/rubrics) load once per page session; assignment changes only reload config. */
+  const bootCanvasListsReadyRef = useRef(false);
   const [setupUiMode, setSetupUiMode] = useState<'classic' | 'wizard'>(() => {
     try {
       return localStorage.getItem(TEACHER_CONFIG_UI_STORAGE_KEY) === 'wizard' ? 'wizard' : 'classic';
@@ -687,7 +689,16 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
 
   useEffect(() => {
     if (!teacher || !hasLti) {
+      bootCanvasListsReadyRef.current = false;
       setLoading(false);
+      return;
+    }
+    if (bootCanvasListsReadyRef.current) {
+      if (assignmentId) {
+        void load(assignmentId);
+      } else {
+        setLoading(false);
+      }
       return;
     }
     let cancelled = false;
@@ -698,8 +709,9 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       if (cancelled) return;
       await loadRubrics();
       if (cancelled) return;
+      bootCanvasListsReadyRef.current = true;
       if (assignmentId) {
-        await load();
+        await load(assignmentId);
       } else {
         setLoading(false);
       }
@@ -710,8 +722,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: stable Canvas bootstrap when course/assignment changes; avoid re-run on callback identity churn
-  }, [teacher, hasLti, assignmentId]);
+  }, [teacher, hasLti, assignmentId, loadModules, loadAssignmentGroups, loadRubrics, load]);
 
   /** Normalize rubric id string if the course list uses the same id with different formatting. */
   useEffect(() => {
@@ -1982,30 +1993,32 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
               </p>
             ) : (
               <div className="prompter-settings-config-form">
-                <div className="prompter-setup-ui-toggle prompter-settings-actions-row prompter-settings-actions-row-mb-md" role="group" aria-label="Setup layout">
-                  <button
-                    type="button"
-                    className={setupUiMode === 'classic' ? 'prompter-btn-ready' : 'prompter-btn-secondary'}
-                    onClick={() => setSetupUiMode('classic')}
-                  >
-                    Classic (one page)
-                  </button>
-                  <button
-                    type="button"
-                    className={setupUiMode === 'wizard' ? 'prompter-btn-ready' : 'prompter-btn-secondary'}
-                    onClick={() => setSetupUiMode('wizard')}
-                  >
-                    Step-by-step
-                  </button>
+                <div className="prompter-config-top-controls">
+                  <div className="prompter-setup-ui-toggle prompter-settings-actions-row" role="group" aria-label="Setup layout">
+                    <button
+                      type="button"
+                      className={setupUiMode === 'classic' ? 'prompter-btn-ready' : 'prompter-btn-secondary'}
+                      onClick={() => setSetupUiMode('classic')}
+                    >
+                      Classic (one page)
+                    </button>
+                    <button
+                      type="button"
+                      className={setupUiMode === 'wizard' ? 'prompter-btn-ready' : 'prompter-btn-secondary'}
+                      onClick={() => setSetupUiMode('wizard')}
+                    >
+                      Step-by-step
+                    </button>
+                  </div>
+                  <div className="prompter-settings-save-row prompter-settings-save-row--top prompter-settings-actions-row">
+                    {saveResetActions}
+                  </div>
                 </div>
                 {assignmentConfigUnsaved && (
                   <p className="prompter-hint prompter-settings-unsaved-hint" role="status">
                     You have unsaved changes — use <strong>Save</strong> when you are done editing.
                   </p>
                 )}
-                <div className="prompter-settings-save-row prompter-settings-save-row--top prompter-settings-actions-row">
-                  {saveResetActions}
-                </div>
                 {setupUiMode === 'wizard' && (
                   <>
                     <p className="prompter-hint" role="status">

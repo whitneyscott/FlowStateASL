@@ -234,12 +234,6 @@ export function parseAssignmentDescriptionForPromptManager(html: string | undefi
     delete (c as { instructions?: string }).instructions;
     config = c;
   }
-  // Never treat moduleId from legacy embeds as authoritative — Prompt Manager resolves it from Canvas.
-  if (config) {
-    const c = { ...(config as PromptConfigJson) };
-    delete (c as { moduleId?: string }).moduleId;
-    config = c;
-  }
   return { visibleHtml, config, prompts, repairNotes };
 }
 
@@ -248,8 +242,7 @@ export function toPromptConfigForEmbed(c: PromptConfigJson): Record<string, unkn
   delete o.prompts;
   delete o.instructions;
   delete o.resolvedAssignmentId;
-  /** Module placement is derived from Canvas module items on read, not duplicated in the embed. */
-  delete o.moduleId;
+  /** Keep moduleId in prompt embed so edit loads can restore the saved module if live Canvas scan is unavailable. */
   return o;
 }
 

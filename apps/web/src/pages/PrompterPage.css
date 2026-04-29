@@ -493,7 +493,25 @@
 
 .prompter-settings-save-row--top {
   margin-top: 0;
-  margin-bottom: 16px;
+  margin-bottom: 0;
+}
+
+.prompter-config-top-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px 14px;
+  margin: 0 0 14px 0;
+}
+
+.prompter-config-top-controls .prompter-settings-actions-row {
+  justify-content: center;
+  margin: 0;
+}
+
+.prompter-config-top-controls .prompter-btn-ready,
+.prompter-config-top-controls .prompter-btn-secondary {
+  min-width: 160px;
 }
 
 .prompter-settings-save-sticky-wrap {

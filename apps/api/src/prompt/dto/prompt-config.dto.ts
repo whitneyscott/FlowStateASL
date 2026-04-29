@@ -44,8 +44,8 @@ export interface PromptConfigJson {
   assignmentName?: string;
   assignmentGroupId?: string;
   /**
-   * Canvas module id for this assignment (first module containing it as an Assignment item, by module position).
-   * Populated on GET from the Modules API, not read from the assignment description embed.
+   * Canvas module id for this assignment.
+   * Persisted in prompt config embeds; GET may refresh from live Canvas module placement when available.
    */
   moduleId?: string;
   pointsPossible?: number;
