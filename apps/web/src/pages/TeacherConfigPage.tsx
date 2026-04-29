@@ -1799,9 +1799,10 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       {configBlockingOverlay}
     <div className="prompter-page">
       <div className="prompter-page-inner">
-        <h1 className="prompter-settings-page-title">Set up prompts for your assignment</h1>
+        <h1 className="prompter-settings-page-title">Prompt Settings</h1>
         <p className="prompter-settings-page-subtitle">
-          Pick a Canvas assignment, add text prompts or media, then save. Students open the activity from the course module.
+          Choose a Canvas assignment, configure prompts or media, then save. Students open the activity from the course
+          module.
         </p>
         {error && (
           <div className="prompter-alert-error" role="alert" tabIndex={-1}>
