@@ -2,7 +2,6 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { useLtiContext } from './hooks/useLtiContext';
 import { AppBlockingLoader } from './components/AppBlockingLoader';
 import { BridgeLog } from './components/BridgeLog';
-import { ToolSelector } from './components/ToolSelector';
 import { useAppMode } from './contexts/AppModeContext';
 import FlashcardsPage from './pages/FlashcardsPage';
 import TimerPage from './pages/TimerPage';
@@ -58,7 +57,6 @@ export default function AppRouter() {
           </button>
         )}
         <div className="w-full max-w-4xl mx-auto px-4 py-4">
-          <ToolSelector context={context} currentTool="flashcards" />
           <BridgeLog context={context} loading={false} error={null} />
         </div>
         <Routes>
@@ -86,7 +84,6 @@ export default function AppRouter() {
         </button>
       )}
       <div className="w-full max-w-4xl mx-auto px-4 py-4">
-        <ToolSelector context={context} currentTool="prompter" />
         <BridgeLog context={context} loading={false} error={null} />
       </div>
       <Routes>
