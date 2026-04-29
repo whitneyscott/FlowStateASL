@@ -23,7 +23,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Request, Response } from 'express';
 import { mkdirSync } from 'node:fs';
-import { unlink } from 'node:fs/promises';
+import { readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { LtiLaunchGuard } from '../lti/guards/lti-launch.guard';
 import { TeacherRoleGuard } from '../common/guards/teacher-role.guard';
@@ -52,6 +52,10 @@ import { UploadResilienceService } from './upload-resilience.service';
 
 const TMP_UPLOAD_DIR = join(process.cwd(), 'tmp', 'uploads');
 mkdirSync(TMP_UPLOAD_DIR, { recursive: true });
+const TMP_COURSE_IMAGE_UPLOAD_DIR = join(process.cwd(), 'tmp', 'course-image-uploads');
+mkdirSync(TMP_COURSE_IMAGE_UPLOAD_DIR, { recursive: true });
+
+const COURSE_PROMPT_IMAGE_UPLOAD_LIMIT = 10 * 1024 * 1024;
 
 @Controller('prompt')
 @UseGuards(LtiLaunchGuard)
@@ -168,6 +172,109 @@ export class PromptController {
         return res.status(401).json(getOAuth401Body(req));
       }
       throw err;
+    }
+  }
+
+  @Get('course-files/root-folder')
+  @UseGuards(TeacherRoleGuard)
+  async getCourseFilesRootFolder(@Req() req: Request, @Res() res: Response) {
+    const ctx = this.getCtx(req);
+    try {
+      const out = await this.prompt.getCourseFilesRootFolderId(ctx);
+      return res.json(out);
+    } catch (err) {
+      if (err instanceof CanvasTokenExpiredError) {
+        return res.status(401).json(getOAuth401Body(req));
+      }
+      throw err;
+    }
+  }
+
+  @Get('course-files')
+  @UseGuards(TeacherRoleGuard)
+  async listCourseImageFiles(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Query('folderId') folderId?: string,
+    @Query('page') page?: string,
+  ) {
+    const ctx = this.getCtx(req);
+    const p = Math.max(1, Number.parseInt(String(page ?? '1'), 10) || 1);
+    try {
+      const out = await this.prompt.listCourseImageFilesForPicker(ctx, folderId, p);
+      return res.json(out);
+    } catch (err) {
+      if (err instanceof CanvasTokenExpiredError) {
+        return res.status(401).json(getOAuth401Body(req));
+      }
+      throw err;
+    }
+  }
+
+  @Post('course-files/upload')
+  @HttpCode(HttpStatus.CREATED)
+  @UseGuards(TeacherRoleGuard)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      dest: TMP_COURSE_IMAGE_UPLOAD_DIR,
+      limits: { fileSize: COURSE_PROMPT_IMAGE_UPLOAD_LIMIT },
+    }),
+  )
+  async uploadCoursePromptImageFile(
+    @Req() req: Request,
+    @Res() res: Response,
+    @UploadedFile() file: { path?: string; mimetype?: string; originalname?: string } | undefined,
+  ) {
+    const ctx = this.getCtx(req);
+    const filePath = file?.path;
+    if (!filePath) {
+      throw new BadRequestException('No image file provided');
+    }
+    try {
+      const buffer = await readFile(filePath);
+      const out = await this.prompt.uploadCoursePromptImage(ctx, {
+        buffer,
+        mimetype: file.mimetype ?? 'application/octet-stream',
+        originalname: file.originalname,
+      });
+      return res.status(HttpStatus.CREATED).json(out);
+    } catch (err) {
+      if (err instanceof CanvasTokenExpiredError) {
+        return res.status(401).json(getOAuth401Body(req));
+      }
+      throw err;
+    } finally {
+      try {
+        await unlink(filePath);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  @Get('course-files/:fileId/view')
+  async viewCoursePromptImage(@Req() req: Request, @Res() res: Response, @Param('fileId') fileId: string) {
+    const fid = (fileId ?? '').trim();
+    if (!/^\d+$/.test(fid)) {
+      return res.status(400).json({ message: 'Invalid file id' });
+    }
+    const ctx = this.getCtx(req);
+    try {
+      await this.prompt.streamCoursePromptImageToResponse(ctx, fid, res);
+    } catch (err) {
+      if (err instanceof CanvasTokenExpiredError) {
+        if (!res.headersSent) {
+          return res.status(401).json(getOAuth401Body(req));
+        }
+        return;
+      }
+      if (!res.headersSent) {
+        if (err instanceof HttpException) {
+          return res.status(err.getStatus()).json({ message: err.message });
+        }
+        const msg = err instanceof Error ? err.message : 'Error loading file';
+        return res.status(500).json({ message: msg });
+      }
     }
   }
 

@@ -617,6 +617,13 @@
   font-weight: 600;
 }
 
+.prompter-prompt-html img,
+.prompter-prompt-rte-wrap .ql-editor img {
+  max-width: 100%;
+  height: auto;
+  vertical-align: middle;
+}
+
 .prompter-btn-remove {
   background: #dc3545;
   color: white;

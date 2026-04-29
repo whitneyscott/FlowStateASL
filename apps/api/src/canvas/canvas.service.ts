@@ -308,6 +308,181 @@ export class CanvasService {
     };
   }
 
+  /**
+   * Initiate upload into the course Files area (not submission-scoped).
+   * @see https://canvas.instructure.com/doc/api/files.html#method.files.create
+   */
+  async initiateCourseFileUpload(
+    courseId: string,
+    filename: string,
+    size: number,
+    contentType: string,
+    options?: {
+      domainOverride?: string;
+      tokenOverride?: string | null;
+      parentFolderId?: string | null;
+    },
+  ): Promise<{ uploadUrl: string; uploadParams: Record<string, string> }> {
+    appendLtiLog('canvas', 'initiateCourseFileUpload', { courseId, filename, size, contentType });
+    const base = this.getBaseUrl(options?.domainOverride);
+    const url = `${base}/api/v1/courses/${encodeURIComponent(courseId)}/files`;
+    const form = new FormData();
+    form.append('name', filename);
+    form.append('size', String(size));
+    form.append('content_type', contentType);
+    const pf = options?.parentFolderId?.trim();
+    if (pf) {
+      form.append('parent_folder_id', pf);
+    }
+    const authH = this.getAuthHeaders(options?.tokenOverride);
+    const res = await this.canvasFetch(url, {
+      method: 'POST',
+      headers: { Authorization: authH.Authorization },
+      body: form,
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      appendLtiLog('canvas', 'initiateCourseFileUpload FAIL', { status: res.status, text: text.slice(0, 240) });
+      throw new Error(`Canvas initiate course file upload failed: ${res.status} ${text}`);
+    }
+    const data = (await res.json()) as {
+      upload_url?: string;
+      upload_params?: Record<string, string>;
+    };
+    if (!data.upload_url || !data.upload_params) {
+      throw new Error('Canvas did not return upload_url and upload_params');
+    }
+    appendLtiLog('canvas', 'initiateCourseFileUpload OK');
+    return {
+      uploadUrl: data.upload_url,
+      uploadParams: data.upload_params,
+    };
+  }
+
+  /** Course root folder id for Files browser / default uploads. */
+  async getCourseRootFolderId(
+    courseId: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<string> {
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/courses/${encodeURIComponent(courseId)}/folders/root`;
+    const res = await this.canvasFetch(url, {
+      headers: this.getAuthHeaders(tokenOverride),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Canvas course folders/root failed: ${res.status} ${text.slice(0, 300)}`);
+    }
+    const data = (await res.json()) as { id?: number | string };
+    const id = data.id != null ? String(data.id) : '';
+    if (!id) throw new Error('Canvas folders/root returned no id');
+    return id;
+  }
+
+  async listFolderFilesPage(
+    folderId: string,
+    options?: {
+      domainOverride?: string;
+      tokenOverride?: string | null;
+      page?: number;
+      perPage?: number;
+    },
+  ): Promise<
+    Array<{
+      id: string;
+      display_name: string;
+      content_type: string;
+      size: number;
+      url?: string;
+    }>
+  > {
+    const base = this.getBaseUrl(options?.domainOverride);
+    const page = Math.max(1, options?.page ?? 1);
+    const perPage = Math.min(100, Math.max(1, options?.perPage ?? 30));
+    const q = new URLSearchParams({
+      page: String(page),
+      per_page: String(perPage),
+    });
+    const url = `${base}/api/v1/folders/${encodeURIComponent(folderId)}/files?${q}`;
+    const res = await this.canvasFetch(url, {
+      headers: this.getAuthHeaders(options?.tokenOverride),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Canvas list folder files failed: ${res.status} ${text.slice(0, 300)}`);
+    }
+    const rows = (await res.json()) as Array<{
+      id?: number | string;
+      display_name?: string;
+      content_type?: string;
+      size?: number;
+      url?: string;
+    }>;
+    return (Array.isArray(rows) ? rows : []).map((r) => ({
+      id: r.id != null ? String(r.id) : '',
+      display_name: String(r.display_name ?? ''),
+      content_type: String(r.content_type ?? ''),
+      size: Number(r.size) || 0,
+      url: r.url,
+    }));
+  }
+
+  /** GET an authenticated Canvas URL (e.g. file `url` from file API) and return the fetch Response. */
+  async fetchCanvasAuthenticatedUrl(
+    absoluteUrl: string,
+    tokenOverride?: string | null,
+  ): Promise<Response> {
+    const auth = this.getAuthHeaders(tokenOverride).Authorization;
+    return this.canvasFetch(absoluteUrl, {
+      headers: { Authorization: auth },
+      redirect: 'follow',
+    });
+  }
+
+  async getCanvasFileApiRecord(
+    fileId: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<{
+    id: string;
+    context_type?: string;
+    context_id?: number;
+    content_type?: string;
+    display_name?: string;
+    url?: string;
+    size?: number;
+  }> {
+    const base = this.getBaseUrl(domainOverride);
+    const id = toCanvasFileIdInt(fileId);
+    const url = `${base}/api/v1/files/${id}`;
+    const res = await this.canvasFetch(url, {
+      headers: this.getAuthHeaders(tokenOverride),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Canvas get file failed: ${res.status} ${text.slice(0, 300)}`);
+    }
+    const data = (await res.json()) as {
+      id?: number | string;
+      context_type?: string;
+      context_id?: number;
+      content_type?: string;
+      display_name?: string;
+      url?: string;
+      size?: number;
+    };
+    return {
+      id: data.id != null ? String(data.id) : String(id),
+      context_type: data.context_type,
+      context_id: data.context_id,
+      content_type: data.content_type,
+      display_name: data.display_name,
+      url: data.url,
+      size: data.size,
+    };
+  }
+
   async initiateFileUpload(
     courseId: string,
     assignmentId: string,
@@ -404,7 +579,7 @@ export class CanvasService {
     uploadUrl: string,
     uploadParams: Record<string, string>,
     input: Buffer | { filePath: string; size: number },
-    options?: { resumeFromOffset?: number; tokenOverride?: string | null },
+    options?: { resumeFromOffset?: number; tokenOverride?: string | null; blobContentType?: string },
   ): Promise<{ fileId: string }> {
     const start = options?.resumeFromOffset ?? 0;
     const usingFilePath = !Buffer.isBuffer(input);
@@ -416,7 +591,8 @@ export class CanvasService {
       form.append(k, v);
     }
     if (Buffer.isBuffer(input)) {
-      form.append('file', new Blob([input], { type: 'application/octet-stream' }));
+      const blobType = options?.blobContentType?.trim() || 'application/octet-stream';
+      form.append('file', new Blob([input], { type: blobType }));
     } else {
       const blob = await openAsBlob(input.filePath, { type: 'application/octet-stream' });
       form.append('file', blob, 'upload.webm');

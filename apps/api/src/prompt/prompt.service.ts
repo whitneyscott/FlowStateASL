@@ -208,6 +208,13 @@ export class PromptService {
   private readonly assignmentImportListCache = new Map<string, { list: CanvasAssignmentBrief[]; expiresAt: number }>();
   private readonly assignmentImportListInflight = new Map<string, Promise<CanvasAssignmentBrief[]>>();
   private static readonly ASSIGNMENT_IMPORT_LIST_TTL_MS = 45_000;
+  private static readonly COURSE_PROMPT_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+  private static readonly COURSE_PROMPT_IMAGE_TYPES = new Set([
+    'image/jpeg',
+    'image/png',
+    'image/gif',
+    'image/webp',
+  ]);
 
   constructor(
     @Inject(ASSESSMENT_REPOSITORY) private readonly assessmentRepo: IAssessmentRepository,
@@ -5984,5 +5991,125 @@ export class PromptService {
     });
     appendLtiLog('prompt-import', 'applyTrueWayTemplates', { courseId: ctx.courseId, updated, matchCount: matches.length });
     return { updated, matches };
+  }
+
+  /** Teacher: Canvas course Files root folder id (for listing / picker). */
+  async getCourseFilesRootFolderId(ctx: LtiContext): Promise<{ folderId: string }> {
+    const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
+    if (!token) {
+      throw new ForbiddenException('Canvas OAuth token required');
+    }
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
+    const folderId = await this.canvas.getCourseRootFolderId(ctx.courseId, domainOverride, token);
+    return { folderId };
+  }
+
+  /** Teacher: image files in a folder (defaults to course root) for prompt image picker. */
+  async listCourseImageFilesForPicker(
+    ctx: LtiContext,
+    folderId: string | undefined,
+    page: number,
+  ): Promise<{
+    folderId: string;
+    page: number;
+    files: Array<{ id: string; display_name: string; content_type: string; size: number }>;
+  }> {
+    const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
+    if (!token) {
+      throw new ForbiddenException('Canvas OAuth token required');
+    }
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
+    const fid =
+      (folderId ?? '').trim() ||
+      (await this.canvas.getCourseRootFolderId(ctx.courseId, domainOverride, token));
+    const raw = await this.canvas.listFolderFilesPage(fid, {
+      domainOverride,
+      tokenOverride: token,
+      page,
+      perPage: 40,
+    });
+    const files = raw
+      .filter((f) => (f.content_type ?? '').toLowerCase().startsWith('image/'))
+      .map((f) => ({
+        id: f.id,
+        display_name: f.display_name,
+        content_type: f.content_type,
+        size: f.size,
+      }));
+    return { folderId: fid, page, files };
+  }
+
+  /** Teacher: upload an image into course Files; returns app-relative path for `<img src>`. */
+  async uploadCoursePromptImage(
+    ctx: LtiContext,
+    file: { buffer: Buffer; mimetype: string; originalname?: string },
+  ): Promise<{ fileId: string; viewPath: string }> {
+    const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
+    if (!token) {
+      throw new ForbiddenException('Canvas OAuth token required');
+    }
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
+    const ct = (file.mimetype ?? '').trim().toLowerCase();
+    if (!PromptService.COURSE_PROMPT_IMAGE_TYPES.has(ct)) {
+      throw new BadRequestException('Only JPEG, PNG, GIF, or WebP images are allowed');
+    }
+    if (file.buffer.length > PromptService.COURSE_PROMPT_IMAGE_MAX_BYTES) {
+      throw new BadRequestException(
+        `Image too large (max ${Math.round(PromptService.COURSE_PROMPT_IMAGE_MAX_BYTES / (1024 * 1024))} MB)`,
+      );
+    }
+    const name = (file.originalname ?? 'image').trim() || 'image';
+    const { uploadUrl, uploadParams } = await this.canvas.initiateCourseFileUpload(
+      ctx.courseId,
+      name,
+      file.buffer.length,
+      ct,
+      { domainOverride, tokenOverride: token },
+    );
+    const { fileId } = await this.canvas.uploadFileToCanvas(uploadUrl, uploadParams, file.buffer, {
+      tokenOverride: token,
+      blobContentType: ct,
+    });
+    appendLtiLog('prompt', 'uploadCoursePromptImage OK', {
+      courseId: ctx.courseId,
+      fileId,
+      bytes: file.buffer.length,
+    });
+    return { fileId, viewPath: `/api/prompt/course-files/${fileId}/view` };
+  }
+
+  /** Teacher or student: stream a course image file if it belongs to the launch course. */
+  async streamCoursePromptImageToResponse(ctx: LtiContext, fileId: string, res: Response): Promise<void> {
+    const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
+    if (!token) {
+      throw new ForbiddenException('Canvas token required — a teacher must authorize the tool for this course');
+    }
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
+    const meta = await this.canvas.getCanvasFileApiRecord(fileId, domainOverride, token);
+    const ctxKind = (meta.context_type ?? '').toLowerCase();
+    if (ctxKind !== 'course' || String(meta.context_id ?? '') !== String(ctx.courseId ?? '').trim()) {
+      throw new ForbiddenException('File is not in this course');
+    }
+    const mime = (meta.content_type ?? '').trim().toLowerCase();
+    if (!mime.startsWith('image/')) {
+      throw new BadRequestException('Not an image file');
+    }
+    const downloadUrl = meta.url?.trim();
+    if (!downloadUrl) {
+      throw new BadRequestException('Canvas did not return a file URL');
+    }
+    const upstream = await this.canvas.fetchCanvasAuthenticatedUrl(downloadUrl, token);
+    if (!upstream.ok) {
+      const t = await upstream.text().catch(() => '');
+      appendLtiLog('prompt', 'streamCoursePromptImage upstream FAIL', {
+        status: upstream.status,
+        head: t.slice(0, 200),
+      });
+      throw new BadRequestException(`Could not download file (${upstream.status})`);
+    }
+    const bodyBuf = Buffer.from(await upstream.arrayBuffer());
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    res.send(bodyBuf);
   }
 }

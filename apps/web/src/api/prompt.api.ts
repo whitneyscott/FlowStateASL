@@ -789,6 +789,52 @@ export async function applyTrueWayTemplates(): Promise<{ updated: number; matche
   });
 }
 
+export function coursePromptImageViewUrl(viewPath: string): string {
+  const p = (viewPath ?? '').trim();
+  if (!p) return p;
+  if (/^https?:\/\//i.test(p)) return p;
+  const origin = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : '';
+  if (!origin) return p.startsWith('/') ? p : `/${p}`;
+  return `${origin}${p.startsWith('/') ? '' : '/'}${p}`;
+}
+
+export async function getCourseFilesRootFolder(): Promise<{ folderId: string }> {
+  return fetchJsonWithOAuthRedirect(`${base}/course-files/root-folder`, { method: 'GET' });
+}
+
+export async function listCourseImageFiles(
+  folderId: string | undefined,
+  page = 1,
+): Promise<{
+  folderId: string;
+  page: number;
+  files: Array<{ id: string; display_name: string; content_type: string; size: number }>;
+}> {
+  const q = new URLSearchParams();
+  if (folderId?.trim()) q.set('folderId', folderId.trim());
+  q.set('page', String(Math.max(1, page)));
+  return fetchJsonWithOAuthRedirect(`${base}/course-files?${q}`, { method: 'GET' });
+}
+
+export async function uploadCoursePromptImage(file: File): Promise<{ fileId: string; viewPath: string }> {
+  const fd = new FormData();
+  fd.append('file', file);
+  const res = await fetch(`${base}/course-files/upload`, apiInit({ method: 'POST', body: fd }));
+  const data = await res.json().catch(() => ({}));
+  const body = data as { redirectToOAuth?: boolean; needsManualToken?: boolean; message?: string };
+  if (res.status === 401 && body.redirectToOAuth) {
+    window.location.href = `/api/oauth/canvas?returnTo=${encodeURIComponent(window.location.href)}`;
+    throw new Error('Redirecting to Canvas OAuth');
+  }
+  if (res.status === 401 && body.needsManualToken) {
+    throw new NeedsManualTokenError(body.message);
+  }
+  if (!res.ok) {
+    throw new Error(body.message ?? `HTTP ${res.status}`);
+  }
+  return data as { fileId: string; viewPath: string };
+}
+
 export async function buildDeckPrompts(
   selectedDecks: DeckConfig[],
   totalCards: number,
