@@ -1962,7 +1962,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
 
         {showForm && (
           <div className="prompter-settings-card">
-            <h2 className="prompter-settings-card-title">Set up this assignment</h2>
+            <h2 className="prompter-settings-card-title">Configure Assignment</h2>
             {!canEditAssignmentSettings ? (
               <p className="prompter-hint">
                 Create an assignment first, then switch to Edit mode to configure prompt settings.
