@@ -36,3 +36,5 @@ Use **`LTI_1.3_Developer_Key_Canvas.json`** when creating the LTI 1.3 Developer 
 
 - **This key** = LTI 1.3 launch only (login, launch, JWKS). Use it for LTI; do not use it for OAuth/API.
 - **A separate API Key** = OAuth to get a Canvas API token (e.g. for course settings, assignments). Use `CANVAS_OAUTH_CLIENT_ID` / `CANVAS_OAUTH_CLIENT_SECRET` and turn off “Enforce Scopes” on that key.
+
+**Full OAuth scope checklist (enforce scopes on):** see [CANVAS_DEVELOPER_KEYS_AND_SCOPES.md](./CANVAS_DEVELOPER_KEYS_AND_SCOPES.md).
