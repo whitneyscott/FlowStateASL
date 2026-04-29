@@ -54,6 +54,8 @@ const BRIDGE_LTI_LOG_SCOPES = [
   'student-deck-live-build',
   /** Prompt image insertion/load diagnostics (RTE image picker + signed image auth). */
   'prompt-image-debug',
+  /** Developer-only UX timing spans (teacher + student). */
+  'ux-benchmark',
 ] as const;
 
 export function ltiLogLineMatchesBridgeFilter(line: string): boolean {

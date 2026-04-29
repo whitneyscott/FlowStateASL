@@ -7,6 +7,7 @@ import { isLastDeckCard, nextDeckIndexAfterAdvance } from '../utils/deck-advance
 import { TeacherSettings } from '../components/TeacherSettings';
 import { ManualTokenModal } from '../components/ManualTokenModal';
 import { ltiTokenHeaders } from '../api/lti-token';
+import { measureUxAsync } from '../utils/ux-benchmark';
 import './FlashcardsPage.css';
 
 type PlaylistItem = { title: string; id?: string };
@@ -111,7 +112,11 @@ export default function FlashcardsPage({ context }: FlashcardsPageProps) {
     try {
       setLastFunction('GET /api/flashcard/student-playlists-batch');
       const url = '/api/flashcard/student-playlists-batch?showHidden=1';
-      const res = await fetch(url, { credentials: 'include', headers: ltiTokenHeaders() });
+      const res = await measureUxAsync(
+        'Flashcards: load playlists batch',
+        () => fetch(url, { credentials: 'include', headers: ltiTokenHeaders() }),
+        { page: 'FlashcardsPage', courseId },
+      );
       setLastApiResult('GET /api/flashcard/student-playlists-batch', res.status, res.ok);
       const data = await res.json().catch(() => ({}));
       if (res.status === 401 && data?.redirectToOAuth) {

@@ -17,6 +17,7 @@ import { YoutubeClipRangeEditor } from '../components/YoutubeClipRangeEditor';
 import { TeacherPromptRte } from '../components/TeacherPromptRte';
 import { TeacherAuthoredHtmlBlock } from '../components/TeacherAuthoredHtmlBlock';
 import { sanitizeTeacherFeedbackHtml } from '../utils/teacher-feedback-html';
+import { measureUxAsync } from '../utils/ux-benchmark';
 import '../components/TeacherSettings.css';
 import './PrompterPage.css';
 
@@ -409,7 +410,11 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setLoadingAssignments(true);
     try {
       setLastFunction('GET /api/prompt/configured-assignments');
-      const res = await promptApi.getConfiguredAssignments();
+      const res = await measureUxAsync(
+        'PromptSettings: load configured assignments',
+        () => promptApi.getConfiguredAssignments(),
+        { page: 'TeacherConfigPage' },
+      );
       if (gen === assignmentsLoadGenRef.current) {
         setLastApiResult('GET /api/prompt/configured-assignments', 200, true);
         const list = res.configured ?? [];
@@ -444,7 +449,9 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     if (!teacher || !hasLti) return;
     try {
       setLastFunction('GET /api/prompt/modules');
-      const list = await promptApi.getModules();
+      const list = await measureUxAsync('PromptSettings: load modules list', () => promptApi.getModules(), {
+        page: 'TeacherConfigPage',
+      });
       setLastApiResult('GET /api/prompt/modules', 200, true);
       setModules(list ?? []);
     } catch (e) {
@@ -457,7 +464,11 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     if (!teacher || !hasLti) return;
     try {
       setLastFunction('GET /api/prompt/assignment-groups');
-      const list = await promptApi.getAssignmentGroups();
+      const list = await measureUxAsync(
+        'PromptSettings: load assignment groups',
+        () => promptApi.getAssignmentGroups(),
+        { page: 'TeacherConfigPage' },
+      );
       setLastApiResult('GET /api/prompt/assignment-groups', 200, true);
       setAssignmentGroups(list ?? []);
     } catch (e) {
@@ -470,7 +481,9 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     if (!teacher || !hasLti) return;
     try {
       setLastFunction('GET /api/prompt/rubrics');
-      const list = await promptApi.getRubrics();
+      const list = await measureUxAsync('PromptSettings: load rubrics', () => promptApi.getRubrics(), {
+        page: 'TeacherConfigPage',
+      });
       setLastApiResult('GET /api/prompt/rubrics', 200, true);
       setRubrics(list ?? []);
     } catch (e) {
@@ -490,7 +503,11 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setError(null);
     try {
       setLastFunction('GET /api/prompt/config');
-      const data = await promptApi.getPromptConfig(id);
+      const data = await measureUxAsync(
+        'PromptSettings: load assignment config',
+        () => promptApi.getPromptConfig(id),
+        { page: 'TeacherConfigPage', assignmentId: id },
+      );
       if (gen !== configLoadGenRef.current) return;
       setLastApiResult('GET /api/prompt/config', 200, true);
       void appendBridgeLog('prompt-manager-config', 'TeacherConfigPage: GET /config client', {
@@ -941,13 +958,15 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       if (!targetId) {
         // Course nav: create assignment first, then save config
         setLastFunction('POST /api/prompt/create-assignment');
-        const { assignmentId: newId } = await promptApi.createAssignment(
-          assignmentName.trim() || 'ASL Express Assignment',
-          {
-            moduleId: normalizeCanvasIdString(moduleId),
-            assignmentGroupId: assignmentGroupId || undefined,
-            newGroupName: assignmentGroupId === '__new__' ? createGroupName.trim() || undefined : undefined,
-          }
+        const { assignmentId: newId } = await measureUxAsync(
+          'PromptSettings: create assignment',
+          () =>
+            promptApi.createAssignment(assignmentName.trim() || 'ASL Express Assignment', {
+              moduleId: normalizeCanvasIdString(moduleId),
+              assignmentGroupId: assignmentGroupId || undefined,
+              newGroupName: assignmentGroupId === '__new__' ? createGroupName.trim() || undefined : undefined,
+            }),
+          { page: 'TeacherConfigPage' },
         );
         setLastApiResult('POST /api/prompt/create-assignment', 200, true);
         targetId = newId;
@@ -959,45 +978,51 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         setSearchParams({ assignmentId: newId });
       }
       setLastFunction('PUT /api/prompt/config');
-      await promptApi.putPromptConfig(
-        {
-          minutes,
-          prompts:
-            promptMode === 'text' ? prompts.map((p) => sanitizeTeacherFeedbackHtml(p)) : prompts,
-          accessCode,
-          assignmentName: assignmentName.trim() || undefined,
-          moduleId: normalizeCanvasIdString(moduleId),
-          assignmentGroupId: assignmentGroupId || undefined,
-          newGroupName: assignmentGroupId === '__new__' ? createGroupName.trim() || undefined : undefined,
-          rubricId: rubricId || undefined,
-          pointsPossible,
-          instructions: instructions.trim() || undefined,
-          dueAt: dueAt.trim() || undefined,
-          unlockAt: unlockAt.trim() || undefined,
-          lockAt: lockAt.trim() || undefined,
-          allowedAttempts,
-          signToVoiceRequired: promptMode === 'youtube' ? signToVoiceRequired : false,
-          promptMode,
-          videoPromptConfig: promptMode === 'decks' ? { selectedDecks, totalCards } : undefined,
-          youtubePromptConfig:
-            promptMode === 'youtube'
-              ? {
-                  urlOrId: youtubeUrlOrId.trim(),
-                  label: youtubeLabel.trim() || undefined,
-                  clipStartSec: Math.max(0, Math.floor(Number(youtubeClipStartSec))),
-                  clipEndSec: Math.floor(Number(youtubeClipEndSec)),
-                  allowStudentCaptions: youtubeAllowStudentCaptions,
-                  subtitleMask: {
-                    enabled: youtubeSubtitleMaskEnabled,
-                    heightPercent: Math.min(
-                      30,
-                      Math.max(5, Math.round(Number(youtubeSubtitleMaskHeight) || 15)),
-                    ),
-                  },
-                }
-              : undefined,
-        },
-        targetId!
+      await measureUxAsync(
+        'PromptSettings: save config (PUT /config)',
+        () =>
+          promptApi.putPromptConfig(
+            {
+              minutes,
+              prompts:
+                promptMode === 'text' ? prompts.map((p) => sanitizeTeacherFeedbackHtml(p)) : prompts,
+              accessCode,
+              assignmentName: assignmentName.trim() || undefined,
+              moduleId: normalizeCanvasIdString(moduleId),
+              assignmentGroupId: assignmentGroupId || undefined,
+              newGroupName:
+                assignmentGroupId === '__new__' ? createGroupName.trim() || undefined : undefined,
+              rubricId: rubricId || undefined,
+              pointsPossible,
+              instructions: instructions.trim() || undefined,
+              dueAt: dueAt.trim() || undefined,
+              unlockAt: unlockAt.trim() || undefined,
+              lockAt: lockAt.trim() || undefined,
+              allowedAttempts,
+              signToVoiceRequired: promptMode === 'youtube' ? signToVoiceRequired : false,
+              promptMode,
+              videoPromptConfig: promptMode === 'decks' ? { selectedDecks, totalCards } : undefined,
+              youtubePromptConfig:
+                promptMode === 'youtube'
+                  ? {
+                      urlOrId: youtubeUrlOrId.trim(),
+                      label: youtubeLabel.trim() || undefined,
+                      clipStartSec: Math.max(0, Math.floor(Number(youtubeClipStartSec))),
+                      clipEndSec: Math.floor(Number(youtubeClipEndSec)),
+                      allowStudentCaptions: youtubeAllowStudentCaptions,
+                      subtitleMask: {
+                        enabled: youtubeSubtitleMaskEnabled,
+                        heightPercent: Math.min(
+                          30,
+                          Math.max(5, Math.round(Number(youtubeSubtitleMaskHeight) || 15)),
+                        ),
+                      },
+                    }
+                  : undefined,
+            },
+            targetId!,
+          ),
+        { page: 'TeacherConfigPage', assignmentId: targetId ?? null },
       );
       setLastApiResult('PUT /api/prompt/config', 200, true);
       setSaved(true);
@@ -1373,7 +1398,11 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setImportBusy(true);
     setTrueWayApplyMessage(null);
     try {
-      const res = await promptApi.applyTrueWayTemplates();
+      const res = await measureUxAsync(
+        'PromptSettings: apply TRUE+WAY templates',
+        () => promptApi.applyTrueWayTemplates(),
+        { page: 'TeacherConfigPage' },
+      );
       const n = typeof res.updated === 'number' ? res.updated : 0;
       setTrueWayApplyMessage(n > 0 ? `Updated ${n} assignment(s) from titles.` : 'No matching assignments found.');
       await loadAssignments();
@@ -1408,12 +1437,13 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setImportModalBusy(true);
     setImportModuleId('');
     try {
+      const spanMeta = { page: 'TeacherConfigPage' as const };
       if (!modules.length) {
         void loadModules();
       }
       let brief = importCanvasBriefRef.current;
       if (!brief?.allAssignments?.length) {
-        const res = await loadAssignments();
+        const res = await measureUxAsync('PromptSettings: import modal load assignments', () => loadAssignments(), spanMeta);
         brief = res?.canvasImport ?? null;
       }
       if (!brief?.allAssignments?.length) {
@@ -1429,7 +1459,13 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       const first = preferred || brief.allAssignments[0]?.id || '';
       setImportSourceAssignmentId(first);
       if (first) {
-        setImportModuleId(await resolveImportModuleIdForAssignment(first));
+        setImportModuleId(
+          await measureUxAsync(
+            'PromptSettings: import modal resolve module for assignment',
+            () => resolveImportModuleIdForAssignment(first),
+            { ...spanMeta, assignmentId: first },
+          ),
+        );
       }
     } catch (e) {
       setImportCanvasBrief(null);
@@ -1450,7 +1486,13 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         setImportModuleId('');
         return;
       }
-      setImportModuleId(await resolveImportModuleIdForAssignment(v));
+      setImportModuleId(
+        await measureUxAsync(
+          'PromptSettings: import modal resolve module for assignment (change)',
+          () => resolveImportModuleIdForAssignment(v),
+          { page: 'TeacherConfigPage', assignmentId: v },
+        ),
+      );
     },
     [resolveImportModuleIdForAssignment],
   );
@@ -1478,15 +1520,25 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setImportModalBusy(true);
     setImportModalMessage(null);
     try {
-      await promptApi.importSinglePromptAssignment({
-        sourceAssignmentId: sid,
-        targetAssignmentId: sid,
-        moduleId: mid,
-        ...(importPromptModeChoice !== 'auto' ? { promptMode: importPromptModeChoice } : {}),
+      await measureUxAsync(
+        'PromptSettings: import one assignment',
+        () =>
+          promptApi.importSinglePromptAssignment({
+            sourceAssignmentId: sid,
+            targetAssignmentId: sid,
+            moduleId: mid,
+            ...(importPromptModeChoice !== 'auto' ? { promptMode: importPromptModeChoice } : {}),
+          }),
+        { page: 'TeacherConfigPage', assignmentId: sid },
+      );
+      await measureUxAsync('PromptSettings: import refresh assignments', () => loadAssignments(), {
+        page: 'TeacherConfigPage',
       });
-      await loadAssignments();
       await loadModules();
-      await load(sid);
+      await measureUxAsync('PromptSettings: import refresh config', () => load(sid), {
+        page: 'TeacherConfigPage',
+        assignmentId: sid,
+      });
       setImportInfo(
         'Assignment settings were imported. For older student work, open Grading and confirm prompts still display (legacy data may live in submission comments until you clean it up there). Nothing was auto-deleted or remuxed.',
       );

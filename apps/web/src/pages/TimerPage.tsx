@@ -8,6 +8,7 @@ import { ManualTokenModal } from '../components/ManualTokenModal';
 import { resolveLtiContextValue } from '../utils/lti-context';
 import { ltiTokenHeaders } from '../api/lti-token';
 import { appendBridgeLog } from '../utils/bridge-log';
+import { measureUxAsync, startUxSpan } from '../utils/ux-benchmark';
 import { parseSproutEmbedPairFromEmbedCode } from '../utils/sprout-embed';
 import { nextDeckIndexAfterAdvance } from '../utils/deck-advance';
 import { YoutubeStimulusShell } from '../components/YoutubeStimulusShell';
@@ -612,6 +613,7 @@ export default function TimerPage({ context }: TimerPageProps) {
     if (phase !== 'preflight') return;
     /** Teachers use Prompt Manager on `/config`; if they open `/prompter`, never request camera. */
     if (teacherViewingTimer) return;
+    const span = startUxSpan('StudentTimer: camera/mic preflight (getUserMedia ladder)', { page: 'TimerPage' });
     setPreflightReady(false);
     setPreflightError(null);
     setSubmitInfo(null);
@@ -649,6 +651,7 @@ export default function TimerPage({ context }: TimerPageProps) {
           streamRef.current = stream;
           setCaptureProfile(telemetry);
           setPreflightReady(true);
+          span.end({ ok: true, extra: { selectedProfile: telemetry.profileId ?? null } });
           return;
         } catch (err) {
           lastError = err;
@@ -661,6 +664,7 @@ export default function TimerPage({ context }: TimerPageProps) {
       if (!cancelled) {
         setCaptureProfile(null);
         setPreflightError('Camera/mic access denied or unavailable for recording.');
+        span.end({ ok: false, extra: { error: String(lastError ?? '') } });
         if (lastError) {
           console.error('[TimerPage:preflight] all capture profile attempts failed', lastError);
         }
@@ -669,6 +673,7 @@ export default function TimerPage({ context }: TimerPageProps) {
     void openCameraWithFallback();
     return () => {
       cancelled = true;
+      span.end({ ok: true, extra: { cancelled: true } });
     };
   }, [phase, teacherViewingTimer]);
 
@@ -688,11 +693,15 @@ export default function TimerPage({ context }: TimerPageProps) {
       setLoading(false);
       return;
     }
-       setLoading(true);
+    setLoading(true);
     setDeckLiveBuildError(null);
     try {
       setLastFunction('GET /api/prompt/config');
-      const data = await promptApi.getPromptConfig(ltiOrUrlAssignmentId);
+      const data = await measureUxAsync(
+        'StudentTimer: load config (GET /prompt/config)',
+        () => promptApi.getPromptConfig(ltiOrUrlAssignmentId),
+        { page: 'TimerPage', assignmentId: ltiOrUrlAssignmentId || null },
+      );
       setLastApiResult('GET /api/prompt/config', 200, true);
       setConfig(data ?? null);
       const targetAssignmentId =
@@ -724,10 +733,15 @@ export default function TimerPage({ context }: TimerPageProps) {
         const totalCards = Number.isFinite(rawTotal) && rawTotal > 0 ? Math.floor(rawTotal) : 10;
         try {
           setLastFunction('POST /api/prompt/build-deck-prompts');
-          const result = await promptApi.buildDeckPrompts(
-            data.videoPromptConfig.selectedDecks,
-            totalCards,
-            targetAssignmentId
+          const result = await measureUxAsync(
+            'StudentTimer: build deck prompts (POST /build-deck-prompts)',
+            () => promptApi.buildDeckPrompts(data.videoPromptConfig!.selectedDecks, totalCards, targetAssignmentId),
+            {
+              page: 'TimerPage',
+              assignmentId: targetAssignmentId ?? null,
+              totalCards,
+              selectedDeckCount: data.videoPromptConfig.selectedDecks.length,
+            },
           );
           const livePrompts = Array.isArray(result.prompts) ? result.prompts : [];
           if (livePrompts.length > 0) {
@@ -739,7 +753,16 @@ export default function TimerPage({ context }: TimerPageProps) {
               warning: result.warning ?? null,
               ...preSummary,
             });
-            const hydrated = await hydrateDeckPromptVideoIds(livePrompts, selectedDecksForHydration);
+            const hydrated = await measureUxAsync(
+              'StudentTimer: hydrate deck prompt videoIds',
+              () => hydrateDeckPromptVideoIds(livePrompts, selectedDecksForHydration),
+              {
+                page: 'TimerPage',
+                assignmentId: targetAssignmentId ?? null,
+                promptCount: livePrompts.length,
+                selectedDeckCount: selectedDecksForHydration.length,
+              },
+            );
             const postSummary = summaryDeckPromptsForLiveBuildBridge('post-hydrate', hydrated);
             appendBridgeLog('student-deck-live-build', 'OK: live build — prompts after hydrateDeckPromptVideoIds (used for recording + submit)', {
               outcome: 'success',
