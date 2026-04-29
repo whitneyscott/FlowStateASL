@@ -36,6 +36,14 @@ function isTeacher(roles: string): boolean {
   return TEACHER_PATTERNS.some((p) => roles.toLowerCase().includes(p));
 }
 
+const TEACHER_CONFIG_UI_STORAGE_KEY = 'flowstateasl:teacher-prompt-config-ui';
+
+/** Normalize Canvas/API ids for controlled `<select>` values (always string, trimmed). */
+function normalizeCanvasIdString(value: unknown): string {
+  if (value == null || value === '') return '';
+  return String(value).trim();
+}
+
 /** Client-side checks that mirror `handleSave` before the API runs — single source for messages, scroll targets, and inline hints. */
 type ConfigSaveBlocker = 'module' | 'deck' | 'youtube';
 type ConfigSaveYoutubeIssue = 'url' | 'clip';
@@ -136,6 +144,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const assignmentsLoadGenRef = useRef(0);
   /** Count of overlapping `loadAssignments` calls; spinner clears when the last one finishes. */
   const assignmentsPendingRef = useRef(0);
+  /** Ignore stale `GET /config` results when `assignmentId` or boot order changes. */
+  const configLoadGenRef = useRef(0);
   const [, setGradeDropdownValue] = useState('');
   const [assignmentActionMode, setAssignmentActionMode] = useState<'edit' | 'grade' | 'create'>(
     createMode || !assignmentId ? 'create' : 'edit'
@@ -232,6 +242,14 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const youtubeUrlInputRef = useRef<HTMLInputElement | null>(null);
   const youtubeClipEndInputRef = useRef<HTMLInputElement | null>(null);
   const [configSaveFieldErrorsVisible, setConfigSaveFieldErrorsVisible] = useState(false);
+  const [setupUiMode, setSetupUiMode] = useState<'classic' | 'wizard'>(() => {
+    try {
+      return localStorage.getItem(TEACHER_CONFIG_UI_STORAGE_KEY) === 'wizard' ? 'wizard' : 'classic';
+    } catch {
+      return 'classic';
+    }
+  });
+  const [wizardStep, setWizardStep] = useState(1);
 
   /** Preview player remounts only when video id or retry changes — clip edits use seek, not remount. */
   const youtubePreviewPlayerKey = useMemo(() => {
@@ -280,6 +298,18 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       setConfigSaveFieldErrorsVisible(false);
     }
   }, [configSaveValidation.ok]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(TEACHER_CONFIG_UI_STORAGE_KEY, setupUiMode);
+    } catch {
+      /* ignore */
+    }
+  }, [setupUiMode]);
+
+  useEffect(() => {
+    setWizardStep(1);
+  }, [assignmentId]);
 
   const teacher = context && isTeacher(context.roles);
   const hasLti = context?.courseId && context.userId !== 'standalone';
@@ -372,11 +402,13 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       setLoading(false);
       return;
     }
+    const gen = ++configLoadGenRef.current;
     setLoading(true);
     setError(null);
     try {
       setLastFunction('GET /api/prompt/config');
       const data = await promptApi.getPromptConfig(id);
+      if (gen !== configLoadGenRef.current) return;
       setLastApiResult('GET /api/prompt/config', 200, true);
       void appendBridgeLog('prompt-manager-config', 'TeacherConfigPage: GET /config client', {
         requestAssignmentId: id,
@@ -391,8 +423,12 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         setPrompts(Array.isArray(data.prompts) ? data.prompts : []);
         setEditingTextPromptIndex(null);
         setAccessCode(data.accessCode ?? '');
-        setModuleId(data.moduleId ?? '');
-        setAssignmentGroupId(data.assignmentGroupId ?? '');
+        setModuleId(normalizeCanvasIdString(data.moduleId));
+        setAssignmentGroupId(
+          data.assignmentGroupId != null && String(data.assignmentGroupId).trim() !== ''
+            ? String(data.assignmentGroupId).trim()
+            : '',
+        );
         setRubricId((data.rubricId ?? '').trim());
         setAssignmentName(data.assignmentName ?? '');
         setPointsPossible(Math.max(0, Math.round(Number(data.pointsPossible ?? 10) || 10)));
@@ -515,6 +551,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         setYoutubeSubtitleMaskHeight(15);
       }
     } catch (e: unknown) {
+      if (gen !== configLoadGenRef.current) return;
       if (e instanceof promptApi.NeedsManualTokenError) {
         setShowManualTokenModal(true);
       } else {
@@ -523,7 +560,9 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         setLastApiError('GET /api/prompt/config', 0, msg);
       }
     } finally {
-      setLoading(false);
+      if (gen === configLoadGenRef.current) {
+        setLoading(false);
+      }
     }
   }, [hasLti, assignmentId, setLastFunction, setLastApiResult, setLastApiError]);
 
@@ -566,18 +605,31 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   }, [assignmentActionMode, configAssignValue, assignmentId]);
 
   useEffect(() => {
-    if (teacher && hasLti) {
-      void loadModules();
-      void loadAssignmentGroups();
-      void loadRubrics();
-      if (assignmentId) void load();
-      else setLoading(false);
-    } else {
+    if (!teacher || !hasLti) {
       setLoading(false);
+      return;
     }
-    // Intentionally omit load/loadModules/… from deps: their identities can change every render (e.g. debug context),
-    // which would re-fire Canvas + config fetches without assignment/course changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- run when teacher, LTI course context, or assignment id changes only
+    let cancelled = false;
+    void (async () => {
+      await loadModules();
+      if (cancelled) return;
+      await loadAssignmentGroups();
+      if (cancelled) return;
+      await loadRubrics();
+      if (cancelled) return;
+      if (assignmentId) {
+        await load();
+      } else {
+        setLoading(false);
+      }
+    })().catch((e) => {
+      console.warn('[TeacherConfig] boot sequence', e);
+      if (!cancelled) setLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: stable Canvas bootstrap when course/assignment changes; avoid re-run on callback identity churn
   }, [teacher, hasLti, assignmentId]);
 
   /** Normalize rubric id string if the course list uses the same id with different formatting. */
@@ -589,6 +641,42 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       setRubricId(hit.id);
     }
   }, [rubrics, rubricId]);
+
+  /** Keep assignment group `<select>` value in sync with option `value` strings from Canvas. */
+  useEffect(() => {
+    const gid = assignmentGroupId.trim();
+    if (!gid || gid === '__new__' || assignmentGroups.length === 0) return;
+    const hit = assignmentGroups.find((g) => String(g.id) === gid);
+    if (hit && String(hit.id) !== assignmentGroupId) {
+      setAssignmentGroupId(String(hit.id));
+    }
+  }, [assignmentGroups, assignmentGroupId]);
+
+  /** Align `moduleId` with `modules` option values so the control shows the saved module once lists load. */
+  useEffect(() => {
+    const mid = moduleId.trim();
+    if (!mid || modules.length === 0) return;
+    const hit = modules.find((m) => String(m.id) === mid);
+    if (hit && String(hit.id) !== moduleId) {
+      setModuleId(String(hit.id));
+    }
+  }, [modules, moduleId]);
+
+  /** Ensures saved `moduleId` displays even if the course list loads later or the id was missing from the first fetch. */
+  const moduleSelectOptions = useMemo(() => {
+    const rows = modules.map((m) => ({ value: String(m.id), label: m.name }));
+    const mid = moduleId.trim();
+    if (mid && !rows.some((r) => r.value === mid)) {
+      return [
+        {
+          value: mid,
+          label: `Module id ${mid} (not in loaded list — reload if wrong)`,
+        },
+        ...rows,
+      ];
+    }
+    return rows;
+  }, [modules, moduleId]);
 
   const { hubCurricula: deckPickerCurricula, hubUnits: deckPickerUnits, hubSections: deckPickerSections, filteredPlaylists: deckPickerPlaylists } =
     useMemo(
@@ -690,6 +778,28 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       }
     });
   }, []);
+
+  const handleWizardNext = useCallback(() => {
+    if (wizardStep === 1) {
+      if (!moduleId.trim()) {
+        setError('Select a Canvas module to continue.');
+        setConfigSaveFieldErrorsVisible(true);
+        scrollToConfigSaveBlocker({
+          ok: false,
+          blocker: 'module',
+          message: 'Select a Canvas module. All assignments must be placed in a module.',
+          youtubeIssue: null,
+        });
+        return;
+      }
+      setError(null);
+      setWizardStep(2);
+      return;
+    }
+    if (wizardStep === 2) {
+      setWizardStep(3);
+    }
+  }, [wizardStep, moduleId, scrollToConfigSaveBlocker]);
 
   const handleYoutubeUrlBlur = () => {
     setYoutubeFieldError(null);
@@ -1282,6 +1392,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         ...(importPromptModeChoice !== 'auto' ? { promptMode: importPromptModeChoice } : {}),
       });
       await loadAssignments();
+      await loadModules();
       await load(sid);
       setImportInfo(
         'Assignment settings were imported. For older student work, open Grading and confirm prompts still display (legacy data may live in submission comments until you clean it up there). Nothing was auto-deleted or remuxed.',
@@ -1308,6 +1419,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     importModuleId,
     importPromptModeChoice,
     loadAssignments,
+    loadModules,
     load,
     setSearchParams,
   ]);
@@ -1421,9 +1533,9 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         aria-describedby={moduleSaveInvalid ? 'teacher-config-module-save-error' : undefined}
       >
         <option value="">— Select a module (required) —</option>
-        {modules.map((m) => (
-          <option key={m.id} value={String(m.id)}>
-            {m.name}
+        {moduleSelectOptions.map((opt) => (
+          <option key={opt.value} value={opt.value}>
+            {opt.label}
           </option>
         ))}
       </select>
@@ -1478,6 +1590,78 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     </div>
   );
 
+  const foundationHasModule = Boolean(moduleId.trim());
+
+  const accessCodeSection = (
+    <div className="prompter-settings-section prompter-settings-access">
+      <label className="prompter-settings-label">
+        <strong>Access code:</strong> (required for students to start)
+      </label>
+      <input
+        type="text"
+        value={accessCode}
+        onChange={(e) => setAccessCode(e.target.value)}
+        placeholder="Enter or generate"
+        className="prompter-settings-input prompter-access-code-input"
+        required
+      />
+      <button type="button" className="prompter-btn-generate" onClick={generateAccessCode}>
+        Generate ASL Code
+      </button>
+    </div>
+  );
+
+  const promptSourceSection = (
+    <div className="prompter-settings-section prompter-settings-section-prompt-source">
+      <label className="prompter-settings-label">
+        <strong>Prompt source</strong>
+      </label>
+      <p className="prompter-hint">Choose what students respond to (text you write, flashcard decks, or a YouTube clip).</p>
+      <label className="prompter-settings-label prompter-settings-label-block">
+        <input
+          type="radio"
+          name="promptMode"
+          value="text"
+          checked={promptMode === 'text'}
+          onChange={() => setPromptMode('text')}
+        />{' '}
+        Text prompts (manual)
+      </label>
+      <label className="prompter-settings-label prompter-settings-label-block">
+        <input
+          type="radio"
+          name="promptMode"
+          value="decks"
+          checked={promptMode === 'decks'}
+          onChange={() => setPromptMode('decks')}
+        />{' '}
+        Deck prompts (from flashcard decks)
+      </label>
+      <label className="prompter-settings-label prompter-settings-label-block">
+        <input
+          type="radio"
+          name="promptMode"
+          value="youtube"
+          checked={promptMode === 'youtube'}
+          onChange={() => setPromptMode('youtube')}
+        />{' '}
+        YouTube video prompt
+      </label>
+    </div>
+  );
+
+  const foundationBlock = (
+    <div className="prompter-settings-foundation">
+      <h3 className="prompter-settings-subsection-title">Module, access &amp; prompt type</h3>
+      <p className="prompter-hint">
+        Set the Canvas module, student access code, and prompt source first. Prompt text, decks, and YouTube options stay in
+        sync with what you save.
+      </p>
+      {moduleSelector}
+      {accessCodeSection}
+      {promptSourceSection}
+    </div>
+  );
 
   return (
     <>
@@ -1638,7 +1822,54 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
               </p>
             ) : (
               <div className="prompter-settings-config-form">
+                <div className="prompter-setup-ui-toggle prompter-settings-actions-row prompter-settings-actions-row-mb-md" role="group" aria-label="Setup layout">
+                  <button
+                    type="button"
+                    className={setupUiMode === 'classic' ? 'prompter-btn-ready' : 'prompter-btn-secondary'}
+                    onClick={() => setSetupUiMode('classic')}
+                  >
+                    Classic (one page)
+                  </button>
+                  <button
+                    type="button"
+                    className={setupUiMode === 'wizard' ? 'prompter-btn-ready' : 'prompter-btn-secondary'}
+                    onClick={() => setSetupUiMode('wizard')}
+                  >
+                    Step-by-step
+                  </button>
+                </div>
+                {setupUiMode === 'wizard' && (
+                  <>
+                    <p className="prompter-hint" role="status">
+                      Step {wizardStep} of 3
+                      {wizardStep === 1
+                        ? ' — Module, access & prompt type'
+                        : wizardStep === 2
+                          ? ' — Assignment details in Canvas'
+                          : ' — Prompt content (text, decks, or YouTube)'}
+                    </p>
+                    <div className="prompter-settings-actions-row prompter-settings-actions-row-mb-md prompter-wizard-nav">
+                      {wizardStep > 1 && (
+                        <button
+                          type="button"
+                          className="prompter-btn-secondary"
+                          onClick={() => setWizardStep((s) => Math.max(1, s - 1))}
+                        >
+                          Back
+                        </button>
+                      )}
+                      {wizardStep < 3 && (
+                        <button type="button" className="prompter-btn-ready" onClick={() => void handleWizardNext()}>
+                          Next
+                        </button>
+                      )}
+                    </div>
+                  </>
+                )}
+                {((setupUiMode === 'classic') || (setupUiMode === 'wizard' && wizardStep === 1)) && foundationBlock}
+                {(setupUiMode === 'classic' || (setupUiMode === 'wizard' && wizardStep > 1)) && (
                 <div className="prompter-settings-two-col">
+                    {(setupUiMode === 'classic' || (setupUiMode === 'wizard' && wizardStep === 2)) && (
                     <div className="prompter-settings-col-assignment">
                     {promptMode === 'text' ? (
                       <div className="prompter-settings-section">
@@ -1730,51 +1961,21 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                       </div>
                       {rubricSelector}
                     </div>
-                    <div className="prompter-settings-section prompter-settings-access">
-                      <label className="prompter-settings-label"><strong>Access Code:</strong> (Required for students to start)</label>
-                      <input type="text" value={accessCode} onChange={(e) => setAccessCode(e.target.value)} placeholder="Enter or generate" className="prompter-settings-input prompter-access-code-input" required />
-                      <button type="button" className="prompter-btn-generate" onClick={generateAccessCode}>Generate ASL Code</button>
-                    </div>
-                    {moduleSelector}
                   </div>
-                  <div className="prompter-settings-resize-handle" title="Column divider" />
+                    )}
+                  {setupUiMode === 'classic' && <div className="prompter-settings-resize-handle" title="Column divider" />}
+                  {(setupUiMode === 'classic' || (setupUiMode === 'wizard' && wizardStep === 3)) && (
                   <div className="prompter-settings-col-prompts">
-                    <div className="prompter-settings-header-row">
-                      <label className="prompter-settings-label"><strong>Prompt Source</strong></label>
-                    </div>
-                    <div className="prompter-settings-section">
-                      <label className="prompter-settings-label prompter-settings-label-block">
-                        <input
-                          type="radio"
-                          name="promptMode"
-                          value="text"
-                          checked={promptMode === 'text'}
-                          onChange={() => setPromptMode('text')}
-                        />
-                        {' '}Text Prompts (manual)
-                      </label>
-                      <label className="prompter-settings-label prompter-settings-label-block">
-                        <input
-                          type="radio"
-                          name="promptMode"
-                          value="decks"
-                          checked={promptMode === 'decks'}
-                          onChange={() => setPromptMode('decks')}
-                        />
-                        {' '}Deck Prompts (from flashcard decks)
-                      </label>
-                      <label className="prompter-settings-label prompter-settings-label-block">
-                        <input
-                          type="radio"
-                          name="promptMode"
-                          value="youtube"
-                          checked={promptMode === 'youtube'}
-                          onChange={() => setPromptMode('youtube')}
-                        />
-                        {' '}YouTube video prompt
-                      </label>
-                    </div>
-                    
+                    {!foundationHasModule && (
+                      <p className="prompter-blocked-warning" role="status">
+                        Select a <strong>Canvas module</strong> in &quot;Module, access &amp; prompt type&quot; above to edit
+                        prompts, decks, or YouTube settings.
+                      </p>
+                    )}
+                    <div
+                      className={!foundationHasModule ? 'prompter-settings-gated-dim' : undefined}
+                      aria-hidden={!foundationHasModule}
+                    >
                     {promptMode === 'text' ? (
                       <>
                         <div className="prompter-settings-header-row">
@@ -2232,8 +2433,11 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                         </div>
                       </div>
                     )}
+                    </div>
                   </div>
+                  )}
                 </div>
+                )}
                 <div className="prompter-settings-save-row prompter-settings-actions-row">
                   <button type="button" onClick={handleSave} disabled={saving} className="prompter-btn-ready">
                     {saving ? <><span className="prompter-inline-spinner" /> Saving...</> : 'Save'}

@@ -11,11 +11,11 @@
 
 **How to test in Canvas:** Edit an assignment; try Save with no module, deck mode and zero decks, YouTube mode with empty URL or invalid clip; confirm scroll/focus and inline message. Fix each issue and confirm hints clear when valid.
 
-## Phase 2 — Foundation-first layout + optional wizard entry
+## Phase 2 — Foundation-first layout + optional wizard entry (shipped)
 
-- Reorder UI: **module + access + prompt mode** before heavy editors; optional **“Step-by-step setup”** that switches to a **multi-step wizard** (same data, different chrome), with **“Classic (all on one page)”** to opt out.
-- Gate or disable mode-specific content until foundation is complete (or show one-line “complete the steps above”).
-- **Persistence / state when switching context (fix in this phase):** During **initial import**, **create**, or changing **which assignment is selected** (edit flow), some controls do **not** reliably keep their values—**notably the Canvas module** (and possibly other fields). Audit `load` / `loadAssignments` / import completion / `setSearchParams` paths in [`TeacherConfigPage.tsx`](../../apps/web/src/pages/TeacherConfigPage.tsx) so **foundation fields** (module, access code, prompt mode where appropriate) **rehydrate from config or intentional defaults** and are not wiped by race conditions or partial state resets. Reproduce: pick module → import or switch assignment → confirm module (and siblings) still match saved config or user expectation.
+- **Classic layout:** **Module, access code, and prompt source** sit in a highlighted **foundation** block above the two-column grid; **assignment details** stay in the left column; **text / deck / YouTube** editors in the right column. If no module is selected, the prompt column shows a warning and is **dimmed / non-interactive** until a module is chosen.
+- **Step-by-step:** Toggle **Classic (one page)** vs **Step-by-step**; choice is stored in `localStorage` under `flowstateasl:teacher-prompt-config-ui`. Wizard steps: (1) foundation only, (2) assignment details only, (3) prompt content only. **Next** on step 1 requires a module (same messaging as Save). **Back / Next** between steps.
+- **UI sync (module & group selects):** Boot loads **`GET /modules` → groups → rubrics → `GET /config`** in order so the module dropdown has options before config applies. **`configLoadGenRef`** drops stale config responses when switching assignments quickly. **`normalizeCanvasIdString`** on `moduleId` / group from config; **effects** align `moduleId` and `assignmentGroupId` with loaded lists; **orphan module option** if the saved id is missing from the list. **Import** calls **`loadModules()`** before **`load(sid)`** after a successful merge.
 
 ## Phase 3 — Collapsible “Canvas assignment details” + advanced blocks
 
