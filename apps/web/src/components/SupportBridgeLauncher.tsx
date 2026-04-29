@@ -1,19 +1,21 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { useLtiContext } from '../hooks/useLtiContext';
 import { SupportBridgeDialog } from './SupportBridgeDialog';
 
-const TEACHER_ROLE_RE =
-  /instructor|administrator|faculty|teacher|staff|contentdeveloper|teachingassistant|ta/i;
+export interface SupportBridgeLauncherProps {
+  /**
+   * Must be derived from the same `useLtiContext` result as AppRouter only — never mount a second
+   * `useLtiContext` (two GET /api/lti/context calls with the same one-time `boot_nonce` would burn
+   * the nonce and fall back to `toolType: 'flashcards'`).
+   */
+  showSupportButton: boolean;
+}
 
 /**
  * Password-gated Bridge log for learners (no "Mode" button). Teachers use Developer mode instead.
  * `?aslBridgeSupport=1` opens the dialog (e.g. support email link from instructor).
  */
-export function SupportBridgeLauncher() {
-  const { context, loading } = useLtiContext();
-  const isTeacherRole = !!context && TEACHER_ROLE_RE.test(context.roles || '');
-
+export function SupportBridgeLauncher({ showSupportButton }: SupportBridgeLauncherProps) {
   const [open, setOpen] = useState(false);
   const [fromQuery, setFromQuery] = useState(false);
   const location = useLocation();
@@ -46,7 +48,7 @@ export function SupportBridgeLauncher() {
         }}
         autoFromQuery={fromQuery}
       />
-      {!loading && !isTeacherRole && (
+      {showSupportButton && (
         <button
           type="button"
           className="app-mode-support-float-btn"
