@@ -996,7 +996,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         setCreateGroupName('');
         loadAssignmentGroups();
       }
-      if (targetId) load(targetId ?? undefined);
+      setConfigBaselineFingerprint(configFormFingerprint);
     } catch (e: unknown) {
       if (e instanceof promptApi.NeedsManualTokenError) {
         setShowManualTokenModal(true);
@@ -1834,10 +1834,14 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                         </p>
                       </div>
                     )}
-                    <div className="prompter-settings-actions-row prompter-settings-actions-row-mb-sm">
+                    <div className="prompter-assignments-actions" role="group" aria-label="Assignment actions">
                       <button
                         type="button"
-                        className={assignmentActionMode === 'edit' ? 'prompter-btn-ready' : 'prompter-btn-secondary'}
+                        className={
+                          assignmentActionMode === 'edit'
+                            ? 'prompter-btn-assignment-mode prompter-btn-assignment-mode--active'
+                            : 'prompter-btn-assignment-mode prompter-btn-assignment-mode--idle'
+                        }
                         onClick={() => setAssignmentActionMode('edit')}
                         disabled={loadingAssignments || saving}
                       >
@@ -1845,7 +1849,11 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                       </button>
                       <button
                         type="button"
-                        className={assignmentActionMode === 'grade' ? 'prompter-btn-ready' : 'prompter-btn-secondary'}
+                        className={
+                          assignmentActionMode === 'grade'
+                            ? 'prompter-btn-assignment-mode prompter-btn-assignment-mode--active'
+                            : 'prompter-btn-assignment-mode prompter-btn-assignment-mode--idle'
+                        }
                         onClick={() => setAssignmentActionMode('grade')}
                         disabled={loadingAssignments || saving}
                       >
@@ -1853,7 +1861,11 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                       </button>
                       <button
                         type="button"
-                        className={assignmentActionMode === 'create' ? 'prompter-btn-ready' : 'prompter-btn-secondary'}
+                        className={
+                          assignmentActionMode === 'create'
+                            ? 'prompter-btn-assignment-mode prompter-btn-assignment-mode--active'
+                            : 'prompter-btn-assignment-mode prompter-btn-assignment-mode--idle'
+                        }
                         onClick={enterCreateMode}
                         disabled={loadingAssignments || saving}
                       >
@@ -1861,7 +1873,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                       </button>
                       <button
                         type="button"
-                        className="prompter-btn-secondary"
+                        className="prompter-btn-assignment-mode prompter-btn-assignment-mode--idle"
                         onClick={() => void openImportModal()}
                         disabled={loadingAssignments || saving || importModalBusy}
                       >

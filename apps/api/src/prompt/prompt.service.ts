@@ -1507,13 +1507,26 @@ export class PromptService {
       });
     }
     if (config) {
-      const liveModuleId = await this.resolveLiveModuleIdForAssignment(
-        ctx.courseId,
-        assignmentId,
-        domainOverride,
-        resolvedToken,
-      );
-      config = { ...config, moduleId: liveModuleId };
+      const storedModuleId = (config.moduleId ?? '').toString().trim();
+      const liveModuleId = (
+        await this.resolveLiveModuleIdForAssignment(
+          ctx.courseId,
+          assignmentId,
+          domainOverride,
+          resolvedToken,
+        )
+      )
+        .toString()
+        .trim();
+      /** Prefer Canvas placement when found; keep saved moduleId when scan fails or returns empty (avoids blank module picker). */
+      const moduleId = liveModuleId || storedModuleId;
+      config = { ...config, moduleId };
+      if (!liveModuleId && storedModuleId) {
+        appendLtiLog('prompt-manager-config', 'getConfig: moduleId from stored config (live module scan empty)', {
+          assignmentId,
+          storedModuleId,
+        });
+      }
     }
     if (config?.promptMode === 'decks') {
       const rawTotal = Number(config.videoPromptConfig?.totalCards);

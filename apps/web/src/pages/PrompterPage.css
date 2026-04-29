@@ -530,6 +530,52 @@
   color: #333;
 }
 
+/* Assignments card: mode + import — equal footprint, no scrunched two-tone sizes */
+.prompter-assignments-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: stretch;
+  margin-bottom: 12px;
+}
+
+.prompter-btn-assignment-mode {
+  flex: 1 1 140px;
+  min-height: 42px;
+  padding: 10px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 5px;
+  cursor: pointer;
+  box-sizing: border-box;
+  line-height: 1.2;
+}
+
+.prompter-btn-assignment-mode:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.prompter-btn-assignment-mode--active {
+  background: var(--prompter-success-green);
+  color: #fff;
+  border: none;
+}
+
+.prompter-btn-assignment-mode--active:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+
+.prompter-btn-assignment-mode--idle {
+  background: #f1f1f1;
+  color: #444;
+  border: 1px solid #ccc;
+}
+
+.prompter-btn-assignment-mode--idle:hover:not(:disabled) {
+  background: #e8e8e8;
+}
+
 .prompter-settings-actions-row {
   display: flex;
   gap: 12px;
