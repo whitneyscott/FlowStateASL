@@ -1315,6 +1315,13 @@ export class PromptService {
         resolvedToken,
       );
     }
+    if (assignmentId && assignmentNameForLog === PROMPT_MANAGER_SETTINGS_ASSIGNMENT_TITLE) {
+      appendLtiLog('prompt', 'getConfig: target is Prompt Manager Settings (index JSON), not a prompter assignment', {
+        assignmentId,
+        resolvedSource: resolved.source,
+      });
+      return null;
+    }
     const resourceLinkIdTrim = (ctx.resourceLinkId ?? '').trim();
     if (resourceLinkIdTrim && assignmentId && resolved.source !== 'resource_link_api') {
       try {

@@ -44,7 +44,10 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const assignmentIdFromUrl = searchParams.get('assignmentId') ?? '';
   const ctxAssignmentId = resolveLtiContextValue(context?.assignmentId);
   const createMode = searchParams.get('create') === '1';
-  const assignmentId = createMode ? null : (ctxAssignmentId || assignmentIdFromUrl.trim()) || null;
+  /** URL wins over LTI context: course_navigation / stale `assignment` claims may point at storage or the wrong item; `?assignmentId=` is the explicit target. */
+  const assignmentId = createMode
+    ? null
+    : (assignmentIdFromUrl.trim() || ctxAssignmentId) || null;
 
   const [config, setConfig] = useState<promptApi.PromptConfig | null>(null);
   const [configuredAssignments, setConfiguredAssignments] = useState<promptApi.ConfiguredAssignment[]>([]);

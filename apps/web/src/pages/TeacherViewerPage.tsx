@@ -493,7 +493,8 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   const assignmentIdFromUrl = searchParams.get('assignmentId') ?? '';
   const gradingFromUrl = searchParams.get('grading') === '1';
   const ctxAssignmentId = resolveLtiContextValue(context?.assignmentId);
-  const assignmentId = (ctxAssignmentId || assignmentIdFromUrl.trim()) || null;
+  /** Deep links use `?assignmentId=`; prefer that over LTI context when both are set. */
+  const assignmentId = (assignmentIdFromUrl.trim() || ctxAssignmentId) || null;
 
   const [submissions, setSubmissions] = useState<promptApi.PromptSubmission[]>([]);
   const [gradingPrefetchByUserId, setGradingPrefetchByUserId] = useState<Map<string, PrefetchedGradingMedia>>(

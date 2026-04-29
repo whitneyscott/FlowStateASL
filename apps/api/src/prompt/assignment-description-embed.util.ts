@@ -25,12 +25,73 @@ function decodeBasicHtmlEntities(s: string): string {
     .replace(/&nbsp;/g, ' ');
 }
 
-type EmbedBlock = { role: typeof ASL_EXPRESS_ROLE_CONFIG | typeof ASL_EXPRESS_ROLE_PROMPTS; start: number; end: number };
+type EmbedBlock = {
+  role: typeof ASL_EXPRESS_ROLE_CONFIG | typeof ASL_EXPRESS_ROLE_PROMPTS;
+  start: number;
+  end: number;
+  /** Start of the matching `</div>`; inner is slice(open+1, contentEnd). */
+  contentEnd: number;
+};
 
 const OPEN_TAG_PREFIX = '<div ';
 
+/** `</div>` (case/whitespace) at `i` → full token length, else 0. */
+function closeDivLenAt(html: string, i: number): number {
+  if (i + 1 >= html.length || html[i] !== '<' || html[i + 1] !== '/') return 0;
+  const s = html.slice(i, i + 32);
+  const m = /^<\s*\/\s*div\s*>/i.exec(s);
+  if (!m || m.index !== 0) return 0;
+  return m[0].length;
+}
+
 /**
- * Find ASL Express embed `div` regions (v=1 + role). Does not require a fixed attribute order.
+ * Opening `<div` at `i` (not a closing tag) → length through closing `>`, else 0.
+ * Does not count `<div` inside attribute values (rare; embed JSON is the common case).
+ */
+function openDivTagLenAt(html: string, i: number, n: number): number {
+  if (i + 1 >= n || html[i] !== '<' || html[i + 1] === '/') return 0;
+  if (!/^<\s*div\b/i.test(html.slice(i, i + 12))) return 0;
+  const gt = html.indexOf('>', i);
+  if (gt === -1) return 0;
+  return gt - i + 1;
+}
+
+/**
+ * After the opening `>` of an embed div, find the inner text end and full block end.
+ * Depth-matched `</div>` so inner markup is not cut off at the first `</div>`.
+ * Single pass **O(n)**; repeated regex scans from the same start were O(n²) and could be slow.
+ */
+function findDivInnerAndBlockEnd(html: string, openTagEnd: number): { contentEnd: number; blockEnd: number } | null {
+  const n = html.length;
+  if (openTagEnd < 0 || openTagEnd >= n) return null;
+  let i = openTagEnd + 1;
+  let depth = 1;
+  while (i < n) {
+    if (html[i] === '<') {
+      const closeLen = closeDivLenAt(html, i);
+      if (closeLen) {
+        depth -= 1;
+        if (depth === 0) {
+          return { contentEnd: i, blockEnd: i + closeLen };
+        }
+        i += closeLen;
+        continue;
+      }
+      const openLen = openDivTagLenAt(html, i, n);
+      if (openLen) {
+        depth += 1;
+        i += openLen;
+        continue;
+      }
+    }
+    i += 1;
+  }
+  return null;
+}
+
+/**
+ * Find ASL Express embed `div` regions (v=1 + role). Closers are **depth-matched** so the prompts JSON
+ * is not truncated at the first `</div>` inside nested or stray markup.
  */
 function findAllEmbedBlockRegions(html: string): EmbedBlock[] {
   const regions: EmbedBlock[] = [];
@@ -60,11 +121,14 @@ function findAllEmbedBlockRegions(html: string): EmbedBlock[] {
       from = vIdx + 1;
       continue;
     }
-    const close = html.indexOf('</div>', openTagEnd);
-    if (close === -1) break;
+    const be = findDivInnerAndBlockEnd(html, openTagEnd);
+    if (!be) {
+      from = vIdx + 1;
+      continue;
+    }
     const role = roleM[1] as typeof ASL_EXPRESS_ROLE_CONFIG | typeof ASL_EXPRESS_ROLE_PROMPTS;
-    regions.push({ role, start: divStart, end: close + '</div>'.length });
-    from = close + 6;
+    regions.push({ role, start: divStart, end: be.blockEnd, contentEnd: be.contentEnd });
+    from = be.blockEnd;
   }
   return regions;
 }
@@ -115,7 +179,7 @@ export function parseAssignmentDescriptionForPromptManager(html: string | undefi
       repairNotes.push('embed_malformed_skipped');
       continue;
     }
-    const inner = raw.slice(openTagEnd + 1, r.end - '</div>'.length);
+    const inner = raw.slice(openTagEnd + 1, r.contentEnd);
     const b = (byRole[r.role] = byRole[r.role] ?? { inner: '', count: 0 });
     b.count += 1;
     b.inner = inner;
