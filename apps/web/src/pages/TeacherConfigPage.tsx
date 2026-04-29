@@ -1639,9 +1639,6 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                       <>
                         <div className="prompter-settings-header-row">
                           <label className="prompter-settings-label"><strong>Text Prompts</strong></label>
-                          <button type="button" onClick={addPrompt} className="prompter-btn-add-pool">
-                            + Add to Pool
-                          </button>
                         </div>
                         <p className="prompter-hint">
                           Each prompt is rich text (saved as HTML). The read-only view matches what students see; use
@@ -1698,6 +1695,11 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                             </button>
                           </div>
                         ))}
+                        <div className="prompter-prompt-add-row">
+                          <button type="button" onClick={addPrompt} className="prompter-btn-add-pool">
+                            + Add to Pool
+                          </button>
+                        </div>
                       </>
                     ) : promptMode === 'decks' ? (
                       <div className="prompter-settings-section prompter-deck-config-section">
