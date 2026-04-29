@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Request } from 'express';
+import { appendLtiLog } from '../../common/last-error.store';
 import { repairCanvasHostFromRequest } from '../../common/utils/canvas-base-url.util';
 import { verifySignedCourseImageViewRequest } from '../../common/utils/course-prompt-image-view-signature.util';
 import { CourseSettingsService } from '../../course-settings/course-settings.service';
@@ -31,8 +32,18 @@ export class LtiLaunchGuard implements CanActivate {
     // Course prompt images: <img> cannot send Bearer; signed query (c, e, sig) authenticates the GET.
     if (req.method === 'GET') {
       const m = /^\/api\/prompt\/course-files\/(\d+)\/view$/.exec(req.path);
-      if (m?.[1] && verifySignedCourseImageViewRequest(req, m[1], this.config)) {
-        return true;
+      if (m?.[1]) {
+        const ok = verifySignedCourseImageViewRequest(req, m[1], this.config);
+        appendLtiLog('prompt-image-debug', 'LtiLaunchGuard image signed check', {
+          path: req.path,
+          fileId: m[1],
+          signedOk: ok,
+          hasC: !!req.query?.c,
+          hasE: !!req.query?.e,
+          hasSig: !!req.query?.sig,
+          hasBearer: /^Bearer\s+/i.test(req.headers.authorization ?? ''),
+        });
+        if (ok) return true;
       }
     }
     const hasSession = !!req.session;

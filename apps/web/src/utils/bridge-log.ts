@@ -52,6 +52,8 @@ const BRIDGE_LTI_LOG_SCOPES = [
   'student-prompt-type',
   /** Student deck live-build + hydrate (TimerPage). */
   'student-deck-live-build',
+  /** Prompt image insertion/load diagnostics (RTE image picker + signed image auth). */
+  'prompt-image-debug',
 ] as const;
 
 export function ltiLogLineMatchesBridgeFilter(line: string): boolean {
@@ -88,7 +90,7 @@ function isBridgeClientDiagnosticsEnabled(): boolean {
  */
 /** Log + POST to /api/debug/lti-log even when `aslExpressAppMode` is not `developer` (student prompter, etc.). */
 function shouldAlwaysBridgeLog(tag: string): boolean {
-  return tag.startsWith('student-') || tag === 'prompt-manager-config';
+  return tag.startsWith('student-') || tag === 'prompt-manager-config' || tag === 'prompt-image-debug';
 }
 
 export function appendBridgeLog(tag: string, message: string, extra?: Record<string, unknown>): void {

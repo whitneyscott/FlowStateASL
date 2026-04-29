@@ -5,6 +5,7 @@ import {
   getSignedCourseImageViewPath,
   uploadCoursePromptImage,
 } from '../api/prompt.api';
+import { appendBridgeLog } from '../utils/bridge-log';
 
 type Props = {
   open: boolean;
@@ -32,12 +33,23 @@ export function PromptCourseImageModal({ open, onClose, onInserted }: Props) {
     setBrowseError(null);
     try {
       const out = await browseCourseFiles(targetFolderId);
+      appendBridgeLog('prompt-image-debug', 'browseCourseFiles loaded', {
+        targetFolderId: targetFolderId ?? '(root)',
+        folderId: out.folder.id,
+        folderName: out.folder.name,
+        imageCount: out.imageFiles.length,
+        totalFilesInFolder: out.totalFilesInFolder,
+      });
       setFolderName(out.folder.name);
       setParentFolderId(out.folder.parentFolderId);
       setSubfolders(out.subfolders);
       setImageFiles(out.imageFiles);
       setTotalFilesInFolder(out.totalFilesInFolder);
     } catch (e) {
+      appendBridgeLog('prompt-image-debug', 'browseCourseFiles failed', {
+        targetFolderId: targetFolderId ?? '(root)',
+        error: e instanceof Error ? e.message : String(e),
+      });
       setBrowseError(e instanceof Error ? e.message : String(e));
       setSubfolders([]);
       setImageFiles([]);
@@ -69,10 +81,21 @@ export function PromptCourseImageModal({ open, onClose, onInserted }: Props) {
 
   const pickFile = async (id: string) => {
     try {
+      appendBridgeLog('prompt-image-debug', 'pickFile started', { fileId: id, folderName });
       const { path } = await getSignedCourseImageViewPath(id);
-      onInserted(coursePromptImageViewUrl(path));
+      const normalized = coursePromptImageViewUrl(path);
+      appendBridgeLog('prompt-image-debug', 'pickFile signed path resolved', {
+        fileId: id,
+        signedPath: path,
+        normalizedPath: normalized,
+      });
+      onInserted(normalized);
       onClose();
     } catch (e) {
+      appendBridgeLog('prompt-image-debug', 'pickFile failed', {
+        fileId: id,
+        error: e instanceof Error ? e.message : String(e),
+      });
       setBrowseError(e instanceof Error ? e.message : String(e));
     }
   };
@@ -84,10 +107,25 @@ export function PromptCourseImageModal({ open, onClose, onInserted }: Props) {
     setUploadBusy(true);
     setUploadError(null);
     try {
+      appendBridgeLog('prompt-image-debug', 'uploadCoursePromptImage started', {
+        fileName: file.name,
+        fileType: file.type,
+        fileSize: file.size,
+      });
       const { viewPath } = await uploadCoursePromptImage(file);
-      onInserted(coursePromptImageViewUrl(viewPath));
+      const normalized = coursePromptImageViewUrl(viewPath);
+      appendBridgeLog('prompt-image-debug', 'uploadCoursePromptImage success', {
+        fileName: file.name,
+        returnedViewPath: viewPath,
+        normalizedPath: normalized,
+      });
+      onInserted(normalized);
       onClose();
     } catch (err) {
+      appendBridgeLog('prompt-image-debug', 'uploadCoursePromptImage failed', {
+        fileName: file.name,
+        error: err instanceof Error ? err.message : String(err),
+      });
       setUploadError(err instanceof Error ? err.message : String(err));
     } finally {
       setUploadBusy(false);

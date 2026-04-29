@@ -851,6 +851,12 @@ export async function uploadCoursePromptImage(file: File): Promise<{ fileId: str
   if (!res.ok) {
     throw new Error(body.message ?? `HTTP ${res.status}`);
   }
+  appendBridgeLog('prompt-image-debug', 'uploadCoursePromptImage API response', {
+    fileName: file.name,
+    fileSize: file.size,
+    status: res.status,
+    response: data,
+  });
   return data as { fileId: string; viewPath: string };
 }
 
@@ -860,7 +866,14 @@ export async function getSignedCourseImageViewPath(fileId: string): Promise<{ pa
   if (!/^\d+$/.test(id)) {
     throw new Error('Invalid file id');
   }
-  return fetchJsonWithOAuthRedirect(`${base}/course-files/${id}/signed-view-path`, { method: 'GET' });
+  const out = await fetchJsonWithOAuthRedirect<{ path: string }>(`${base}/course-files/${id}/signed-view-path`, {
+    method: 'GET',
+  });
+  appendBridgeLog('prompt-image-debug', 'getSignedCourseImageViewPath API response', {
+    fileId: id,
+    path: out.path,
+  });
+  return out;
 }
 
 export async function buildDeckPrompts(

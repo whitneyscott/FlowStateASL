@@ -286,6 +286,13 @@ export class PromptController {
     }
     const base = `/api/prompt/course-files/${fid}/view`;
     const path = appendSignedQueryToCourseImageViewPath(base, fid, ctx.courseId, this.config);
+    appendLtiLog('prompt-image-debug', 'signed-view-path generated', {
+      fileId: fid,
+      courseId: ctx.courseId,
+      basePath: base,
+      signedPath: path,
+      hasBearer: /^Bearer\s+/i.test(req.headers.authorization ?? ''),
+    });
     return res.json({ path });
   }
 
@@ -295,8 +302,19 @@ export class PromptController {
     if (!/^\d+$/.test(fid)) {
       return res.status(400).json({ message: 'Invalid file id' });
     }
+    const signedOk = verifySignedCourseImageViewRequest(req, fid, this.config);
+    appendLtiLog('prompt-image-debug', 'viewCoursePromptImage request', {
+      fileId: fid,
+      path: req.path,
+      queryC: Array.isArray(req.query.c) ? req.query.c[0] : req.query.c,
+      queryE: Array.isArray(req.query.e) ? req.query.e[0] : req.query.e,
+      hasSig: !!req.query.sig,
+      signedOk,
+      hasBearer: /^Bearer\s+/i.test(req.headers.authorization ?? ''),
+      hasSessionContext: !!req.session?.ltiContext,
+    });
     let ctx: LtiContext;
-    if (verifySignedCourseImageViewRequest(req, fid, this.config)) {
+    if (signedOk) {
       const cRaw = req.query.c;
       const courseId = Array.isArray(cRaw) ? String(cRaw[0] ?? '').trim() : String(cRaw ?? '').trim();
       ctx = sanitizeLtiContext({
@@ -308,12 +326,30 @@ export class PromptController {
         toolType: 'flashcards',
         roles: '',
       }) as LtiContext;
+      appendLtiLog('prompt-image-debug', 'viewCoursePromptImage using signed context', {
+        fileId: fid,
+        courseId,
+      });
     } else {
       ctx = this.getCtx(req);
+      appendLtiLog('prompt-image-debug', 'viewCoursePromptImage using session context', {
+        fileId: fid,
+        courseId: ctx.courseId,
+        userId: ctx.userId,
+      });
     }
     try {
       await this.prompt.streamCoursePromptImageToResponse(ctx, fid, res);
+      appendLtiLog('prompt-image-debug', 'viewCoursePromptImage stream success', {
+        fileId: fid,
+        courseId: ctx.courseId,
+      });
     } catch (err) {
+      appendLtiLog('prompt-image-debug', 'viewCoursePromptImage stream failed', {
+        fileId: fid,
+        courseId: ctx.courseId,
+        error: err instanceof Error ? err.message : String(err),
+      });
       if (err instanceof CanvasTokenExpiredError) {
         if (!res.headersSent) {
           return res.status(401).json(getOAuth401Body(req));

@@ -2,6 +2,7 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 import { PromptCourseImageModal } from './PromptCourseImageModal';
+import { appendBridgeLog } from '../utils/bridge-log';
 
 /** Quill has no separate `bullet` format — lists use `list` (ordered vs bullet is the list value). */
 const FORMATS = ['header', 'bold', 'italic', 'underline', 'list', 'link', 'image'];
@@ -28,10 +29,39 @@ export function TeacherPromptRte({ value, onChange, placeholder, className, remo
   const insertImageUrl = useCallback((url: string) => {
     const editor = quillRef.current?.getEditor();
     if (!editor || !url.trim()) return;
+    const trimmed = url.trim();
     const range = editor.getSelection(true);
     const idx = range ? range.index : Math.max(0, editor.getLength() - 1);
-    editor.insertEmbed(idx, 'image', url.trim(), 'user');
+    appendBridgeLog('prompt-image-debug', 'RTE insertEmbed image', {
+      index: idx,
+      hasSelection: !!range,
+      imageUrl: trimmed,
+    });
+    editor.insertEmbed(idx, 'image', trimmed, 'user');
     editor.setSelection(idx + 1, 0, 'silent');
+    // Add one-shot load diagnostics to the most recently inserted image node.
+    setTimeout(() => {
+      const root = editor.root as HTMLElement | null;
+      const imgs = root?.querySelectorAll('img');
+      const img = imgs && imgs.length > 0 ? (imgs[imgs.length - 1] as HTMLImageElement) : null;
+      if (!img) {
+        appendBridgeLog('prompt-image-debug', 'RTE image node not found after insert', { imageUrl: trimmed });
+        return;
+      }
+      img.onload = () =>
+        appendBridgeLog('prompt-image-debug', 'RTE image load success', {
+          imageUrl: trimmed,
+          naturalWidth: img.naturalWidth,
+          naturalHeight: img.naturalHeight,
+          renderedWidth: img.width,
+          renderedHeight: img.height,
+        });
+      img.onerror = () =>
+        appendBridgeLog('prompt-image-debug', 'RTE image load error', {
+          imageUrl: trimmed,
+          currentSrc: img.currentSrc || img.src,
+        });
+    }, 0);
   }, []);
 
   const modules = useMemo(

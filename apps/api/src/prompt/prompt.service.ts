@@ -6153,12 +6153,24 @@ export class PromptService {
     });
     const base = `/api/prompt/course-files/${fileId}/view`;
     const viewPath = appendSignedQueryToCourseImageViewPath(base, fileId, ctx.courseId, this.config);
+    appendLtiLog('prompt-image-debug', 'uploadCoursePromptImage signed view path', {
+      fileId,
+      courseId: ctx.courseId,
+      basePath: base,
+      signedPath: viewPath,
+    });
     return { fileId, viewPath };
   }
 
   /** Teacher or student: stream a course image file if it belongs to the launch course. */
   async streamCoursePromptImageToResponse(ctx: LtiContext, fileId: string, res: Response): Promise<void> {
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
+    appendLtiLog('prompt-image-debug', 'streamCoursePromptImage token lookup', {
+      fileId,
+      courseId: ctx.courseId,
+      hasToken: !!token,
+      usedSessionToken: !!ctx.canvasAccessToken,
+    });
     if (!token) {
       throw new ForbiddenException('Canvas token required — a teacher must authorize the tool for this course');
     }
