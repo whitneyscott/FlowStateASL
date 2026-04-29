@@ -11,7 +11,8 @@ const MODULES = {
   ],
 };
 
-const FORMATS = ['header', 'bold', 'italic', 'underline', 'list', 'bullet', 'link'];
+/** Quill has no separate `bullet` format — lists use `list` (ordered vs bullet is the list value). */
+const FORMATS = ['header', 'bold', 'italic', 'underline', 'list', 'link'];
 
 type TeacherPromptRteProps = {
   value: string;
