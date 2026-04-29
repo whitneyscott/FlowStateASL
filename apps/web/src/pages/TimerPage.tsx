@@ -610,6 +610,8 @@ export default function TimerPage({ context }: TimerPageProps) {
 
   useEffect(() => {
     if (phase !== 'preflight') return;
+    /** Teachers use Prompt Manager on `/config`; if they open `/prompter`, never request camera. */
+    if (teacherViewingTimer) return;
     setPreflightReady(false);
     setPreflightError(null);
     setSubmitInfo(null);
@@ -668,7 +670,7 @@ export default function TimerPage({ context }: TimerPageProps) {
     return () => {
       cancelled = true;
     };
-  }, [phase]);
+  }, [phase, teacherViewingTimer]);
 
   const minutes = config?.minutes ?? 5;
   const prompts = config?.prompts ?? [];
@@ -845,6 +847,23 @@ export default function TimerPage({ context }: TimerPageProps) {
           setPhase('submissionChoice');
           return;
         }
+        if (teacherViewingTimer) {
+          bridgeLogStudentPromptResult({
+            where: 'loadConfig',
+            isDeckAssignment,
+            isYoutubeAssignment,
+            studentDeckFlow: !!isDeckAssignment,
+            studentYoutubeFlow: !!isYoutubeAssignment,
+            deckBuildStatus,
+            deckBuildDetail,
+            livePromptCount,
+            nextPhase: 'skip_teacher_prompter',
+            gate: 'none',
+            note: 'Instructor on /prompter: do not enter warmup/preflight (no camera).',
+            accessCode: false,
+          });
+          return;
+        }
         const next = isDeckAssignment || isYoutubeAssignment ? 'preflight' : 'warmup';
         bridgeLogStudentPromptResult({
           where: 'loadConfig',
@@ -906,6 +925,7 @@ export default function TimerPage({ context }: TimerPageProps) {
     setLastFunction,
     setLastApiResult,
     setLastApiError,
+    teacherViewingTimer,
   ]);
 
   useEffect(() => {
@@ -932,8 +952,9 @@ export default function TimerPage({ context }: TimerPageProps) {
 
   useEffect(() => {
     if (phase !== 'warmup' || secondsLeft > 0) return;
+    if (teacherViewingTimer) return;
     setPhase('preflight');
-  }, [phase, secondsLeft]);
+  }, [phase, secondsLeft, teacherViewingTimer]);
 
   useEffect(() => {
     if (phase !== 'getReady') return;
@@ -989,6 +1010,9 @@ export default function TimerPage({ context }: TimerPageProps) {
         youtubeAfterAccess,
         nextPhase: deckAfterAccess || youtubeAfterAccess ? 'preflight' : 'warmup',
       });
+      if (teacherViewingTimer) {
+        return;
+      }
       if (deckAfterAccess || youtubeAfterAccess) {
         setPhase('preflight');
       } else {
@@ -1010,13 +1034,16 @@ export default function TimerPage({ context }: TimerPageProps) {
   const continueNewAttemptFromSubmissionGate = useCallback(() => {
     setGateChooserMeta(null);
     setGateAssignmentId(null);
+    if (teacherViewingTimer) {
+      return;
+    }
     if (studentDeckFlow || studentYoutubeFlow) {
       setPhase('preflight');
     } else {
       setPhase('warmup');
       setSecondsLeft((config?.minutes ?? 5) * 60);
     }
-  }, [studentDeckFlow, studentYoutubeFlow, config?.minutes]);
+  }, [studentDeckFlow, studentYoutubeFlow, config?.minutes, teacherViewingTimer]);
 
   const startPreflight = () => {
     if (!streamRef.current) return;
