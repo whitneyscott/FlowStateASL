@@ -447,6 +447,49 @@ export class PromptService {
     return Number.isFinite(parsed) && parsed > 0 ? parsed : 60_000;
   }
 
+  /**
+   * One row per lower(trim(title)) per deck (Postgres DISTINCT ON), tie-break: position, video_id.
+   * Supersedes in-memory title dedupe when the playlist sync has populated the table.
+   */
+  private async fetchDeckCardsFromSyncTable(deckId: string): Promise<DeckCardSource[] | null> {
+    const rows = (await this.sproutPlaylistVideoRepo.query(
+      `SELECT DISTINCT ON (lower(trim(title)))
+        video_id,
+        title,
+        duration_seconds,
+        embed_code
+      FROM sprout_playlist_videos
+      WHERE playlist_id = $1
+      ORDER BY lower(trim(title)), position ASC, video_id ASC`,
+      [deckId],
+    )) as Array<{
+      video_id: string;
+      title: string;
+      duration_seconds: number | null;
+      embed_code: string | null;
+    }>;
+    if (rows.length === 0) return null;
+    const out: DeckCardSource[] = [];
+    for (const r of rows) {
+      const title = String(r.title ?? '').trim();
+      if (!title) continue;
+      const id = String(r.video_id ?? '').trim();
+      if (!id) continue;
+      const pair = parseSproutEmbedPairFromEmbedCode(r.embed_code);
+      const t = pair && pair.videoId === id ? (pair.securityToken ?? '').trim() : '';
+      out.push({
+        id,
+        title,
+        durationSeconds:
+          typeof r.duration_seconds === 'number' && Number.isFinite(r.duration_seconds) && r.duration_seconds > 0
+            ? r.duration_seconds
+            : null,
+        securityToken: t.length > 0 ? t : null,
+      });
+    }
+    return out.length > 0 ? out : null;
+  }
+
   private async getDeckCardsWithCache(deckId: string): Promise<DeckCardSource[]> {
     const now = Date.now();
     const cached = this.deckSourceCache.get(deckId);
@@ -459,6 +502,22 @@ export class PromptService {
       return fromInflight.map((c) => ({ ...c }));
     }
     const fetchPromise = (async () => {
+      let fromSync: DeckCardSource[] | null = null;
+      try {
+        fromSync = await this.fetchDeckCardsFromSyncTable(deckId);
+      } catch (e) {
+        appendLtiLog('prompt-decks', 'getDeckCardsWithCache: sprout_playlist_videos read failed, using Sprout', {
+          deckId,
+          error: String(e),
+        });
+      }
+      if (fromSync && fromSync.length > 0) {
+        this.deckSourceCache.set(deckId, {
+          cards: fromSync,
+          expiresAt: Date.now() + this.deckSourceCacheTtlMs,
+        });
+        return fromSync;
+      }
       const videos = await this.sproutVideo.fetchVideosByPlaylistId(deckId);
       const seen = new Set<string>();
       const deduped: DeckCardSource[] = [];
@@ -693,30 +752,12 @@ export class PromptService {
     return { ...parsed.config, instructions: parsed.visibleHtml };
   }
 
-  /** Canvas `name` for Bridge / LTI logs (IDs alone are not human-transparent). */
-  private async canvasAssignmentNameForLog(
+  /** Parse config from an already-fetched `getAssignment` row (no extra HTTP). */
+  private readPromptConfigFromAssignmentRow(
     courseId: string,
     assignmentId: string,
-    domainOverride: string | undefined,
-    token: string,
-  ): Promise<string> {
-    if (!courseId || !assignmentId) return '(none)';
-    try {
-      const a = await this.canvas.getAssignment(courseId, assignmentId, domainOverride, token);
-      const n = (a?.name ?? '').trim();
-      return n || '(unnamed)';
-    } catch {
-      return '(unavailable)';
-    }
-  }
-
-  private async readPromptConfigFromAssignmentDescription(
-    courseId: string,
-    assignmentId: string,
-    domainOverride: string | undefined,
-    token: string,
-  ): Promise<PromptConfigJson | null> {
-    const raw = await this.canvas.getAssignment(courseId, assignmentId, domainOverride, token);
+    raw: NonNullable<Awaited<ReturnType<CanvasService['getAssignment']>>>,
+  ): PromptConfigJson | null {
     const assignmentName = (raw?.name ?? '').trim() || '(unnamed)';
     const desc = raw?.description;
     if (typeof desc === 'string' && desc.trim()) {
@@ -751,6 +792,34 @@ export class PromptService {
       assignmentName,
     });
     return null;
+  }
+
+  private async readPromptConfigFromAssignmentDescription(
+    courseId: string,
+    assignmentId: string,
+    domainOverride: string | undefined,
+    token: string,
+  ): Promise<PromptConfigJson | null> {
+    const raw = await this.canvas.getAssignment(courseId, assignmentId, domainOverride, token);
+    if (!raw) return null;
+    return this.readPromptConfigFromAssignmentRow(courseId, assignmentId, raw);
+  }
+
+  /** Canvas `name` for Bridge / LTI logs (IDs alone are not human-transparent). */
+  private async canvasAssignmentNameForLog(
+    courseId: string,
+    assignmentId: string,
+    domainOverride: string | undefined,
+    token: string,
+  ): Promise<string> {
+    if (!courseId || !assignmentId) return '(none)';
+    try {
+      const a = await this.canvas.getAssignment(courseId, assignmentId, domainOverride, token);
+      const n = (a?.name ?? '').trim();
+      return n || '(unnamed)';
+    } catch {
+      return '(unavailable)';
+    }
   }
 
   /** True when videoPromptConfig has enough structure for deck mode (matches infer heuristics). */
@@ -823,13 +892,19 @@ export class PromptService {
     domainOverride: string | undefined,
     token: string,
     legacyBlob: PromptManagerSettingsBlob | null,
+    preloadedAssignment?: Awaited<ReturnType<CanvasService['getAssignment']>> | null,
   ): Promise<PromptConfigJson | null> {
-    const fromDesc = await this.readPromptConfigFromAssignmentDescription(
-      courseId,
-      assignmentId,
-      domainOverride,
-      token,
-    );
+    let fromDesc: PromptConfigJson | null;
+    if (preloadedAssignment) {
+      fromDesc = this.readPromptConfigFromAssignmentRow(courseId, assignmentId, preloadedAssignment);
+    } else {
+      fromDesc = await this.readPromptConfigFromAssignmentDescription(
+        courseId,
+        assignmentId,
+        domainOverride,
+        token,
+      );
+    }
     const fromBlob = legacyBlob?.configs?.[assignmentId] ?? null;
     const descDeck = this.hasDeckShapedVideoPromptConfig(fromDesc?.videoPromptConfig);
     const blobDeck = this.hasDeckShapedVideoPromptConfig(fromBlob?.videoPromptConfig);
@@ -845,12 +920,15 @@ export class PromptService {
       blobDeckShaped: blobDeck,
     });
     if (merged && blobDeck && !descDeck) {
-      const assignmentName = await this.canvasAssignmentNameForLog(
-        courseId,
-        assignmentId,
-        domainOverride,
-        token,
-      );
+      const n = (preloadedAssignment?.name ?? '').trim();
+      const assignmentName = n
+        ? n
+        : await this.canvasAssignmentNameForLog(
+            courseId,
+            assignmentId,
+            domainOverride,
+            token,
+          );
       appendLtiLog('prompt-decks', 'loadPromptConfig: deck fields taken from course settings blob (description lacked deck shape)', {
         courseId,
         assignmentId,
@@ -886,6 +964,26 @@ export class PromptService {
       });
       return '';
     }
+  }
+
+  /**
+   * True when the launch looks like a student/learner (not instructor/TA/admin) — used to skip expensive
+   * Canvas module scans on GET /config when `moduleId` is already on the saved config.
+   */
+  private isPrompterLearnerContext(ctx: LtiContext): boolean {
+    const r = (ctx.roles ?? '').toLowerCase();
+    if (
+      r.includes('instructor') ||
+      r.includes('administrator') ||
+      r.includes('teachingassistant') ||
+      r.includes('contentdeveloper')
+    ) {
+      return false;
+    }
+    if (r.includes('learner') || r.includes('#learner') || r.includes('student') || r.includes('member#learner')) {
+      return true;
+    }
+    return false;
   }
 
   /**
@@ -1392,14 +1490,29 @@ export class PromptService {
         resolvedToken,
       );
     }
+    let getConfigAssignmentSnapshot: Awaited<ReturnType<CanvasService['getAssignment']>> = null;
     let assignmentNameForLog = '(none)';
     if (assignmentId) {
-      assignmentNameForLog = await this.canvasAssignmentNameForLog(
-        ctx.courseId,
-        assignmentId,
-        domainOverride,
-        resolvedToken,
-      );
+      try {
+        getConfigAssignmentSnapshot = await this.canvas.getAssignment(
+          ctx.courseId,
+          assignmentId,
+          domainOverride,
+          resolvedToken,
+        );
+      } catch {
+        getConfigAssignmentSnapshot = null;
+      }
+      if (getConfigAssignmentSnapshot) {
+        assignmentNameForLog = (getConfigAssignmentSnapshot.name ?? '').trim() || '(unnamed)';
+      } else {
+        assignmentNameForLog = await this.canvasAssignmentNameForLog(
+          ctx.courseId,
+          assignmentId,
+          domainOverride,
+          resolvedToken,
+        );
+      }
     }
     if (assignmentId && assignmentNameForLog === PROMPT_MANAGER_SETTINGS_ASSIGNMENT_TITLE) {
       appendLtiLog('prompt', 'getConfig: target is Prompt Manager Settings (index JSON), not a prompter assignment', {
@@ -1490,6 +1603,7 @@ export class PromptService {
       domainOverride,
       resolvedToken,
       blob,
+      getConfigAssignmentSnapshot,
     );
 
     /**
@@ -1512,6 +1626,7 @@ export class PromptService {
             domainOverride,
             teacherTok,
             teacherBlob,
+            null,
           );
           if (config) {
             appendLtiLog('prompt', 'getConfig: assignment config from Prompt Manager via course-stored token', {
@@ -1543,16 +1658,24 @@ export class PromptService {
     }
     if (config) {
       const storedModuleId = (config.moduleId ?? '').toString().trim();
-      const liveModuleId = (
-        await this.resolveLiveModuleIdForAssignment(
-          ctx.courseId,
+      let liveModuleId = '';
+      if (this.isPrompterLearnerContext(ctx) && storedModuleId) {
+        appendLtiLog('prompt-manager-config', 'getConfig: skip live module scan (learner + stored moduleId)', {
           assignmentId,
-          domainOverride,
-          resolvedToken,
+          storedModuleId,
+        });
+      } else {
+        liveModuleId = (
+          await this.resolveLiveModuleIdForAssignment(
+            ctx.courseId,
+            assignmentId,
+            domainOverride,
+            resolvedToken,
+          )
         )
-      )
-        .toString()
-        .trim();
+          .toString()
+          .trim();
+      }
       /** Prefer Canvas placement when found; keep saved moduleId when scan fails or returns empty (avoids blank module picker). */
       const moduleId = liveModuleId || storedModuleId;
       config = { ...config, moduleId };
@@ -1626,7 +1749,7 @@ export class PromptService {
             };
             let vis = (typeof config.instructions === 'string' ? config.instructions : '').trim();
             if (!vis) {
-              const a = await this.canvas.getAssignment(ctx.courseId, assignmentId, domainOverride, token);
+              const a = getConfigAssignmentSnapshot ?? (await this.canvas.getAssignment(ctx.courseId, assignmentId, domainOverride, token));
               if (a?.description && String(a.description).trim()) {
                 vis = parseAssignmentDescriptionForPromptManager(a.description).visibleHtml;
               }
@@ -1729,6 +1852,7 @@ export class PromptService {
         assignmentId,
         domainOverride,
         resolvedToken,
+        getConfigAssignmentSnapshot,
       );
       if (assignment) {
         const canvasRid = (assignment.linkedRubricId ?? '').trim();
@@ -2479,24 +2603,24 @@ export class PromptService {
       return { prompts: [], warning: 'No decks selected' };
     }
 
-    // Step 1: Fetch all cards from each deck (Sprout list includes duration; also persisted in DB on sync)
-    const deckCards = new Map<
-      string,
-      Array<{ id: string; title: string; durationSeconds: number | null; securityToken: string | null }>
-    >();
-    for (const deck of selectedDecks) {
+    // Step 1: Fetch all cards from each deck (DB sync table first, else Sprout; up to 8 concurrent)
+    const deckCardEntries = await mapWithConcurrency(selectedDecks, 8, async (deck) => {
+      type CardRow = { id: string; title: string; durationSeconds: number | null; securityToken: string | null };
       try {
         const deduped = await this.getDeckCardsWithCache(deck.id);
-        // Step 3: Shuffle each deck randomly
         for (let i = deduped.length - 1; i > 0; i--) {
           const j = Math.floor(Math.random() * (i + 1));
           [deduped[i], deduped[j]] = [deduped[j], deduped[i]];
         }
-        deckCards.set(deck.id, deduped);
+        return { id: deck.id, cards: deduped as CardRow[] };
       } catch (err) {
         appendLtiLog('prompt-decks', `Failed to fetch deck ${deck.id}`, { error: String(err) });
-        deckCards.set(deck.id, []);
+        return { id: deck.id, cards: [] as CardRow[] };
       }
+    });
+    const deckCards = new Map<string, Array<{ id: string; title: string; durationSeconds: number | null; securityToken: string | null }>>();
+    for (const e of deckCardEntries) {
+      deckCards.set(e.id, e.cards);
     }
 
     const requestedTotal = Number(totalCards);
@@ -5271,10 +5395,14 @@ export class PromptService {
     assignmentId: string,
     domainOverride: string | undefined,
     effectiveToken: string,
+    preloaded?: Awaited<ReturnType<CanvasService['getAssignment']>> | null,
   ): Promise<{
     assignment: Awaited<ReturnType<CanvasService['getAssignment']>> | null;
     tokenSource: 'effective' | 'course_stored' | 'none';
   }> {
+    if (preloaded) {
+      return { assignment: preloaded, tokenSource: 'effective' };
+    }
     const primary = await this.canvas.getAssignment(
       ctx.courseId,
       assignmentId,
