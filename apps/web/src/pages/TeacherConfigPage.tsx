@@ -34,61 +34,6 @@ function isTeacher(roles: string): boolean {
   return TEACHER_PATTERNS.some((p) => roles.toLowerCase().includes(p));
 }
 
-function normalizePromptHtmlItem(input: unknown): string {
-  if (typeof input === 'string') {
-    const t = input.trim();
-    if (t.startsWith('{') && t.endsWith('}')) {
-      try {
-        return normalizePromptHtmlItem(JSON.parse(t));
-      } catch {
-        return input;
-      }
-    }
-    return input;
-  }
-  if (input && typeof input === 'object') {
-    const obj = input as {
-      html?: unknown;
-      promptHtml?: unknown;
-      value?: unknown;
-      content?: unknown;
-      text?: unknown;
-      prompt?: unknown;
-      body?: unknown;
-    };
-    if (typeof obj.html === 'string') return obj.html;
-    if (typeof obj.promptHtml === 'string') return obj.promptHtml;
-    if (typeof obj.value === 'string') return obj.value;
-    if (typeof obj.content === 'string') return obj.content;
-    if (typeof obj.text === 'string') return obj.text;
-    if (typeof obj.prompt === 'string') return obj.prompt;
-    if (typeof obj.body === 'string') return obj.body;
-  }
-  if (input == null) return '';
-  return String(input);
-}
-
-function extractNormalizedPrompts(
-  data: promptApi.PromptConfig & Record<string, unknown>,
-): { prompts: string[]; sourceField: string } {
-  const candidates: Array<{ field: string; value: unknown }> = [
-    { field: 'prompts', value: data.prompts },
-    { field: 'textPrompts', value: data.textPrompts },
-    { field: 'promptPool', value: data.promptPool },
-    { field: 'textPromptPool', value: data.textPromptPool },
-  ];
-  let fallback: { prompts: string[]; sourceField: string } | null = null;
-  for (const c of candidates) {
-    if (!Array.isArray(c.value)) continue;
-    const normalized = c.value.map((item) => normalizePromptHtmlItem(item));
-    if (!fallback) fallback = { prompts: normalized, sourceField: c.field };
-    if (normalized.some((p) => p.trim().length > 0)) {
-      return { prompts: normalized, sourceField: c.field };
-    }
-  }
-  return fallback ?? { prompts: [], sourceField: 'none' };
-}
-
 interface TeacherConfigPageProps {
   context: LtiContext | null;
 }
@@ -328,10 +273,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       });
       setConfig(data ?? null);
       if (data) {
-        const promptExtraction = extractNormalizedPrompts(data as promptApi.PromptConfig & Record<string, unknown>);
-        const normalizedPrompts = promptExtraction.prompts;
         setMinutes(data.minutes ?? 5);
-        setPrompts(normalizedPrompts);
+        setPrompts(Array.isArray(data.prompts) ? data.prompts : []);
         setAccessCode(data.accessCode ?? '');
         setModuleId(data.moduleId ?? '');
         setAssignmentGroupId(data.assignmentGroupId ?? '');
@@ -347,16 +290,6 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         setSignToVoiceRequired(data.signToVoiceRequired === true);
         setPromptMode(data.promptMode ?? 'text');
         setPromptRteRemountKey((k) => k + 1);
-        void appendBridgeLog('prompt-manager-config', 'TeacherConfigPage: normalized prompt payload for editor', {
-          assignmentId: id,
-          promptMode: data.promptMode ?? null,
-          sourceField: promptExtraction.sourceField,
-          normalizedPromptCount: normalizedPrompts.length,
-          sampleLengths: normalizedPrompts.slice(0, 5).map((p) => p.length),
-          itemTypeSample: Array.isArray(data.prompts)
-            ? data.prompts.slice(0, 5).map((x) => (x == null ? 'nullish' : typeof x))
-            : [],
-        });
         if (data.promptMode === 'youtube' && data.youtubePromptConfig?.videoId) {
           const vid = data.youtubePromptConfig.videoId;
           const yc = data.youtubePromptConfig;
