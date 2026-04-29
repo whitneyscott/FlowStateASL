@@ -25,66 +25,84 @@ function decodeBasicHtmlEntities(s: string): string {
     .replace(/&nbsp;/g, ' ');
 }
 
-type EmbedBlock = { role: typeof ASL_EXPRESS_ROLE_CONFIG | typeof ASL_EXPRESS_ROLE_PROMPTS; start: number; end: number };
+type EmbedBlock = {
+  role: typeof ASL_EXPRESS_ROLE_CONFIG | typeof ASL_EXPRESS_ROLE_PROMPTS;
+  start: number;
+  end: number;
+  /** Where inner text (JSON) ends — index of the matching `</` that closes the embed. */
+  contentEnd: number;
+};
 
 const OPEN_TAG_PREFIX = '<div ';
 
 /**
- * Locate the opening `<div ...>` for an ASL embed that owns `data-asl-express-v` near `vIdx`.
- * Canvas may normalize casing and spacing; do not rely on `lastIndexOf('<div ', vIdx)` alone.
+ * First `</div>` (case-insensitive, optional whitespace) at or after `from`, or null.
  */
-function findAslEmbedOpenDivStart(html: string, vIdx: number): number {
-  const lower = html.toLowerCase();
-  let pos = vIdx;
-  for (;;) {
-    const i = lower.lastIndexOf('<div', pos);
-    if (i === -1) return -1;
-    const tagEnd = html.indexOf('>', i);
-    if (tagEnd === -1) return -1;
-    if (tagEnd > vIdx) {
-      pos = i - 1;
-      continue;
-    }
-    const afterDiv = html.slice(i + 4, i + 5);
-    if (afterDiv && !/[\s/>]/u.test(afterDiv)) {
-      pos = i - 1;
-      continue;
-    }
-    const slice = html.slice(i, tagEnd + 1);
-    if (!/data-asl-express-v=["']1["']/i.test(slice) || !/data-asl-express-role=["'](config|prompts)["']/i.test(slice)) {
-      pos = i - 1;
-      continue;
-    }
-    return i;
-  }
+function findNextCloseDivTag(html: string, from: number): { start: number; end: number } | null {
+  const re = /<\/\s*div\s*>/i;
+  re.lastIndex = from;
+  const m = re.exec(html);
+  if (!m) return null;
+  return { start: m.index, end: m.index + m[0].length };
 }
 
 /**
- * Matching close `</div>` for an embed, counting nested divs. Required when Canvas (or entity decode)
- * leaves literal `</div>` sequences inside the JSON text node — `indexOf('</div>')` would truncate early.
+ * Next raw `<div` open tag (not `</`…), for nested markup inside the embed. Entity-encoded
+ * content (`&lt;div` …) is ignored: there is no literal `<`.
  */
-function findMatchingEmbedCloseDiv(html: string, openTagEnd: number): number {
+function findNextOpenDivTag(html: string, from: number): { start: number; after: number } | null {
+  const n = html.length;
+  for (let i = from; i < n; i++) {
+    if (html[i] !== '<') continue;
+    if (i + 1 < n && html[i + 1] === '/') continue;
+    if (!/^<\s*div\b/i.test(html.slice(i, i + 12))) continue;
+    const gt = html.indexOf('>', i);
+    if (gt === -1) return { start: i, after: n };
+    return { start: i, after: gt + 1 };
+  }
+  return null;
+}
+
+/**
+ * After the opening `>` of a `<div …>`, find where the inner *text* of that `div` ends
+ * and where the `</div>` for that *same* tag ends. The naive first `</div>` after `>`
+ * fails when the inner (e.g. prompts JSON) contains unescaped `</div>` in HTML strings.
+ */
+function findDivInnerAndBlockEnd(html: string, openTagEnd: number): { contentEnd: number; blockEnd: number } | null {
+  const n = html.length;
+  if (openTagEnd < 0 || openTagEnd >= n) return null;
+  let i = openTagEnd + 1;
   let depth = 1;
-  let pos = openTagEnd + 1;
-  const lower = html.toLowerCase();
-  while (pos < html.length && depth > 0) {
-    const nextOpen = lower.indexOf('<div', pos);
-    const nextClose = lower.indexOf('</div>', pos);
-    if (nextClose === -1) return -1;
-    if (nextOpen !== -1 && nextOpen < nextClose) {
-      depth += 1;
-      pos = nextOpen + 4;
-    } else {
+  while (i < n) {
+    const c = findNextCloseDivTag(html, i);
+    if (!c) return null;
+    const o = findNextOpenDivTag(html, i);
+    if (!o) {
       depth -= 1;
-      if (depth === 0) return nextClose;
-      pos = nextClose + 6;
+      if (depth === 0) {
+        return { contentEnd: c.start, blockEnd: c.end };
+      }
+      i = c.end;
+      continue;
+    }
+    if (c.start < o.start) {
+      depth -= 1;
+      if (depth === 0) {
+        return { contentEnd: c.start, blockEnd: c.end };
+      }
+      i = c.end;
+    } else {
+      depth += 1;
+      i = o.after;
     }
   }
-  return -1;
+  return null;
 }
 
 /**
  * Find ASL Express embed `div` regions (v=1 + role). Does not require a fixed attribute order.
+ * Closing tags are found by **depth** so a single embed’s inner `</div>` in prompt HTML
+ * does not end the block early.
  */
 function findAllEmbedBlockRegions(html: string): EmbedBlock[] {
   const regions: EmbedBlock[] = [];
@@ -97,7 +115,7 @@ function findAllEmbedBlockRegions(html: string): EmbedBlock[] {
       from = vIdx + 1;
       continue;
     }
-    const divStart = findAslEmbedOpenDivStart(html, vIdx);
+    const divStart = html.lastIndexOf(OPEN_TAG_PREFIX, vIdx);
     if (divStart === -1) {
       from = vIdx + 1;
       continue;
@@ -114,11 +132,14 @@ function findAllEmbedBlockRegions(html: string): EmbedBlock[] {
       from = vIdx + 1;
       continue;
     }
-    const close = findMatchingEmbedCloseDiv(html, openTagEnd);
-    if (close === -1) break;
+    const be = findDivInnerAndBlockEnd(html, openTagEnd);
+    if (!be) {
+      from = vIdx + 1;
+      continue;
+    }
     const role = roleM[1] as typeof ASL_EXPRESS_ROLE_CONFIG | typeof ASL_EXPRESS_ROLE_PROMPTS;
-    regions.push({ role, start: divStart, end: close + '</div>'.length });
-    from = close + 6;
+    regions.push({ role, start: divStart, end: be.blockEnd, contentEnd: be.contentEnd });
+    from = be.blockEnd;
   }
   return regions;
 }
@@ -169,7 +190,7 @@ export function parseAssignmentDescriptionForPromptManager(html: string | undefi
       repairNotes.push('embed_malformed_skipped');
       continue;
     }
-    const inner = raw.slice(openTagEnd + 1, r.end - '</div>'.length);
+    const inner = raw.slice(openTagEnd + 1, r.contentEnd);
     const b = (byRole[r.role] = byRole[r.role] ?? { inner: '', count: 0 });
     b.count += 1;
     b.inner = inner;
