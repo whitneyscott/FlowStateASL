@@ -572,6 +572,46 @@ export class PromptService {
     return Number.isFinite(n) && n > 0 ? n : 2;
   }
 
+  /**
+   * getSubmissions only needs `totalDurationSecondsFromStoredPromptBanks` (deck card durations from merged embed/blob).
+   * Does not run full getConfig (assignment resolution, resource-link cross-checks, moduleId, deck normalization, etc.).
+   */
+  private async getFallbackDurationSecondsForSubmissions(
+    ctx: LtiContext,
+    assignmentId: string,
+  ): Promise<number | null> {
+    const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
+    if (!token) return null;
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
+    await this.ensureMigrated(ctx.courseId, domainOverride, token);
+    let blob = await this.readPromptManagerSettingsBlob(ctx.courseId, domainOverride, token);
+    let config = await this.loadPromptConfigForAssignment(
+      ctx.courseId,
+      assignmentId,
+      domainOverride,
+      token,
+      blob,
+    );
+    if (!config) {
+      const teacherTok = await this.courseSettings.getCourseStoredCanvasToken(ctx.courseId);
+      if (teacherTok?.trim() && teacherTok !== token) {
+        try {
+          blob = await this.readPromptManagerSettingsBlob(ctx.courseId, domainOverride, teacherTok);
+          config = await this.loadPromptConfigForAssignment(
+            ctx.courseId,
+            assignmentId,
+            domainOverride,
+            teacherTok,
+            blob,
+          );
+        } catch {
+          // non-fatal
+        }
+      }
+    }
+    return this.totalDurationSecondsFromStoredPromptBanks(config);
+  }
+
   private async ensureMigrated(
     courseId: string,
     domainOverride: string | undefined,
@@ -3901,8 +3941,7 @@ export class PromptService {
     }
     let promptsFallbackDuration: number | null = null;
     try {
-      const cfg = await this.getConfig(ctx);
-      promptsFallbackDuration = this.totalDurationSecondsFromStoredPromptBanks(cfg);
+      promptsFallbackDuration = await this.getFallbackDurationSecondsForSubmissions(ctx, assignmentId);
     } catch {
       promptsFallbackDuration = null;
     }
