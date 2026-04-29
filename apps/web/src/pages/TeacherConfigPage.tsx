@@ -2011,7 +2011,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                           </option>
                           {configuredAssignments.map((a) => (
                             <option key={a.id} value={a.id}>
-                              {a.name} ({a.submissionCount} submissions{assignmentActionMode === 'grade' ? `, ${a.ungradedCount} ungraded` : ''})
+                              {a.name}
                             </option>
                           ))}
                         </select>
