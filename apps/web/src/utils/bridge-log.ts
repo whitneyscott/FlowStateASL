@@ -43,6 +43,11 @@ const BRIDGE_LTI_LOG_SCOPES = [
   'webm-prompt',
   'sign-to-voice',
   'prompt-import-trace',
+  /**
+   * Teacher Prompt Manager: GET /api/prompt/config — assignment resolution, description embed parse,
+   * text prompt counts (Canvas HTML vs. blob). Shown in Bridge; server always records these lines.
+   */
+  'prompt-manager-config',
   /** Student TimerPage: raw GET /config + classification (prompt mode / phase). */
   'student-prompt-type',
   /** Student deck live-build + hydrate (TimerPage). */
@@ -83,7 +88,7 @@ function isBridgeClientDiagnosticsEnabled(): boolean {
  */
 /** Log + POST to /api/debug/lti-log even when `aslExpressAppMode` is not `developer` (student prompter, etc.). */
 function shouldAlwaysBridgeLog(tag: string): boolean {
-  return tag.startsWith('student-');
+  return tag.startsWith('student-') || tag === 'prompt-manager-config';
 }
 
 export function appendBridgeLog(tag: string, message: string, extra?: Record<string, unknown>): void {

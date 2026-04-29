@@ -665,18 +665,34 @@ export class PromptService {
     if (typeof desc === 'string' && desc.trim()) {
       const parsed = parseAssignmentDescriptionForPromptManager(desc);
       if (!parsed.config) {
-        appendLtiLog('student-prompt-type', 'readPromptConfig: non-empty description but no ASL config (check assignment id / Canvas HTML vs editor)', {
+        appendLtiLog('prompt-manager-config', 'readPromptConfigFromAssignmentDescription: no ASL embed config in description', {
           courseId,
           assignmentId,
           assignmentName,
           descLength: desc.length,
-          aslDataMarker: desc.includes('data-asl-express'),
+          hasDataAslExpress: desc.includes('data-asl-express'),
+          hasRoleConfig: /data-asl-express-role=["']config["']/i.test(desc),
+          hasRolePrompts: /data-asl-express-role=["']prompts["']/i.test(desc),
           repairNotes: parsed.repairNotes,
         });
         return null;
       }
+      appendLtiLog('prompt-manager-config', 'readPromptConfigFromAssignmentDescription: ASL embed OK', {
+        courseId,
+        assignmentId,
+        assignmentName,
+        descLength: desc.length,
+        textPromptsCount: Array.isArray(parsed.prompts) ? parsed.prompts.length : 0,
+        promptMode: parsed.config.promptMode ?? null,
+        repairNotes: parsed.repairNotes,
+      });
       return { ...parsed.config, instructions: parsed.visibleHtml };
     }
+    appendLtiLog('prompt-manager-config', 'readPromptConfigFromAssignmentDescription: empty description on Canvas', {
+      courseId,
+      assignmentId,
+      assignmentName,
+    });
     return null;
   }
 
@@ -761,6 +777,16 @@ export class PromptService {
     const descDeck = this.hasDeckShapedVideoPromptConfig(fromDesc?.videoPromptConfig);
     const blobDeck = this.hasDeckShapedVideoPromptConfig(fromBlob?.videoPromptConfig);
     const merged = this.mergeDescriptionAndBlobPromptConfig(fromDesc, fromBlob);
+    appendLtiLog('prompt-manager-config', 'loadPromptConfigForAssignment: merged', {
+      courseId,
+      assignmentId,
+      fromDescription: !!fromDesc,
+      fromSettingsBlob: !!fromBlob,
+      textPromptsCount: Array.isArray(merged?.prompts) ? merged!.prompts!.length : 0,
+      promptMode: merged?.promptMode ?? null,
+      descDeckShaped: descDeck,
+      blobDeckShaped: blobDeck,
+    });
     if (merged && blobDeck && !descDeck) {
       const assignmentName = await this.canvasAssignmentNameForLog(
         courseId,
@@ -1248,6 +1274,9 @@ export class PromptService {
     // Suppressed: noisy repeat — hasToken is obvious from success/failure of getConfig.
     // appendLtiLog('prompt-decks', 'getConfig: token check', { hasToken: !!token });
     if (!token) {
+      appendLtiLog('prompt-manager-config', 'getConfig: no Canvas token', {
+        courseId: ctx.courseId,
+      });
       return null;
     }
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
@@ -1320,6 +1349,11 @@ export class PromptService {
         assignmentId,
         resolvedSource: resolved.source,
       });
+      appendLtiLog('prompt-manager-config', 'getConfig: abort — assignment is Prompt Manager Settings (use a student-facing assignment id)', {
+        assignmentId,
+        resolvedSource: resolved.source,
+        assignmentIdFromCtx: (ctx.assignmentId ?? '').trim() || '(none)',
+      });
       return null;
     }
     const resourceLinkIdTrim = (ctx.resourceLinkId ?? '').trim();
@@ -1382,6 +1416,14 @@ export class PromptService {
         moduleId: (ctx.moduleId ?? '').trim() || '(none)',
         resourceLinkTitle: (ctx.resourceLinkTitle ?? '').trim() || '(none)',
         configCount: Object.keys(blob?.configs ?? {}).length,
+      });
+      appendLtiLog('prompt-manager-config', 'getConfig: no assignmentId — pass ?assignmentId= on /config (teacher) or ensure resource link / blob map', {
+        source: resolved.source,
+        courseId: ctx.courseId,
+        resourceLinkId: (ctx.resourceLinkId ?? '').trim() || '(none)',
+        moduleId: (ctx.moduleId ?? '').trim() || '(none)',
+        configCount: Object.keys(blob?.configs ?? {}).length,
+        configuredIdsLen: Array.isArray(blob?.configuredAssignmentIds) ? blob!.configuredAssignmentIds!.length : 0,
       });
       return null;
     }
@@ -1616,7 +1658,7 @@ export class PromptService {
         ctx,
         assignmentId,
         domainOverride,
-        token,
+        resolvedToken,
       );
       if (assignment) {
         const canvasRid = (assignment.linkedRubricId ?? '').trim();
@@ -1642,12 +1684,38 @@ export class PromptService {
         if (!hydrated.promptMode) {
           hydrated.promptMode = inferPromptModeFromStructuredConfig(hydrated);
         }
+        const textN = Array.isArray(hydrated.prompts) ? hydrated.prompts.length : 0;
+        appendLtiLog('prompt-manager-config', 'getConfig: success (Canvas hydration path)', {
+          assignmentId,
+          assignmentName: assignment.name ?? assignmentNameForLog,
+          resolvedSource: resolved.source,
+          promptMode: hydrated.promptMode ?? null,
+          textPromptsCount: textN,
+          instructionsLen: typeof hydrated.instructions === 'string' ? hydrated.instructions.length : 0,
+        });
         return { ...hydrated, resolvedAssignmentId: assignmentId };
       }
     } catch {
       /* non-fatal: fall through to blob-only config */
     }
 
+    if (config) {
+      const textN = Array.isArray(config.prompts) ? config.prompts.length : 0;
+      appendLtiLog('prompt-manager-config', 'getConfig: success (no extra Canvas hydration)', {
+        assignmentId,
+        assignmentName: assignmentNameForLog,
+        resolvedSource: resolved.source,
+        promptMode: config.promptMode ?? null,
+        textPromptsCount: textN,
+        instructionsLen: typeof config.instructions === 'string' ? config.instructions.length : 0,
+      });
+    } else {
+      appendLtiLog('prompt-manager-config', 'getConfig: null — no merged config (see readPrompt + load lines above; try course-stored teacher token for blob)', {
+        assignmentId,
+        assignmentName: assignmentNameForLog,
+        resolvedSource: resolved.source,
+      });
+    }
     return config ? { ...config, resolvedAssignmentId: assignmentId } : null;
   }
 

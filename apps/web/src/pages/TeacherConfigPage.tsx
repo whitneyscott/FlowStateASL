@@ -3,6 +3,7 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import type { LtiContext } from '@aslexpress/shared-types';
 import { useDebug } from '../contexts/DebugContext';
 import { resolveLtiContextValue } from '../utils/lti-context';
+import { appendBridgeLog } from '../utils/bridge-log';
 import * as promptApi from '../api/prompt.api';
 import * as flashcardTeacherApi from '../api/flashcard-teacher.api';
 import type { PlaylistHierarchyRow } from '../api/flashcard-teacher.api';
@@ -261,6 +262,13 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       setLastFunction('GET /api/prompt/config');
       const data = await promptApi.getPromptConfig(id);
       setLastApiResult('GET /api/prompt/config', 200, true);
+      void appendBridgeLog('prompt-manager-config', 'TeacherConfigPage: GET /config client', {
+        requestAssignmentId: id,
+        hasBody: data != null,
+        textPromptsCount: data?.prompts?.length ?? 0,
+        promptMode: data?.promptMode,
+        resolvedAssignmentId: data?.resolvedAssignmentId,
+      });
       setConfig(data ?? null);
       if (data) {
         setMinutes(data.minutes ?? 5);

@@ -134,6 +134,16 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
       newLines.push(...pit);
     }
     newLines.push('');
+    newLines.push('--- Teacher Prompt Manager / GET /config (tag prompt-manager-config) ---');
+    const pmc = ltiLog.filter((line) => line.includes('] [prompt-manager-config] '));
+    if (pmc.length === 0) {
+      newLines.push(
+        '(no prompt-manager-config yet — open Prompt Manager /config, pick an assignment, or look for readPromptConfig + getConfig lines on the server after GET /config)',
+      );
+    } else {
+      newLines.push(...pmc);
+    }
+    newLines.push('');
     newLines.push('--- Student prompt mode / Timer (tag student-prompt-type) ---');
     const spt = ltiLog.filter((line) => line.includes('] [student-prompt-type] '));
     if (spt.length === 0) {
