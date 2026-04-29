@@ -1037,6 +1037,7 @@ export class PromptController {
     @Req() req: Request,
     @Res() res: Response,
     @Query('omitCanvasImport') omitCanvasImport?: string,
+    @Query('omitCounts') omitCounts?: string,
   ) {
     appendLtiLog('viewer', 'GET configured-assignments');
     const ctx = this.getCtx(req);
@@ -1045,7 +1046,12 @@ export class PromptController {
         omitCanvasImport === '1' ||
         omitCanvasImport === 'true' ||
         String(omitCanvasImport ?? '').toLowerCase() === 'yes';
-      const payload = await this.prompt.getConfiguredAssignments(ctx, { omitCanvasImport: omit });
+      const omitCountsFlag =
+        omitCounts === '1' || omitCounts === 'true' || String(omitCounts ?? '').toLowerCase() === 'yes';
+      const payload = await this.prompt.getConfiguredAssignments(ctx, {
+        omitCanvasImport: omit,
+        omitCounts: omitCountsFlag,
+      });
       return res.json(payload);
     } catch (err) {
       if (err instanceof CanvasTokenExpiredError) {

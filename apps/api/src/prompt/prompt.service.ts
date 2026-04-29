@@ -4645,12 +4645,13 @@ export class PromptService {
   /** Teacher only. One Canvas assignment index fetch; configured rows + optional import lists for the client. */
   async getConfiguredAssignments(
     ctx: LtiContext,
-    options?: { omitCanvasImport?: boolean },
+    options?: { omitCanvasImport?: boolean; omitCounts?: boolean },
   ): Promise<{
     configured: Array<{ id: string; name: string; submissionCount: number; ungradedCount: number }>;
     canvasImport?: { allAssignments: CanvasAssignmentBrief[]; settingsTitleCandidates: CanvasAssignmentBrief[] };
   }> {
     const omitCanvasImport = options?.omitCanvasImport === true;
+    const omitCounts = options?.omitCounts === true;
     const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
     if (!token) {
       return omitCanvasImport
@@ -4686,13 +4687,6 @@ export class PromptService {
         error: String(err),
       });
     }
-    type SubRow = {
-      user_id?: number;
-      attachment?: { url?: string; download_url?: string };
-      attachments?: Array<{ url?: string; download_url?: string }>;
-      versioned_attachments?: Array<Array<{ url?: string; download_url?: string }>>;
-      workflow_state?: string;
-    };
     const caLimit = this.getConfiguredAssignmentsMaxConcurrent();
     const configuredRows = await mapWithConcurrency(assignmentIds, caLimit, async (aid) => {
       let assignmentExists = false;
@@ -4706,15 +4700,27 @@ export class PromptService {
         assignmentNameFromCanvas = assign?.name;
       }
       if (!assignmentExists) return null;
+      const name = assignmentNameFromCanvas ?? configs[aid]?.assignmentName ?? `Assignment ${aid}`;
+      if (omitCounts) {
+        return { id: aid, name, submissionCount: 0, ungradedCount: 0 };
+      }
+      type SubRow = {
+        user_id?: number;
+        attachment?: { url?: string; download_url?: string };
+        attachments?: Array<{ url?: string; download_url?: string }>;
+        versioned_attachments?: Array<Array<{ url?: string; download_url?: string }>>;
+        workflow_state?: string;
+      };
       let list: SubRow[] = [];
       try {
         list = await this.canvas.listSubmissions(ctx.courseId, aid, domainOverride, token);
       } catch {
         /* assignment exists but submissions may fail; use empty list */
       }
-      const name = assignmentNameFromCanvas ?? configs[aid]?.assignmentName ?? `Assignment ${aid}`;
       const withFiles = list.filter(
-        (s) => submissionHasFile(s) || !!this.deepLinkFileStore.getSubmissionToken(ctx.courseId, aid, String(s.user_id ?? '')),
+        (s) =>
+          submissionHasFile(s) ||
+          !!this.deepLinkFileStore.getSubmissionToken(ctx.courseId, aid, String(s.user_id ?? '')),
       );
       const submissionCount = withFiles.length;
       const ungradedCount = withFiles.filter((s) => s.workflow_state !== 'graded').length;
@@ -4727,6 +4733,7 @@ export class PromptService {
     appendLtiLog('viewer', 'getConfiguredAssignments', {
       count: result.length,
       assignments: result.map((a) => ({ id: a.id, name: a.name, submissionCount: a.submissionCount })),
+      omitCounts,
     });
     const canvasImport = omitCanvasImport ? undefined : buildCanvasImportListsFromAssignments(fullCourseList);
     return canvasImport ? { configured: result, canvasImport } : { configured: result };

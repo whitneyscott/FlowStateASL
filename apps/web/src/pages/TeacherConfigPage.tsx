@@ -412,7 +412,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       setLastFunction('GET /api/prompt/configured-assignments');
       const res = await measureUxAsync(
         'PromptSettings: load configured assignments',
-        () => promptApi.getConfiguredAssignments({ omitCanvasImport: true }),
+        () => promptApi.getConfiguredAssignments({ omitCanvasImport: true, omitCounts: true }),
         { page: 'TeacherConfigPage' },
       );
       if (gen === assignmentsLoadGenRef.current) {
