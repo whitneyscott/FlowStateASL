@@ -213,6 +213,9 @@ export class PromptService {
   private readonly assignmentImportListCache = new Map<string, { list: CanvasAssignmentBrief[]; expiresAt: number }>();
   private readonly assignmentImportListInflight = new Map<string, Promise<CanvasAssignmentBrief[]>>();
   private static readonly ASSIGNMENT_IMPORT_LIST_TTL_MS = 45_000;
+  /** Best-effort cache for assignment name lookups when skipping full course index. */
+  private readonly assignmentNameByIdCache = new Map<string, { names: Map<string, string>; expiresAt: number }>();
+  private static readonly ASSIGNMENT_NAME_TTL_MS = 5 * 60_000;
   private static readonly COURSE_PROMPT_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
   private static readonly COURSE_PROMPT_IMAGE_TYPES = new Set([
     'image/jpeg',
@@ -247,6 +250,38 @@ export class PromptService {
 
   private assignmentImportListCacheKey(courseId: string, token: string): string {
     return `${courseId}\u0000${token}`;
+  }
+
+  private assignmentNameCacheKey(courseId: string, token: string): string {
+    return `${courseId}\u0000${token}`;
+  }
+
+  private async resolveAssignmentNamesByIdCached(
+    courseId: string,
+    assignmentIds: string[],
+    domainOverride: string | undefined,
+    token: string,
+  ): Promise<Map<string, string>> {
+    const key = this.assignmentNameCacheKey(courseId, token);
+    const now = Date.now();
+    const cached = this.assignmentNameByIdCache.get(key);
+    const names = cached && cached.expiresAt > now ? new Map(cached.names) : new Map<string, string>();
+    const missing = assignmentIds
+      .map((id) => String(id ?? '').trim())
+      .filter((id) => id && !names.has(id));
+    if (missing.length === 0) return names;
+    const concurrency = 6;
+    await mapWithConcurrency(missing, concurrency, async (aid) => {
+      try {
+        const a = await this.canvas.getAssignment(courseId, aid, domainOverride, token);
+        const n = (a?.name ?? '').trim();
+        if (n) names.set(aid, n);
+      } catch {
+        /* best-effort only */
+      }
+    });
+    this.assignmentNameByIdCache.set(key, { names, expiresAt: now + PromptService.ASSIGNMENT_NAME_TTL_MS });
+    return names;
   }
 
   private async listAssignmentsForPromptImportCached(
@@ -4676,8 +4711,17 @@ export class PromptService {
      * submissions reads. Uses stored assignmentName (when present) or a stable fallback label.
      */
     if (omitCanvasIndex) {
+      const namesById = await this.resolveAssignmentNamesByIdCached(
+        ctx.courseId,
+        assignmentIds,
+        domainOverride,
+        token,
+      );
       for (const aid of assignmentIds) {
-        const name = (configs[aid]?.assignmentName ?? '').trim() || `Assignment ${aid}`;
+        const name =
+          (namesById.get(aid) ?? '').trim() ||
+          (configs[aid]?.assignmentName ?? '').trim() ||
+          `Assignment ${aid}`;
         result.push({ id: aid, name, submissionCount: 0, ungradedCount: 0 });
       }
       result.sort((a, b) => a.name.localeCompare(b.name));
