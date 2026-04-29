@@ -1,5 +1,6 @@
 import { appendLtiLog } from '../common/last-error.store';
 import type { CanvasService } from '../canvas/canvas.service';
+import { promptManagerBlobRequestCache } from './prompt-blob-read-request.context';
 import type { PromptConfigJson } from './dto/prompt-config.dto';
 import { mergeAssignmentDescriptionWithEmbeds, parseAssignmentDescriptionForPromptManager } from './assignment-description-embed.util';
 import { repairPromptManagerSettingsBlobFromUnknown } from './prompt-settings-blob-repair.util';
@@ -104,7 +105,7 @@ export async function ensurePromptManagerSettingsAssignmentId(
   );
 }
 
-export async function readPromptManagerSettingsBlobFromCanvas(
+async function readPromptManagerSettingsBlobFromCanvasUnscoped(
   canvas: CanvasService,
   courseId: string,
   domainOverride: string | undefined,
@@ -187,6 +188,28 @@ export async function readPromptManagerSettingsBlobFromCanvas(
     if (annBlob) return annBlob;
   }
   return assignmentBlob;
+}
+
+/**
+ * Per HTTP request, same (courseId, token) returns one shared in-flight/resolved promise (no duplicate Canvas list walks).
+ * Outside a request (scripts/tests), no cache.
+ */
+export async function readPromptManagerSettingsBlobFromCanvas(
+  canvas: CanvasService,
+  courseId: string,
+  domainOverride: string | undefined,
+  token: string,
+): Promise<PromptManagerSettingsBlob | null> {
+  const key = `${courseId}\0${token}`;
+  const store = promptManagerBlobRequestCache.getStore();
+  if (store) {
+    const hit = store.get(key);
+    if (hit) return hit;
+    const p = readPromptManagerSettingsBlobFromCanvasUnscoped(canvas, courseId, domainOverride, token);
+    store.set(key, p);
+    return p;
+  }
+  return readPromptManagerSettingsBlobFromCanvasUnscoped(canvas, courseId, domainOverride, token);
 }
 
 /**

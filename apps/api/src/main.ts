@@ -32,6 +32,7 @@ import { AppModule } from './app.module';
 import { DebugExceptionFilter } from './common/debug-exception.filter';
 import { renderDebugPage } from './common/debug-page';
 import { getBuildMetadata } from './common/build-metadata';
+import { promptManagerBlobRequestCache } from './prompt/prompt-blob-read-request.context';
 
 async function bootstrap() {
   const expressApp = express();
@@ -39,6 +40,10 @@ async function bootstrap() {
   const port = process.env.PORT ?? 3000;
 
   expressApp.set('trust proxy', 1);
+  expressApp.use((_req, _res, next) => {
+    const m = new Map();
+    promptManagerBlobRequestCache.run(m, next);
+  });
 
   if (isProduction) {
     const webRoot = join(__dirname, '..', '..', 'web');
