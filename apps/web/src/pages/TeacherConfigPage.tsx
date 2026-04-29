@@ -77,6 +77,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const [error, setError] = useState<string | null>(null);
   const [minutes, setMinutes] = useState(5);
   const [prompts, setPrompts] = useState<string[]>([]);
+  /** Bumped when GET /config data is applied so react-quill remounts and shows async-loaded HTML. */
+  const [promptRteRemountKey, setPromptRteRemountKey] = useState(0);
   const [accessCode, setAccessCode] = useState('');
   const [moduleId, setModuleId] = useState<string>('');
   const [createModuleName, setCreateModuleName] = useState('');
@@ -287,6 +289,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         setInstructions(data.instructions ?? '');
         setSignToVoiceRequired(data.signToVoiceRequired === true);
         setPromptMode(data.promptMode ?? 'text');
+        setPromptRteRemountKey((k) => k + 1);
         if (data.promptMode === 'youtube' && data.youtubePromptConfig?.videoId) {
           const vid = data.youtubePromptConfig.videoId;
           const yc = data.youtubePromptConfig;
@@ -1553,6 +1556,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                           value={instructions}
                           onChange={setInstructions}
                           placeholder="Instructions for students…"
+                          remountKey={`ins-${(assignmentId ?? 'n')}-${promptRteRemountKey}`}
                         />
                       </div>
                       {rubricSelector}
@@ -1615,11 +1619,12 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                           recording.
                         </p>
                         {prompts.map((p, i) => (
-                          <div key={i} className="prompter-prompt-item-row">
+                          <div key={`${(assignmentId ?? 'a')}-${i}-${promptRteRemountKey}`} className="prompter-prompt-item-row">
                             <TeacherPromptRte
                               value={p}
                               onChange={(html) => updatePrompt(i, html)}
                               placeholder="Prompt text…"
+                              remountKey={`p-${(assignmentId ?? 'a')}-${i}-${promptRteRemountKey}`}
                             />
                             <button type="button" onClick={() => removePrompt(i)} className="prompter-btn-remove">
                               Remove
