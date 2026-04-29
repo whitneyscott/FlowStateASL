@@ -6141,12 +6141,13 @@ export class PromptService {
       );
     }
     const name = (file.originalname ?? 'image').trim() || 'image';
+    const rootFolderId = await this.canvas.getCourseRootFolderId(ctx.courseId, domainOverride, token);
     const { uploadUrl, uploadParams } = await this.canvas.initiateCourseFileUpload(
       ctx.courseId,
       name,
       file.buffer.length,
       ct,
-      { domainOverride, tokenOverride: token },
+      { domainOverride, tokenOverride: token, parentFolderId: rootFolderId },
     );
     const { fileId } = await this.canvas.uploadFileToCanvas(uploadUrl, uploadParams, file.buffer, {
       tokenOverride: token,
@@ -6190,6 +6191,12 @@ export class PromptService {
     const meta = await this.canvas.getCanvasFileApiRecord(fileId, domainOverride, token);
     const ctxKind = (meta.context_type ?? '').toLowerCase();
     if (ctxKind !== 'course' || String(meta.context_id ?? '') !== String(ctx.courseId ?? '').trim()) {
+      appendLtiLog('prompt-image-debug', 'streamCoursePromptImage context mismatch', {
+        fileId,
+        requestedCourseId: ctx.courseId,
+        fileContextType: meta.context_type ?? '(none)',
+        fileContextId: meta.context_id ?? '(none)',
+      });
       throw new ForbiddenException('File is not in this course');
     }
     const mime = (meta.content_type ?? '').trim().toLowerCase();
