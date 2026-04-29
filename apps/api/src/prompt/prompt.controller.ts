@@ -190,6 +190,25 @@ export class PromptController {
     }
   }
 
+  @Get('course-files/browse')
+  @UseGuards(TeacherRoleGuard)
+  async browseCourseFiles(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Query('folderId') folderId?: string,
+  ) {
+    const ctx = this.getCtx(req);
+    try {
+      const out = await this.prompt.browseCourseFilesFolder(ctx, folderId);
+      return res.json(out);
+    } catch (err) {
+      if (err instanceof CanvasTokenExpiredError) {
+        return res.status(401).json(getOAuth401Body(req));
+      }
+      throw err;
+    }
+  }
+
   @Get('course-files')
   @UseGuards(TeacherRoleGuard)
   async listCourseImageFiles(

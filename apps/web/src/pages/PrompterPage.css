@@ -1012,6 +1012,159 @@
   max-width: min(560px, 96vw);
 }
 
+.prompter-modal-file-explorer {
+  max-width: min(920px, 98vw);
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.prompter-file-explorer-intro {
+  margin-bottom: 12px !important;
+  font-size: 0.95rem !important;
+}
+
+.prompter-file-explorer-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.prompter-file-explorer-body {
+  min-height: 280px;
+}
+
+.prompter-file-explorer-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #e5e5e5;
+}
+
+.prompter-file-explorer-toolbar-btn {
+  flex-shrink: 0;
+}
+
+.prompter-file-explorer-crumbs {
+  flex: 1;
+  min-width: 120px;
+  font-size: 0.9rem;
+  color: #333;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.prompter-file-explorer-split {
+  display: grid;
+  grid-template-columns: minmax(180px, 34%) 1fr;
+  gap: 16px;
+  min-height: 220px;
+}
+
+@media (max-width: 640px) {
+  .prompter-file-explorer-split {
+    grid-template-columns: 1fr;
+  }
+}
+
+.prompter-file-explorer-pane {
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  background: #fafafa;
+  min-height: 200px;
+  max-height: 340px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.prompter-file-explorer-pane-title {
+  padding: 8px 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #555;
+  background: #f0f0f0;
+  border-bottom: 1px solid #ddd;
+}
+
+.prompter-file-explorer-count {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+  color: #666;
+}
+
+.prompter-file-explorer-folder-list,
+.prompter-file-explorer-file-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.prompter-file-explorer-empty {
+  margin: 12px !important;
+  font-size: 0.9rem !important;
+}
+
+.prompter-file-explorer-folder-row,
+.prompter-file-explorer-file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  margin: 0 0 4px 0;
+  border: none;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 0.95rem;
+  color: #222;
+  border: 1px solid transparent;
+}
+
+.prompter-file-explorer-folder-row:hover,
+.prompter-file-explorer-file-row:hover {
+  background: #eef6ff;
+  border-color: #c5d9f0;
+}
+
+.prompter-file-explorer-folder-icon,
+.prompter-file-explorer-file-icon {
+  flex-shrink: 0;
+  width: 1.25rem;
+  text-align: center;
+}
+
+.prompter-file-explorer-folder-name,
+.prompter-file-explorer-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prompter-file-explorer-file-meta {
+  flex-shrink: 0;
+  font-size: 0.8rem;
+  color: #666;
+  max-width: 42%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .prompter-modal p {
   margin: 0 0 20px 0;
   font-size: 16px;

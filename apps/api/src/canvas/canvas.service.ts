@@ -380,6 +380,70 @@ export class CanvasService {
     return id;
   }
 
+  /** GET /api/v1/folders/:id — name, parent, etc. */
+  async getFolderMetadata(
+    folderId: string,
+    domainOverride?: string,
+    tokenOverride?: string | null,
+  ): Promise<{ id: string; name: string; full_name?: string; parent_folder_id: string | null }> {
+    const base = this.getBaseUrl(domainOverride);
+    const url = `${base}/api/v1/folders/${encodeURIComponent(folderId)}`;
+    const res = await this.canvasFetch(url, {
+      headers: this.getAuthHeaders(tokenOverride),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Canvas get folder failed: ${res.status} ${text.slice(0, 300)}`);
+    }
+    const data = (await res.json()) as {
+      id?: number | string;
+      name?: string;
+      full_name?: string;
+      parent_folder_id?: number | string | null;
+    };
+    const pid = data.parent_folder_id;
+    const parentStr =
+      pid != null && String(pid).trim() !== '' && Number(pid) !== 0 ? String(pid) : null;
+    return {
+      id: data.id != null ? String(data.id) : String(folderId),
+      name: String(data.name ?? data.full_name ?? 'Folder'),
+      full_name: data.full_name,
+      parent_folder_id: parentStr,
+    };
+  }
+
+  /** Direct child folders (Canvas file explorer). */
+  async listChildFoldersPage(
+    parentFolderId: string,
+    options?: {
+      domainOverride?: string;
+      tokenOverride?: string | null;
+      page?: number;
+      perPage?: number;
+    },
+  ): Promise<Array<{ id: string; name: string }>> {
+    const base = this.getBaseUrl(options?.domainOverride);
+    const page = Math.max(1, options?.page ?? 1);
+    const perPage = Math.min(100, Math.max(1, options?.perPage ?? 100));
+    const q = new URLSearchParams({
+      page: String(page),
+      per_page: String(perPage),
+    });
+    const url = `${base}/api/v1/folders/${encodeURIComponent(parentFolderId)}/folders?${q}`;
+    const res = await this.canvasFetch(url, {
+      headers: this.getAuthHeaders(options?.tokenOverride),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Canvas list child folders failed: ${res.status} ${text.slice(0, 300)}`);
+    }
+    const rows = (await res.json()) as Array<{ id?: number | string; name?: string }>;
+    return (Array.isArray(rows) ? rows : []).map((r) => ({
+      id: r.id != null ? String(r.id) : '',
+      name: String(r.name ?? 'Folder'),
+    }));
+  }
+
   async listFolderFilesPage(
     folderId: string,
     options?: {
@@ -428,6 +492,69 @@ export class CanvasService {
     }));
   }
 
+  /** Paginate until empty. No content-type filter (Canvas filter is unreliable for some tenants). */
+  async listAllFilesInFolder(
+    folderId: string,
+    options?: {
+      domainOverride?: string;
+      tokenOverride?: string | null;
+      maxPages?: number;
+      perPage?: number;
+    },
+  ): Promise<
+    Array<{
+      id: string;
+      display_name: string;
+      content_type: string;
+      size: number;
+      url?: string;
+    }>
+  > {
+    const maxPages = Math.min(100, Math.max(1, options?.maxPages ?? 40));
+    const perPage = Math.min(100, Math.max(1, options?.perPage ?? 100));
+    const out: Array<{
+      id: string;
+      display_name: string;
+      content_type: string;
+      size: number;
+      url?: string;
+    }> = [];
+    for (let page = 1; page <= maxPages; page++) {
+      const batch = await this.listFolderFilesPage(folderId, {
+        domainOverride: options?.domainOverride,
+        tokenOverride: options?.tokenOverride,
+        page,
+        perPage,
+      });
+      out.push(...batch);
+      if (batch.length < perPage) break;
+    }
+    return out;
+  }
+
+  async listAllChildFolders(
+    parentFolderId: string,
+    options?: {
+      domainOverride?: string;
+      tokenOverride?: string | null;
+      maxPages?: number;
+    },
+  ): Promise<Array<{ id: string; name: string }>> {
+    const maxPages = Math.min(50, Math.max(1, options?.maxPages ?? 20));
+    const out: Array<{ id: string; name: string }> = [];
+    for (let page = 1; page <= maxPages; page++) {
+      const batch = await this.listChildFoldersPage(parentFolderId, {
+        domainOverride: options?.domainOverride,
+        tokenOverride: options?.tokenOverride,
+        page,
+        perPage: 100,
+      });
+      out.push(...batch.filter((f) => f.id));
+      if (batch.length < 100) break;
+    }
+    return out;
+  }
+
   /**
    * List files in a course (all folders), with optional content-type filter — correct scope for “this course’s Files”.
    * Prefer this over folders/root + listFolderFiles for pickers.
@@ -440,8 +567,8 @@ export class CanvasService {
       tokenOverride?: string | null;
       page?: number;
       perPage?: number;
-      /** Canvas accepts type or type/subtype, e.g. `image` matches image/* */
-      contentTypes?: string[];
+      /** If set, append content_types[] to query; omit or empty to list all files (filter client-side). */
+      contentTypes?: string[] | null;
     },
   ): Promise<
     Array<{
@@ -461,9 +588,11 @@ export class CanvasService {
       sort: 'name',
       order: 'asc',
     });
-    const cts = options?.contentTypes?.length ? options.contentTypes : ['image'];
-    for (const ct of cts) {
-      q.append('content_types[]', ct);
+    const cts = options?.contentTypes;
+    if (cts && cts.length > 0) {
+      for (const ct of cts) {
+        q.append('content_types[]', ct);
+      }
     }
     const url = `${base}/api/v1/courses/${encodeURIComponent(courseId)}/files?${q}`;
     const res = await this.canvasFetch(url, {

@@ -26,6 +26,8 @@ export const DEFAULT_CANVAS_OAUTH_SCOPES = [
   'url:POST|/api/v1/courses/:course_id/files',
   'url:GET|/api/v1/courses/:course_id/files',
   'url:GET|/api/v1/courses/:course_id/folders/root',
+  'url:GET|/api/v1/folders/:folder_id',
+  'url:GET|/api/v1/folders/:folder_id/folders',
   'url:GET|/api/v1/folders/:folder_id/files',
   'url:GET|/api/v1/files/:id',
   'url:GET|/api/v1/courses/:course_id/assignments/:assignment_id/submissions',

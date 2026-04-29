@@ -216,6 +216,16 @@ export class PromptService {
     'image/webp',
   ]);
 
+  /** Canvas sometimes omits image mime; fall back on extension like the Files UI. */
+  private static isLikelyImagePickerFile(f: { display_name: string; content_type: string }): boolean {
+    const ct = (f.content_type ?? '').trim().toLowerCase();
+    if (ct.startsWith('image/')) return true;
+    if (ct === '' || ct === 'application/octet-stream' || ct === 'binary/octet-stream') {
+      return /\.(png|jpe?g|gif|webp|svg|bmp|heic|avif)$/i.test(f.display_name ?? '');
+    }
+    return false;
+  }
+
   constructor(
     @Inject(ASSESSMENT_REPOSITORY) private readonly assessmentRepo: IAssessmentRepository,
     @Inject(PROMPT_DATA_REPOSITORY) private readonly promptDataRepo: IPromptDataRepository,
@@ -6022,11 +6032,11 @@ export class PromptService {
       domainOverride,
       tokenOverride: token,
       page,
-      perPage: 40,
-      contentTypes: ['image'],
+      perPage: 100,
+      contentTypes: null,
     });
     const files = raw
-      .filter((f) => (f.content_type ?? '').toLowerCase().startsWith('image/'))
+      .filter((f) => PromptService.isLikelyImagePickerFile(f))
       .map((f) => ({
         id: f.id,
         display_name: f.display_name,
@@ -6034,6 +6044,58 @@ export class PromptService {
         size: f.size,
       }));
     return { courseId: ctx.courseId, page, files };
+  }
+
+  /** Teacher: folder-aware browse for Canvas Files (subfolders + all files, images filtered in app). */
+  async browseCourseFilesFolder(
+    ctx: LtiContext,
+    folderId: string | undefined,
+  ): Promise<{
+    courseId: string;
+    folder: { id: string; name: string; parentFolderId: string | null };
+    subfolders: Array<{ id: string; name: string }>;
+    imageFiles: Array<{ id: string; display_name: string; content_type: string; size: number }>;
+    totalFilesInFolder: number;
+  }> {
+    const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
+    if (!token) {
+      throw new ForbiddenException('Canvas OAuth token required');
+    }
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
+    const rootId = await this.canvas.getCourseRootFolderId(ctx.courseId, domainOverride, token);
+    const fid = (folderId ?? '').trim() || rootId;
+    const meta = await this.canvas.getFolderMetadata(fid, domainOverride, token);
+    const atCourseRoot = fid === rootId;
+    const parentFolderId = atCourseRoot ? null : meta.parent_folder_id;
+    const subfolders = await this.canvas.listAllChildFolders(fid, {
+      domainOverride,
+      tokenOverride: token,
+    });
+    const allFiles = await this.canvas.listAllFilesInFolder(fid, {
+      domainOverride,
+      tokenOverride: token,
+      maxPages: 50,
+      perPage: 100,
+    });
+    const imageFiles = allFiles
+      .filter((f) => PromptService.isLikelyImagePickerFile(f))
+      .map((f) => ({
+        id: f.id,
+        display_name: f.display_name,
+        content_type: f.content_type,
+        size: f.size,
+      }));
+    return {
+      courseId: ctx.courseId,
+      folder: {
+        id: meta.id,
+        name: (meta.full_name ?? meta.name).trim() || 'Files',
+        parentFolderId,
+      },
+      subfolders: [...subfolders].filter((s) => s.id).sort((a, b) => a.name.localeCompare(b.name)),
+      imageFiles,
+      totalFilesInFolder: allFiles.length,
+    };
   }
 
   /** Teacher: upload an image into course Files; returns app-relative path for `<img src>`. */

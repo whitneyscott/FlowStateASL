@@ -811,6 +811,18 @@ export async function getCourseFilesRootFolder(): Promise<{ folderId: string }> 
   return fetchJsonWithOAuthRedirect(`${base}/course-files/root-folder`, { method: 'GET' });
 }
 
+export async function browseCourseFiles(folderId?: string | null): Promise<{
+  courseId: string;
+  folder: { id: string; name: string; parentFolderId: string | null };
+  subfolders: Array<{ id: string; name: string }>;
+  imageFiles: Array<{ id: string; display_name: string; content_type: string; size: number }>;
+  totalFilesInFolder: number;
+}> {
+  const q = new URLSearchParams();
+  if (folderId?.trim()) q.set('folderId', folderId.trim());
+  return fetchJsonWithOAuthRedirect(`${base}/course-files/browse?${q}`, { method: 'GET' });
+}
+
 export async function listCourseImageFiles(
   page = 1,
 ): Promise<{
