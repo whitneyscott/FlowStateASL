@@ -789,13 +789,22 @@ export async function applyTrueWayTemplates(): Promise<{ updated: number; matche
   });
 }
 
-export function coursePromptImageViewUrl(viewPath: string): string {
-  const p = (viewPath ?? '').trim();
+/**
+ * Root-relative URL for prompt `<img src>` and Quill embeds.
+ * Never bake in a deployment host (e.g. onrender.com) — saved HTML must work on any origin and match Canvas file id in the path.
+ */
+export function coursePromptImageViewUrl(viewPathOrUrl: string): string {
+  const p = (viewPathOrUrl ?? '').trim();
   if (!p) return p;
-  if (/^https?:\/\//i.test(p)) return p;
-  const origin = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : '';
-  if (!origin) return p.startsWith('/') ? p : `/${p}`;
-  return `${origin}${p.startsWith('/') ? '' : '/'}${p}`;
+  if (/^https?:\/\//i.test(p)) {
+    try {
+      const u = new URL(p);
+      return `${u.pathname}${u.search}${u.hash}`;
+    } catch {
+      /* fall through */
+    }
+  }
+  return p.startsWith('/') ? p : `/${p}`;
 }
 
 export async function getCourseFilesRootFolder(): Promise<{ folderId: string }> {

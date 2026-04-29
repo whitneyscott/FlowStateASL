@@ -4,7 +4,7 @@ import { coursePromptImageViewUrl, listCourseImageFiles, uploadCoursePromptImage
 type Props = {
   open: boolean;
   onClose: () => void;
-  /** Absolute or root-relative URL suitable for Quill `insertEmbed` / `<img src>`. */
+  /** Root-relative `/api/prompt/course-files/:id/view` URL for Quill / saved HTML (host-agnostic). */
   onInserted: (imageUrl: string) => void;
 };
 

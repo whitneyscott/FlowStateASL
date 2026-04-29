@@ -16,6 +16,7 @@ import { YoutubeIframePlayer, type YoutubeIframePlayerHandle } from '../componen
 import { YoutubeClipRangeEditor } from '../components/YoutubeClipRangeEditor';
 import { TeacherPromptRte } from '../components/TeacherPromptRte';
 import { TeacherAuthoredHtmlBlock } from '../components/TeacherAuthoredHtmlBlock';
+import { sanitizeTeacherFeedbackHtml } from '../utils/teacher-feedback-html';
 import '../components/TeacherSettings.css';
 import './PrompterPage.css';
 
@@ -652,7 +653,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       await promptApi.putPromptConfig(
         {
           minutes,
-          prompts,
+          prompts:
+            promptMode === 'text' ? prompts.map((p) => sanitizeTeacherFeedbackHtml(p)) : prompts,
           accessCode,
           assignmentName: assignmentName.trim() || undefined,
           moduleId: moduleId.trim(),

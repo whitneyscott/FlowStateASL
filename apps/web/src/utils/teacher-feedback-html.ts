@@ -13,6 +13,21 @@ export function isAllowedPromptImageSrc(src: string): boolean {
   return false;
 }
 
+/** Strip host from saved absolute proxy URLs so embeds stay portable. */
+export function normalizePromptImageSrcForStorage(raw: string): string {
+  const t = (raw ?? '').trim();
+  if (!t) return '';
+  if (/^https?:\/\//i.test(t)) {
+    try {
+      const parsed = new URL(t);
+      return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    } catch {
+      return t.startsWith('/') ? t : `/${t}`;
+    }
+  }
+  return t.startsWith('/') ? t : `/${t}`;
+}
+
 /** Strip common XSS vectors from teacher-authored feedback HTML before DOM insertion or Canvas POST. */
 export function sanitizeTeacherFeedbackHtml(html: string): string {
   let s = (html ?? '').trim();
@@ -22,11 +37,14 @@ export function sanitizeTeacherFeedbackHtml(html: string): string {
   s = s.replace(/\son\w+\s*=\s*(["'])[\s\S]*?\1/gi, '');
   s = s.replace(/\son\w+\s*=\s*[^\s>]+/gi, '');
   s = s.replace(/javascript:/gi, '');
-  s = s.replace(/<img\b[^>]*>/gi, (tag) => {
-    const m = tag.match(/\bsrc\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))/i);
+  s = s.replace(/<img\b([^>]*)>/gi, (full, attrs) => {
+    const m = attrs.match(/\bsrc\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))/i);
     const rawSrc = (m?.[2] ?? m?.[3] ?? m?.[4] ?? '').trim();
-    if (isAllowedPromptImageSrc(rawSrc)) return tag;
-    return '';
+    const normalized = normalizePromptImageSrcForStorage(rawSrc);
+    if (!isAllowedPromptImageSrc(normalized)) return '';
+    const esc = normalized.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+    const newAttrs = attrs.replace(/\bsrc\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/i, `src="${esc}"`);
+    return `<img${newAttrs}>`;
   });
   return s;
 }
