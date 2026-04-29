@@ -679,6 +679,13 @@ export class PromptService {
       else if (blobHasYt && fromBlob.promptMode) out.promptMode = fromBlob.promptMode;
     }
 
+    // Text prompts are stored in the assignment description (`data-asl-express-role="prompts"`).
+    // The course Prompt Manager blob may still have stale or empty `prompts` after thin-index migration;
+    // prefer the assignment embed whenever it supplies a prompts array for text mode.
+    if (fromDesc.promptMode === 'text' && Array.isArray(fromDesc.prompts)) {
+      out.prompts = fromDesc.prompts;
+    }
+
     return out;
   }
 

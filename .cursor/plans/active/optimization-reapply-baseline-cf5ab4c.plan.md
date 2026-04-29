@@ -14,6 +14,13 @@ Render was rewound to `cf5ab4c` to avoid instability. A **later** line of work (
 
 **Policy for this project:** re-apply **(1) performance/reliability first** and ship/collect feedback. Only then, **very carefully**, re-apply **(2) image insertion and related API paths**, because images increase HTML/JSON surface area and duplicate-call risk.
 
+## Text prompts: assignment embed vs blob (fixed on baseline)
+
+If **text** prompts fail to show but the assignment description contains valid `config` + `prompts` hidden divs:
+
+1. **Balanced `</div>` matching** when scanning embeds — long prompt HTML must not end the region at the first `</div>` inside the JSON (restore `8e92b0a` / current `assignment-description-embed.util.ts` helpers `findMatchingEmbedCloseDiv` + `findAslEmbedOpenDivStart`).
+2. **`mergeDescriptionAndBlobPromptConfig`** — for `promptMode === 'text'`, prefer `fromDesc.prompts` when `Array.isArray(fromDesc.prompts)` so a stale `configs[id].prompts` in the course blob does not override per-assignment embeds.
+
 ## Phase A — Re-apply optimizations (do this first)
 
 Use **cherry-pick** in the order below (oldest first). If a pick conflicts, resolve in the file areas noted; do **not** pull in Phase B commits while resolving Phase A.

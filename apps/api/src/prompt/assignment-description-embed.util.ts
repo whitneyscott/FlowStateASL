@@ -30,6 +30,60 @@ type EmbedBlock = { role: typeof ASL_EXPRESS_ROLE_CONFIG | typeof ASL_EXPRESS_RO
 const OPEN_TAG_PREFIX = '<div ';
 
 /**
+ * Locate the opening `<div ...>` for an ASL embed that owns `data-asl-express-v` near `vIdx`.
+ * Canvas may normalize casing and spacing; do not rely on `lastIndexOf('<div ', vIdx)` alone.
+ */
+function findAslEmbedOpenDivStart(html: string, vIdx: number): number {
+  const lower = html.toLowerCase();
+  let pos = vIdx;
+  for (;;) {
+    const i = lower.lastIndexOf('<div', pos);
+    if (i === -1) return -1;
+    const tagEnd = html.indexOf('>', i);
+    if (tagEnd === -1) return -1;
+    if (tagEnd > vIdx) {
+      pos = i - 1;
+      continue;
+    }
+    const afterDiv = html.slice(i + 4, i + 5);
+    if (afterDiv && !/[\s/>]/u.test(afterDiv)) {
+      pos = i - 1;
+      continue;
+    }
+    const slice = html.slice(i, tagEnd + 1);
+    if (!/data-asl-express-v=["']1["']/i.test(slice) || !/data-asl-express-role=["'](config|prompts)["']/i.test(slice)) {
+      pos = i - 1;
+      continue;
+    }
+    return i;
+  }
+}
+
+/**
+ * Matching close `</div>` for an embed, counting nested divs. Required when Canvas (or entity decode)
+ * leaves literal `</div>` sequences inside the JSON text node — `indexOf('</div>')` would truncate early.
+ */
+function findMatchingEmbedCloseDiv(html: string, openTagEnd: number): number {
+  let depth = 1;
+  let pos = openTagEnd + 1;
+  const lower = html.toLowerCase();
+  while (pos < html.length && depth > 0) {
+    const nextOpen = lower.indexOf('<div', pos);
+    const nextClose = lower.indexOf('</div>', pos);
+    if (nextClose === -1) return -1;
+    if (nextOpen !== -1 && nextOpen < nextClose) {
+      depth += 1;
+      pos = nextOpen + 4;
+    } else {
+      depth -= 1;
+      if (depth === 0) return nextClose;
+      pos = nextClose + 6;
+    }
+  }
+  return -1;
+}
+
+/**
  * Find ASL Express embed `div` regions (v=1 + role). Does not require a fixed attribute order.
  */
 function findAllEmbedBlockRegions(html: string): EmbedBlock[] {
@@ -43,7 +97,7 @@ function findAllEmbedBlockRegions(html: string): EmbedBlock[] {
       from = vIdx + 1;
       continue;
     }
-    const divStart = html.lastIndexOf(OPEN_TAG_PREFIX, vIdx);
+    const divStart = findAslEmbedOpenDivStart(html, vIdx);
     if (divStart === -1) {
       from = vIdx + 1;
       continue;
@@ -60,7 +114,7 @@ function findAllEmbedBlockRegions(html: string): EmbedBlock[] {
       from = vIdx + 1;
       continue;
     }
-    const close = html.indexOf('</div>', openTagEnd);
+    const close = findMatchingEmbedCloseDiv(html, openTagEnd);
     if (close === -1) break;
     const role = roleM[1] as typeof ASL_EXPRESS_ROLE_CONFIG | typeof ASL_EXPRESS_ROLE_PROMPTS;
     regions.push({ role, start: divStart, end: close + '</div>'.length });
