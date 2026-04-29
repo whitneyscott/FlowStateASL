@@ -452,11 +452,6 @@
   font-size: 14px;
 }
 
-/* Font size dropdown (px) — default Snow width is tight for "14px"-style labels. */
-.prompter-prompt-rte-wrap .ql-snow .ql-picker.ql-size {
-  width: 5.5rem;
-}
-
 .prompter-prompt-rte-wrap .ql-container {
   border-radius: 0 0 6px 6px;
   border-color: #ccc;

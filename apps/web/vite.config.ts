@@ -15,8 +15,6 @@ export default defineConfig({
     __WEB_BUILD_SHA__: JSON.stringify(WEB_BUILD_SHA),
   },
   resolve: {
-    /** One `quill` instance: direct imports + react-quill must share registry (prompt RTE format registration). */
-    dedupe: ['quill', 'parchment'],
     alias: {
       '@aslexpress/shared-types': resolve(__dirname, '../../libs/shared-types/src/index.ts'),
     },
