@@ -803,15 +803,13 @@ export async function getCourseFilesRootFolder(): Promise<{ folderId: string }> 
 }
 
 export async function listCourseImageFiles(
-  folderId: string | undefined,
   page = 1,
 ): Promise<{
-  folderId: string;
+  courseId: string;
   page: number;
   files: Array<{ id: string; display_name: string; content_type: string; size: number }>;
 }> {
   const q = new URLSearchParams();
-  if (folderId?.trim()) q.set('folderId', folderId.trim());
   q.set('page', String(Math.max(1, page)));
   return fetchJsonWithOAuthRedirect(`${base}/course-files?${q}`, { method: 'GET' });
 }

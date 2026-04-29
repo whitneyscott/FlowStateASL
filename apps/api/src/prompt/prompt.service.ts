@@ -6004,13 +6004,12 @@ export class PromptService {
     return { folderId };
   }
 
-  /** Teacher: image files in a folder (defaults to course root) for prompt image picker. */
+  /** Teacher: image files for the launch course (Canvas GET /courses/:id/files), all folders. */
   async listCourseImageFilesForPicker(
     ctx: LtiContext,
-    folderId: string | undefined,
     page: number,
   ): Promise<{
-    folderId: string;
+    courseId: string;
     page: number;
     files: Array<{ id: string; display_name: string; content_type: string; size: number }>;
   }> {
@@ -6019,14 +6018,12 @@ export class PromptService {
       throw new ForbiddenException('Canvas OAuth token required');
     }
     const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
-    const fid =
-      (folderId ?? '').trim() ||
-      (await this.canvas.getCourseRootFolderId(ctx.courseId, domainOverride, token));
-    const raw = await this.canvas.listFolderFilesPage(fid, {
+    const raw = await this.canvas.listCourseFilesPage(ctx.courseId, {
       domainOverride,
       tokenOverride: token,
       page,
       perPage: 40,
+      contentTypes: ['image'],
     });
     const files = raw
       .filter((f) => (f.content_type ?? '').toLowerCase().startsWith('image/'))
@@ -6036,7 +6033,7 @@ export class PromptService {
         content_type: f.content_type,
         size: f.size,
       }));
-    return { folderId: fid, page, files };
+    return { courseId: ctx.courseId, page, files };
   }
 
   /** Teacher: upload an image into course Files; returns app-relative path for `<img src>`. */

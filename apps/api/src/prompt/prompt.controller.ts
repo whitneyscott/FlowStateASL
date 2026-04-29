@@ -195,13 +195,12 @@ export class PromptController {
   async listCourseImageFiles(
     @Req() req: Request,
     @Res() res: Response,
-    @Query('folderId') folderId?: string,
     @Query('page') page?: string,
   ) {
     const ctx = this.getCtx(req);
     const p = Math.max(1, Number.parseInt(String(page ?? '1'), 10) || 1);
     try {
-      const out = await this.prompt.listCourseImageFilesForPicker(ctx, folderId, p);
+      const out = await this.prompt.listCourseImageFilesForPicker(ctx, p);
       return res.json(out);
     } catch (err) {
       if (err instanceof CanvasTokenExpiredError) {

@@ -196,8 +196,16 @@ export class Lti13LaunchService {
     const resourceLink = (payload[LTI_RESOURCE_LINK] as { id?: string; title?: string }) ?? {};
     const roles = (payload[LTI_ROLES] as string[]) ?? [];
 
-    // For Canvas API: use custom.course_id ($Canvas.course.id = numeric) over context.id (opaque LTI hash)
-    const courseId = resolveLtiContextValue((custom.course_id ?? context.id ?? '').toString());
+    // Canvas API needs numeric / SIS course id. Prefer explicit custom fields; JWT keys vary by Developer Key / placement.
+    const customRec = custom as Record<string, unknown>;
+    const courseIdRaw = (
+      custom.course_id ??
+      custom.custom_canvas_course_id ??
+      customRec.canvas_course_id ??
+      context.id ??
+      ''
+    ).toString();
+    const courseId = resolveLtiContextValue(courseIdRaw);
     const userId = sub;
     const canvasUserIdRaw = resolveLtiContextValue((custom.user_id ?? '').toString());
     const canvasUserId = canvasUserIdRaw || undefined;

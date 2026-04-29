@@ -428,6 +428,67 @@ export class CanvasService {
     }));
   }
 
+  /**
+   * List files in a course (all folders), with optional content-type filter — correct scope for “this course’s Files”.
+   * Prefer this over folders/root + listFolderFiles for pickers.
+   * @see https://canvas.instructure.com/doc/api/files.html#method.files.api_index
+   */
+  async listCourseFilesPage(
+    courseId: string,
+    options?: {
+      domainOverride?: string;
+      tokenOverride?: string | null;
+      page?: number;
+      perPage?: number;
+      /** Canvas accepts type or type/subtype, e.g. `image` matches image/* */
+      contentTypes?: string[];
+    },
+  ): Promise<
+    Array<{
+      id: string;
+      display_name: string;
+      content_type: string;
+      size: number;
+      url?: string;
+    }>
+  > {
+    const base = this.getBaseUrl(options?.domainOverride);
+    const page = Math.max(1, options?.page ?? 1);
+    const perPage = Math.min(100, Math.max(1, options?.perPage ?? 30));
+    const q = new URLSearchParams({
+      page: String(page),
+      per_page: String(perPage),
+      sort: 'name',
+      order: 'asc',
+    });
+    const cts = options?.contentTypes?.length ? options.contentTypes : ['image'];
+    for (const ct of cts) {
+      q.append('content_types[]', ct);
+    }
+    const url = `${base}/api/v1/courses/${encodeURIComponent(courseId)}/files?${q}`;
+    const res = await this.canvasFetch(url, {
+      headers: this.getAuthHeaders(options?.tokenOverride),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Canvas list course files failed: ${res.status} ${text.slice(0, 300)}`);
+    }
+    const rows = (await res.json()) as Array<{
+      id?: number | string;
+      display_name?: string;
+      content_type?: string;
+      size?: number;
+      url?: string;
+    }>;
+    return (Array.isArray(rows) ? rows : []).map((r) => ({
+      id: r.id != null ? String(r.id) : '',
+      display_name: String(r.display_name ?? ''),
+      content_type: String(r.content_type ?? ''),
+      size: Number(r.size) || 0,
+      url: r.url,
+    }));
+  }
+
   /** GET an authenticated Canvas URL (e.g. file `url` from file API) and return the fetch Response. */
   async fetchCanvasAuthenticatedUrl(
     absoluteUrl: string,

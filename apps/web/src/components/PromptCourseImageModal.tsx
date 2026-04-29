@@ -1,10 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import {
-  coursePromptImageViewUrl,
-  getCourseFilesRootFolder,
-  listCourseImageFiles,
-  uploadCoursePromptImage,
-} from '../api/prompt.api';
+import { coursePromptImageViewUrl, listCourseImageFiles, uploadCoursePromptImage } from '../api/prompt.api';
 
 type Props = {
   open: boolean;
@@ -15,7 +10,6 @@ type Props = {
 
 export function PromptCourseImageModal({ open, onClose, onInserted }: Props) {
   const [tab, setTab] = useState<'upload' | 'pick'>('upload');
-  const [folderId, setFolderId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [files, setFiles] = useState<
     Array<{ id: string; display_name: string; content_type: string; size: number }>
@@ -25,12 +19,11 @@ export function PromptCourseImageModal({ open, onClose, onInserted }: Props) {
   const [uploadBusy, setUploadBusy] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
-  const loadList = useCallback(async (fid: string, p: number) => {
+  const loadList = useCallback(async (p: number) => {
     setListLoading(true);
     setListError(null);
     try {
-      const out = await listCourseImageFiles(fid, p);
-      setFolderId(out.folderId);
+      const out = await listCourseImageFiles(p);
       setPage(out.page);
       setFiles(out.files);
     } catch (e) {
@@ -49,16 +42,9 @@ export function PromptCourseImageModal({ open, onClose, onInserted }: Props) {
     setPage(1);
     setFiles([]);
     let cancelled = false;
-    (async () => {
-      try {
-        const root = await getCourseFilesRootFolder();
-        if (cancelled) return;
-        await loadList(root.folderId, 1);
-      } catch (e) {
-        if (!cancelled) {
-          setListError(e instanceof Error ? e.message : String(e));
-        }
-      }
+    void (async () => {
+      if (cancelled) return;
+      await loadList(1);
     })();
     return () => {
       cancelled = true;
@@ -133,7 +119,10 @@ export function PromptCourseImageModal({ open, onClose, onInserted }: Props) {
             {listLoading ? <p className="prompter-hint">Loading files…</p> : null}
             {listError ? <p className="prompter-error-message">{listError}</p> : null}
             {!listLoading && !listError && files.length === 0 ? (
-              <p className="prompter-hint">No image files in this folder page. Upload one first or use another folder in Canvas.</p>
+              <p className="prompter-hint">
+                No image files on this page for this course. Upload one above, add images in Canvas → Files, or try the
+                next page.
+              </p>
             ) : null}
             <ul className="prompter-course-file-pick-list" style={{ listStyle: 'none', padding: 0, margin: '8px 0', maxHeight: 240, overflow: 'auto' }}>
               {files.map((f) => (
@@ -152,7 +141,7 @@ export function PromptCourseImageModal({ open, onClose, onInserted }: Props) {
                 type="button"
                 className="prompter-btn-secondary"
                 disabled={listLoading || page <= 1}
-                onClick={() => folderId && loadList(folderId, page - 1)}
+                onClick={() => loadList(page - 1)}
               >
                 Previous page
               </button>
@@ -160,8 +149,8 @@ export function PromptCourseImageModal({ open, onClose, onInserted }: Props) {
               <button
                 type="button"
                 className="prompter-btn-secondary"
-                disabled={listLoading || files.length < 1}
-                onClick={() => folderId && loadList(folderId, page + 1)}
+                disabled={listLoading}
+                onClick={() => loadList(page + 1)}
               >
                 Next page
               </button>

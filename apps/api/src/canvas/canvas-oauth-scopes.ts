@@ -24,6 +24,7 @@ export const DEFAULT_CANVAS_OAUTH_SCOPES = [
   'url:POST|/api/v1/users/self/files',
   /** Course Files: prompt images live in course file space, not base64 in description embeds. */
   'url:POST|/api/v1/courses/:course_id/files',
+  'url:GET|/api/v1/courses/:course_id/files',
   'url:GET|/api/v1/courses/:course_id/folders/root',
   'url:GET|/api/v1/folders/:folder_id/files',
   'url:GET|/api/v1/files/:id',
