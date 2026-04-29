@@ -45,6 +45,15 @@ export class CanvasAssignmentApiError extends Error {
   }
 }
 
+/** Optional flags for {@link CanvasService.getAssignment}. */
+export type GetAssignmentOptions = {
+  /**
+   * When true, skip the extra `rubric_associations` Canvas request used to fill `linkedRubricId`
+   * if the first assignment payload has no rubric (saves a round trip for learner GET /config).
+   */
+  skipLinkedRubricAssociationFallback?: boolean;
+};
+
 @Injectable()
 export class CanvasService {
   private readonly circuitState = new Map<string, { failures: number; openUntil: number }>();
@@ -1443,6 +1452,7 @@ export class CanvasService {
     assignmentId: string,
     domainOverride?: string,
     tokenOverride?: string | null,
+    getAssignmentOptions?: GetAssignmentOptions,
   ): Promise<{
     name?: string;
     description?: string;
@@ -1479,7 +1489,7 @@ export class CanvasService {
     }
     const data = (await res.json()) as Record<string, unknown>;
     let linkedRubricId = this.linkedRubricIdFromAssignmentPayload(data);
-    if (!linkedRubricId) {
+    if (!linkedRubricId && !getAssignmentOptions?.skipLinkedRubricAssociationFallback) {
       linkedRubricId = await this.linkedRubricIdFromRubricAssociations(
         courseId,
         assignmentId,

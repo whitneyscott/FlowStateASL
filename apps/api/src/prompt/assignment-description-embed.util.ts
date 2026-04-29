@@ -246,6 +246,33 @@ export function toPromptConfigForEmbed(c: PromptConfigJson): Record<string, unkn
   return o;
 }
 
+/** Drop undefined (and empty-slot) keys to shrink JSON in hidden embeds; preserves null. */
+function pruneUndefinedDeep<T>(v: T): T {
+  if (v === null) return v;
+  if (Array.isArray(v)) {
+    return v.map((x) => pruneUndefinedDeep(x)) as T;
+  }
+  if (v !== null && typeof v === 'object') {
+    const o = v as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const [k, x] of Object.entries(o)) {
+      if (x === undefined) continue;
+      if (x !== null && typeof x === 'object') {
+        out[k] = pruneUndefinedDeep(x);
+      } else {
+        out[k] = x;
+      }
+    }
+    return out as T;
+  }
+  return v;
+}
+
+/** One-line JSON for embeds (avoids extra whitespace in Canvas assignment description). */
+function stringifyEmbedsJsonForCanvas(value: unknown): string {
+  return JSON.stringify(pruneUndefinedDeep(value));
+}
+
 /**
  * Append two terminal hidden embed divs. Strips any existing ASL embeds from `visible` first.
  */
@@ -253,8 +280,8 @@ export function mergeAssignmentDescriptionWithEmbeds(visible: string, config: Pr
   const { visibleHtml: base } = stripAslExpressEmbeds(visible);
   const cfg = toPromptConfigForEmbed(config);
   const promptList = Array.isArray(prompts) ? prompts : [];
-  const configJson = JSON.stringify(cfg);
-  const promptsJson = JSON.stringify(promptList);
+  const configJson = stringifyEmbedsJsonForCanvas(cfg);
+  const promptsJson = stringifyEmbedsJsonForCanvas(promptList);
   const a = escapeJsonForHtmlTextNode(configJson);
   const b = escapeJsonForHtmlTextNode(promptsJson);
   const suffix =

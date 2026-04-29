@@ -14,7 +14,7 @@ import type { IAssessmentRepository } from '../data/interfaces/assessment-reposi
 import type { IPromptDataRepository } from '../data/interfaces/prompt-data-repository.interface';
 import { appendLtiLog, appendPlacementMarker, type PlacementLtiVersion, type PlacementPath } from '../common/last-error.store';
 import { ConfigService } from '@nestjs/config';
-import { CanvasService } from '../canvas/canvas.service';
+import { CanvasService, type GetAssignmentOptions } from '../canvas/canvas.service';
 import { CourseSettingsService } from '../course-settings/course-settings.service';
 import { LtiAgsService } from '../lti/lti-ags.service';
 import { LtiDeepLinkFileStore } from '../lti/lti-deep-link-file.store';
@@ -56,7 +56,7 @@ import {
   gradingDisplayHtmlFromPromptSnapshotRte,
   humanSubmissionBodyToPromptHtml,
 } from './submission-human-readable-body.util';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { Response } from 'express';
@@ -216,6 +216,9 @@ export class PromptService {
   /** Best-effort cache for assignment name lookups when skipping full course index. */
   private readonly assignmentNameByIdCache = new Map<string, { names: Map<string, string>; expiresAt: number }>();
   private static readonly ASSIGNMENT_NAME_TTL_MS = 5 * 60_000;
+  /** Merged GET /api/prompt/config result cache (avoids repeat Canvas+parse in the same window). */
+  private static readonly GET_CONFIG_RESULT_CACHE_TTL_MS = 60_000;
+  private readonly getConfigResultCache = new Map<string, { expiresAt: number; config: PromptConfigJson }>();
   private static readonly COURSE_PROMPT_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
   private static readonly COURSE_PROMPT_IMAGE_TYPES = new Set([
     'image/jpeg',
@@ -986,6 +989,47 @@ export class PromptService {
     return false;
   }
 
+  private buildGetConfigResultCacheKey(
+    courseId: string,
+    assignmentId: string,
+    token: string,
+    blobUpdatedAt: string | undefined,
+    isLearner: boolean,
+    descriptionLength: number,
+    domainOverride: string | undefined,
+  ): string {
+    const tokenH = createHash('sha256').update(token).digest('hex').slice(0, 20);
+    return [courseId, assignmentId, tokenH, blobUpdatedAt ?? 'none', isLearner ? '1' : '0', String(descriptionLength), domainOverride ?? 'none'].join('\0');
+  }
+
+  /** Returns merged config (before `applySignedCourseImageViewsToConfig`) or undefined. */
+  private takeGetConfigResultCache(key: string): PromptConfigJson | undefined {
+    const row = this.getConfigResultCache.get(key);
+    if (!row) return undefined;
+    if (Date.now() > row.expiresAt) {
+      this.getConfigResultCache.delete(key);
+      return undefined;
+    }
+    return JSON.parse(JSON.stringify(row.config)) as PromptConfigJson;
+  }
+
+  private putGetConfigResultCache(key: string, config: PromptConfigJson): void {
+    this.getConfigResultCache.set(key, {
+      config: JSON.parse(JSON.stringify(config)) as PromptConfigJson,
+      expiresAt: Date.now() + PromptService.GET_CONFIG_RESULT_CACHE_TTL_MS,
+    });
+  }
+
+  /** Clear cached getConfig for one assignment (e.g. after teacher putConfig). */
+  private invalidateGetConfigResultCacheForAssignment(courseId: string, assignmentId: string): void {
+    const p = `${courseId}\0${assignmentId}\0`;
+    for (const k of [...this.getConfigResultCache.keys()]) {
+      if (k.startsWith(p)) {
+        this.getConfigResultCache.delete(k);
+      }
+    }
+  }
+
   /**
    * Learners often upload with Canvas OAuth; they may be unable to read the Prompt Manager Settings
    * assignment, so `configs[assignmentId]` is missing from the first blob read. Mirror getConfig: fall back
@@ -1492,6 +1536,9 @@ export class PromptService {
     }
     let getConfigAssignmentSnapshot: Awaited<ReturnType<CanvasService['getAssignment']>> = null;
     let assignmentNameForLog = '(none)';
+    const getAssignmentForConfigOpts: GetAssignmentOptions | undefined = this.isPrompterLearnerContext(ctx)
+      ? { skipLinkedRubricAssociationFallback: true }
+      : undefined;
     if (assignmentId) {
       try {
         getConfigAssignmentSnapshot = await this.canvas.getAssignment(
@@ -1499,6 +1546,7 @@ export class PromptService {
           assignmentId,
           domainOverride,
           resolvedToken,
+          getAssignmentForConfigOpts,
         );
       } catch {
         getConfigAssignmentSnapshot = null;
@@ -1596,6 +1644,25 @@ export class PromptService {
         configuredIdsLen: Array.isArray(blob?.configuredAssignmentIds) ? blob!.configuredAssignmentIds!.length : 0,
       });
       return null;
+    }
+    const getConfigResultCacheKey = this.buildGetConfigResultCacheKey(
+      ctx.courseId,
+      assignmentId,
+      resolvedToken,
+      blob?.updatedAt,
+      this.isPrompterLearnerContext(ctx),
+      (getConfigAssignmentSnapshot?.description ?? '').length,
+      domainOverride,
+    );
+    const cachedGetConfigPreSign = this.takeGetConfigResultCache(getConfigResultCacheKey);
+    if (cachedGetConfigPreSign) {
+      appendLtiLog('prompt-manager-config', 'getConfig: result cache hit', { assignmentId });
+      return applySignedCourseImageViewsToConfig(
+        cachedGetConfigPreSign,
+        ctx.courseId,
+        ctx.canvasBaseUrl ?? ctx.canvasDomain ?? null,
+        this.config,
+      );
     }
     let config = await this.loadPromptConfigForAssignment(
       ctx.courseId,
@@ -1749,7 +1816,9 @@ export class PromptService {
             };
             let vis = (typeof config.instructions === 'string' ? config.instructions : '').trim();
             if (!vis) {
-              const a = getConfigAssignmentSnapshot ?? (await this.canvas.getAssignment(ctx.courseId, assignmentId, domainOverride, token));
+              const a =
+                getConfigAssignmentSnapshot ??
+                (await this.canvas.getAssignment(ctx.courseId, assignmentId, domainOverride, token, getAssignmentForConfigOpts));
               if (a?.description && String(a.description).trim()) {
                 vis = parseAssignmentDescriptionForPromptManager(a.description).visibleHtml;
               }
@@ -1860,6 +1929,7 @@ export class PromptService {
           config?.rubricId != null && String(config.rubricId).trim() ? String(config.rubricId).trim() : '';
         // Prefer Canvas (current link); fall back to description embed (e.g. numeric id sanitized, or if Canvas payload omitted rubric).
         const effectiveRubricId = canvasRid || configRid;
+        const includeRubricInGetConfig = !this.isPrompterLearnerContext(ctx);
         const hydrated: PromptConfigJson = {
           ...(config ?? { minutes: 5, prompts: [], accessCode: '' }),
           ...(assignment.name ? { assignmentName: String(assignment.name) } : {}),
@@ -1872,11 +1942,14 @@ export class PromptService {
             : config?.allowedAttempts == null
               ? { allowedAttempts: 1 }
               : {}),
-          // Surface Canvas-attached rubric id; embed fallback when GET omits rubric (see also sanitize numeric rubricId).
-          ...(effectiveRubricId ? { rubricId: effectiveRubricId } : {}),
+          // Learners: omit rubricId on first load (faster; submission uses assignment context; teacher grading loads rubric separately).
+          ...(includeRubricInGetConfig && effectiveRubricId ? { rubricId: effectiveRubricId } : {}),
         };
         if (!hydrated.promptMode) {
           hydrated.promptMode = inferPromptModeFromStructuredConfig(hydrated);
+        }
+        if (!includeRubricInGetConfig) {
+          delete (hydrated as { rubricId?: string }).rubricId;
         }
         const textN = Array.isArray(hydrated.prompts) ? hydrated.prompts.length : 0;
         appendLtiLog('prompt-manager-config', 'getConfig: success (Canvas hydration path)', {
@@ -1887,8 +1960,10 @@ export class PromptService {
           textPromptsCount: textN,
           instructionsLen: typeof hydrated.instructions === 'string' ? hydrated.instructions.length : 0,
         });
+        const hydratedWithResolved: PromptConfigJson = { ...hydrated, resolvedAssignmentId: assignmentId };
+        this.putGetConfigResultCache(getConfigResultCacheKey, hydratedWithResolved);
         return applySignedCourseImageViewsToConfig(
-          { ...hydrated, resolvedAssignmentId: assignmentId },
+          hydratedWithResolved,
           ctx.courseId,
           ctx.canvasBaseUrl ?? ctx.canvasDomain ?? null,
           this.config,
@@ -1916,7 +1991,11 @@ export class PromptService {
       });
     }
     if (!config) return null;
-    const withResolved = { ...config, resolvedAssignmentId: assignmentId };
+    const withResolved: PromptConfigJson = { ...config, resolvedAssignmentId: assignmentId };
+    if (this.isPrompterLearnerContext(ctx)) {
+      delete (withResolved as { rubricId?: string }).rubricId;
+    }
+    this.putGetConfigResultCache(getConfigResultCacheKey, withResolved);
     return applySignedCourseImageViewsToConfig(
       withResolved,
       ctx.courseId,
@@ -2584,6 +2663,7 @@ export class PromptService {
       hasAssignmentUpdates,
       hadRubricUpdate: !!rubricId,
     });
+    this.invalidateGetConfigResultCacheForAssignment(ctx.courseId, assignmentId);
   }
 
   /**
