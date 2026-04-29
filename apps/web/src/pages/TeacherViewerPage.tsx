@@ -2414,6 +2414,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
             </>
           )}
 
+          {/* Deck: one rubric row’s rating buttons for the card at the playhead (Canvas labels, often binary). Full multi-criterion rubric in center is non-deck only, below. */}
           {isDeckPromptMode && (
             <div className="prompter-viewer-grading-below-submission prompter-viewer-slot-deck-active-group">
               <div className="prompter-viewer-center-row prompter-viewer-center-row--active-header">
@@ -2518,6 +2519,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
             </div>
           )}
 
+          {/* Text / YouTube: full Canvas rubric in the center. Decks use the left table + “Active item” quick row only. */}
           {viewerGradingStackOrder && !isDeckPromptMode && rubric.length > 0 && (
             <div className="prompter-viewer-grading-below-submission prompter-viewer-slot-nondeck-grading-group">
               <div className="prompter-viewer-center-row prompter-viewer-center-row--active-header">

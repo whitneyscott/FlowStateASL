@@ -1417,43 +1417,10 @@
   min-width: 0;
 }
 
-/* Center panel grading stack: lock a predictable top-to-bottom order. */
-.prompter-viewer-slot-top {
-  order: 10;
-}
-
-.prompter-viewer-slot-grading-toolbar {
-  order: 20;
-}
-
-.prompter-viewer-slot-assignment-title {
-  order: 30;
-}
-
-.prompter-viewer-slot-submission-media {
-  order: 40;
-}
-
-.prompter-viewer-slot-deck-active-group,
-.prompter-viewer-slot-nondeck-grading-group {
-  order: 50;
-}
-
-.prompter-viewer-slot-freeform-group {
-  order: 60;
-}
-
-.prompter-viewer-slot-captions-disclosure {
-  order: 70;
-}
-
-.prompter-viewer-slot-text-prompt-group {
-  order: 80;
-}
-
 /**
- * Grading: quick (Correct/Incorrect) row and prompt are nested in slot-submission-media so they sit
- * directly under the video; main column order follows source order (no flex order on children).
+ * Grading: quick grade row + prompt for deck live in slot-submission-media (under the video).
+ * Do not set flex `order` on `.prompter-viewer-center` children here — it reorders the whole column
+ * and can make nested rubric blocks appear in the wrong place.
  */
 .prompter-viewer-grading-below-submission {
   margin-top: 10px;
@@ -1613,31 +1580,6 @@
   width: 100%;
   max-width: 100%;
   order: 2;
-}
-
-/* Deck mode: enforce exact top-to-bottom order in the middle panel active item block. */
-.prompter-viewer-slot-deck-active-group .prompter-viewer-active-item-panel--stacked {
-  display: grid;
-  grid-template-columns: 1fr;
-  grid-template-areas:
-    "ratings"
-    "meta"
-    "comment";
-  row-gap: 12px;
-}
-
-.prompter-viewer-slot-deck-active-group .prompter-viewer-active-item-panel--stacked .prompter-viewer-active-item-ratings {
-  grid-area: ratings;
-  order: unset;
-}
-
-.prompter-viewer-slot-deck-active-group .prompter-viewer-active-item-panel--stacked .prompter-viewer-active-item-meta {
-  grid-area: meta;
-  order: unset;
-}
-
-.prompter-viewer-slot-deck-active-group .prompter-viewer-active-item-panel--stacked .prompter-viewer-criterion-comment-wrap {
-  grid-area: comment;
 }
 
 .prompter-viewer-active-item-panel--prompt-only {
