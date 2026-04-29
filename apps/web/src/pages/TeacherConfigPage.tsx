@@ -412,7 +412,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       setLastFunction('GET /api/prompt/configured-assignments');
       const res = await measureUxAsync(
         'PromptSettings: load configured assignments',
-        () => promptApi.getConfiguredAssignments(),
+        () => promptApi.getConfiguredAssignments({ omitCanvasImport: true }),
         { page: 'TeacherConfigPage' },
       );
       if (gen === assignmentsLoadGenRef.current) {
@@ -427,6 +427,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
           }
           return list;
         });
+        // Import modal fetches the heavier Canvas import bundle on demand.
         setImportCanvasBrief(res.canvasImport ?? null);
         return res;
       }
@@ -1473,8 +1474,15 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       }
       let brief = importCanvasBriefRef.current;
       if (!brief?.allAssignments?.length) {
-        const res = await measureUxAsync('PromptSettings: import modal load assignments', () => loadAssignments(), spanMeta);
+        const res = await measureUxAsync(
+          'PromptSettings: import modal load assignments (with canvasImport)',
+          () => promptApi.getConfiguredAssignments(),
+          spanMeta,
+        );
         brief = res?.canvasImport ?? null;
+        if (res?.configured?.length) {
+          setConfiguredAssignments(res.configured);
+        }
       }
       if (!brief?.allAssignments?.length) {
         setImportCanvasBrief(null);

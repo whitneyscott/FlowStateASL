@@ -180,6 +180,16 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
     } else {
       newLines.push(...sdl);
     }
+    newLines.push('');
+    newLines.push('--- UX benchmarking (tag ux-benchmark) ---');
+    const uxb = ltiLog.filter((line) => line.includes('] [ux-benchmark] '));
+    if (uxb.length === 0) {
+      newLines.push(
+        '(no ux-benchmark lines yet — switch to Developer mode, then load Prompt Settings / Timer / Flashcards. Lines also go to the browser console as [UX BENCH].)',
+      );
+    } else {
+      newLines.push(...uxb.slice(-80));
+    }
     setLines(newLines);
   }, [ltiLog, debugVersion]);
 
