@@ -76,6 +76,7 @@ import {
 } from './assignment-description-embed.util';
 import { repairPromptManagerSettingsBlobFromUnknown } from './prompt-settings-blob-repair.util';
 import { inferPromptModeFromStructuredConfig, mergeSourceEmbedForImport } from './prompt-mode-infer.util';
+import { mapWithConcurrency } from '../common/map-with-concurrency.util';
 import { resolveAssignmentIdByName, type CanvasAssignmentBrief } from './assignment-id-resolve.util';
 import type { ImportPromptManagerBlobDto } from './dto/import-prompt-manager-blob.dto';
 import type { ImportSinglePromptAssignmentDto } from './dto/import-single-prompt-assignment.dto';
@@ -562,6 +563,13 @@ export class PromptService {
     token: string,
   ): Promise<PromptManagerSettingsBlob | null> {
     return readPromptManagerSettingsBlobFromCanvas(this.canvas, courseId, domainOverride, token);
+  }
+
+  /** Max concurrent `resolvePromptRowFromWebmMetadata` in getSubmissions (default 2). Env: WEBM_PROBE_MAX_CONCURRENT. */
+  private getWebmProbeMaxConcurrent(): number {
+    const raw = this.config.get<string | undefined>('WEBM_PROBE_MAX_CONCURRENT') ?? process.env.WEBM_PROBE_MAX_CONCURRENT;
+    const n = parseInt((raw ?? '2').trim() || '2', 10);
+    return Number.isFinite(n) && n > 0 ? n : 2;
   }
 
   private async ensureMigrated(
@@ -3898,8 +3906,11 @@ export class PromptService {
     } catch {
       promptsFallbackDuration = null;
     }
-    const rowsWithPrompts = await Promise.all(
-      baseRows.map(async (row) => {
+    const webmLimit = this.getWebmProbeMaxConcurrent();
+    const rowsWithPrompts = await mapWithConcurrency(
+      baseRows,
+      webmLimit,
+      async (row) => {
         const { canvasVideoUrlRaw, ...publicRow } = row;
         const resolved = await this.resolvePromptRowFromWebmMetadata({
           assignmentId,
@@ -3935,7 +3946,7 @@ export class PromptService {
           ...(resolved.mediaStimulus ? { mediaStimulus: resolved.mediaStimulus } : {}),
           ...(finalDeck?.length ? { deckTimeline: finalDeck } : {}),
         };
-      }),
+      },
     );
     for (const row of rowsWithPrompts) {
       appendLtiLog('duration', 'getSubmissions: submission row', {
