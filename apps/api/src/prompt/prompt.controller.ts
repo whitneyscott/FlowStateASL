@@ -20,6 +20,7 @@ import {
   PayloadTooLargeException,
   HttpException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Request, Response } from 'express';
 import { mkdirSync } from 'node:fs';
@@ -30,6 +31,10 @@ import { TeacherRoleGuard } from '../common/guards/teacher-role.guard';
 import { CanvasTokenExpiredError } from '../canvas/canvas.service';
 import type { LtiContext } from '../common/interfaces/lti-context.interface';
 import { sanitizeLtiContext } from '../common/utils/lti-context-value.util';
+import {
+  appendSignedQueryToCourseImageViewPath,
+  verifySignedCourseImageViewRequest,
+} from '../common/utils/course-prompt-image-view-signature.util';
 import { getOAuth401Body } from '../common/utils/oauth-401.util';
 import { PromptService } from './prompt.service';
 import { PutPromptConfigDto } from './dto/prompt-config.dto';
@@ -64,6 +69,7 @@ export class PromptController {
     private readonly prompt: PromptService,
     private readonly deepLinkFileStore: LtiDeepLinkFileStore,
     private readonly uploadResilience: UploadResilienceService,
+    private readonly config: ConfigService,
   ) {}
 
   private getCtx(req: Request): LtiContext {
@@ -270,13 +276,41 @@ export class PromptController {
     }
   }
 
+  @Get('course-files/:fileId/signed-view-path')
+  @UseGuards(TeacherRoleGuard)
+  async getSignedCourseImageViewPath(@Req() req: Request, @Res() res: Response, @Param('fileId') fileId: string) {
+    const ctx = this.getCtx(req);
+    const fid = (fileId ?? '').trim();
+    if (!/^\d+$/.test(fid)) {
+      return res.status(400).json({ message: 'Invalid file id' });
+    }
+    const base = `/api/prompt/course-files/${fid}/view`;
+    const path = appendSignedQueryToCourseImageViewPath(base, fid, ctx.courseId, this.config);
+    return res.json({ path });
+  }
+
   @Get('course-files/:fileId/view')
   async viewCoursePromptImage(@Req() req: Request, @Res() res: Response, @Param('fileId') fileId: string) {
     const fid = (fileId ?? '').trim();
     if (!/^\d+$/.test(fid)) {
       return res.status(400).json({ message: 'Invalid file id' });
     }
-    const ctx = this.getCtx(req);
+    let ctx: LtiContext;
+    if (verifySignedCourseImageViewRequest(req, fid, this.config)) {
+      const cRaw = req.query.c;
+      const courseId = Array.isArray(cRaw) ? String(cRaw[0] ?? '').trim() : String(cRaw ?? '').trim();
+      ctx = sanitizeLtiContext({
+        courseId,
+        assignmentId: '',
+        userId: '',
+        resourceLinkId: '',
+        moduleId: '',
+        toolType: 'flashcards',
+        roles: '',
+      }) as LtiContext;
+    } else {
+      ctx = this.getCtx(req);
+    }
     try {
       await this.prompt.streamCoursePromptImageToResponse(ctx, fid, res);
     } catch (err) {

@@ -20,12 +20,15 @@ export function normalizePromptImageSrcForStorage(raw: string): string {
   if (/^https?:\/\//i.test(t)) {
     try {
       const parsed = new URL(t);
-      return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+      let path = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+      path = path.replace(/^(\/api\/prompt\/course-files\/\d+\/view)\?[^#]*/i, '$1');
+      return path;
     } catch {
       return t.startsWith('/') ? t : `/${t}`;
     }
   }
-  return t.startsWith('/') ? t : `/${t}`;
+  const root = t.startsWith('/') ? t : `/${t}`;
+  return root.replace(/^(\/api\/prompt\/course-files\/\d+\/view)\?[^#]*/i, '$1');
 }
 
 /** Strip common XSS vectors from teacher-authored feedback HTML before DOM insertion or Canvas POST. */

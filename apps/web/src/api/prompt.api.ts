@@ -854,6 +854,15 @@ export async function uploadCoursePromptImage(file: File): Promise<{ fileId: str
   return data as { fileId: string; viewPath: string };
 }
 
+/** Teacher: signed `<img src>` path so the browser can load the image without an Authorization header. */
+export async function getSignedCourseImageViewPath(fileId: string): Promise<{ path: string }> {
+  const id = (fileId ?? '').trim();
+  if (!/^\d+$/.test(id)) {
+    throw new Error('Invalid file id');
+  }
+  return fetchJsonWithOAuthRedirect(`${base}/course-files/${id}/signed-view-path`, { method: 'GET' });
+}
+
 export async function buildDeckPrompts(
   selectedDecks: DeckConfig[],
   totalCards: number,

@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import { browseCourseFiles, coursePromptImageViewUrl, uploadCoursePromptImage } from '../api/prompt.api';
+import {
+  browseCourseFiles,
+  coursePromptImageViewUrl,
+  getSignedCourseImageViewPath,
+  uploadCoursePromptImage,
+} from '../api/prompt.api';
 
 type Props = {
   open: boolean;
@@ -62,10 +67,14 @@ export function PromptCourseImageModal({ open, onClose, onInserted }: Props) {
     void loadBrowse(null);
   };
 
-  const pickFile = (id: string) => {
-    const path = `/api/prompt/course-files/${id}/view`;
-    onInserted(coursePromptImageViewUrl(path));
-    onClose();
+  const pickFile = async (id: string) => {
+    try {
+      const { path } = await getSignedCourseImageViewPath(id);
+      onInserted(coursePromptImageViewUrl(path));
+      onClose();
+    } catch (e) {
+      setBrowseError(e instanceof Error ? e.message : String(e));
+    }
   };
 
   const onUploadInput = async (e: React.ChangeEvent<HTMLInputElement>) => {

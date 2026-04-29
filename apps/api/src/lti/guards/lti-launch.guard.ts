@@ -4,13 +4,18 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Request } from 'express';
 import { repairCanvasHostFromRequest } from '../../common/utils/canvas-base-url.util';
+import { verifySignedCourseImageViewRequest } from '../../common/utils/course-prompt-image-view-signature.util';
 import { CourseSettingsService } from '../../course-settings/course-settings.service';
 
 @Injectable()
 export class LtiLaunchGuard implements CanActivate {
-  constructor(private readonly courseSettings: CourseSettingsService) {}
+  constructor(
+    private readonly courseSettings: CourseSettingsService,
+    private readonly config: ConfigService,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest<Request>();
@@ -22,6 +27,13 @@ export class LtiLaunchGuard implements CanActivate {
       const cid = Array.isArray(q.course_id) ? q.course_id[0] : q.course_id;
       const u = Array.isArray(q.url) ? q.url[0] : q.url;
       if (typeof cid === 'string' && cid.trim() && typeof u === 'string' && u.trim()) return true;
+    }
+    // Course prompt images: <img> cannot send Bearer; signed query (c, e, sig) authenticates the GET.
+    if (req.method === 'GET') {
+      const m = /^\/api\/prompt\/course-files\/(\d+)\/view$/.exec(req.path);
+      if (m?.[1] && verifySignedCourseImageViewRequest(req, m[1], this.config)) {
+        return true;
+      }
     }
     const hasSession = !!req.session;
     const hasLtiContext = !!req.session?.ltiContext;

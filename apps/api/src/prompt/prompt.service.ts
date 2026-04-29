@@ -81,6 +81,11 @@ import { resolveAssignmentIdByName, type CanvasAssignmentBrief } from './assignm
 import type { ImportPromptManagerBlobDto } from './dto/import-prompt-manager-blob.dto';
 import type { ImportSinglePromptAssignmentDto } from './dto/import-single-prompt-assignment.dto';
 import { buildPartialPromptConfigForTrueWay, scanTrueWayAssignments, type TrueWayTemplateMatch } from './true-way-templates';
+import {
+  appendSignedQueryToCourseImageViewPath,
+  applySignedCourseImageViewsToConfig,
+  stripCourseImageViewSignedQueryFromHtml,
+} from '../common/utils/course-prompt-image-view-signature.util';
 
 /** Import modal payload derived from one `listAssignmentsForPromptImport` result (sorted). */
 function buildCanvasImportListsFromAssignments(all: CanvasAssignmentBrief[]): {
@@ -1710,7 +1715,11 @@ export class PromptService {
           textPromptsCount: textN,
           instructionsLen: typeof hydrated.instructions === 'string' ? hydrated.instructions.length : 0,
         });
-        return { ...hydrated, resolvedAssignmentId: assignmentId };
+        return applySignedCourseImageViewsToConfig(
+          { ...hydrated, resolvedAssignmentId: assignmentId },
+          ctx.courseId,
+          this.config,
+        );
       }
     } catch {
       /* non-fatal: fall through to blob-only config */
@@ -1733,13 +1742,21 @@ export class PromptService {
         resolvedSource: resolved.source,
       });
     }
-    return config ? { ...config, resolvedAssignmentId: assignmentId } : null;
+    if (!config) return null;
+    const withResolved = { ...config, resolvedAssignmentId: assignmentId };
+    return applySignedCourseImageViewsToConfig(withResolved, ctx.courseId, this.config);
   }
 
   async putConfig(ctx: LtiContext, dto: PutPromptConfigDto): Promise<void> {
     const assignmentId = ctx.assignmentId?.trim();
     if (!assignmentId) {
       throw new Error('Assignment ID required. In course_navigation, pass assignmentId as query parameter.');
+    }
+    if (Array.isArray(dto.prompts)) {
+      dto.prompts = dto.prompts.map((p) => stripCourseImageViewSignedQueryFromHtml(String(p ?? '')));
+    }
+    if (typeof dto.instructions === 'string') {
+      dto.instructions = stripCourseImageViewSignedQueryFromHtml(dto.instructions);
     }
     appendLtiLog('prompt', 'putConfig: start', {
       assignmentId,
@@ -6134,7 +6151,9 @@ export class PromptService {
       fileId,
       bytes: file.buffer.length,
     });
-    return { fileId, viewPath: `/api/prompt/course-files/${fileId}/view` };
+    const base = `/api/prompt/course-files/${fileId}/view`;
+    const viewPath = appendSignedQueryToCourseImageViewPath(base, fileId, ctx.courseId, this.config);
+    return { fileId, viewPath };
   }
 
   /** Teacher or student: stream a course image file if it belongs to the launch course. */
