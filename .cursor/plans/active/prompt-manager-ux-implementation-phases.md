@@ -15,6 +15,7 @@
 
 - Reorder UI: **module + access + prompt mode** before heavy editors; optional **“Step-by-step setup”** that switches to a **multi-step wizard** (same data, different chrome), with **“Classic (all on one page)”** to opt out.
 - Gate or disable mode-specific content until foundation is complete (or show one-line “complete the steps above”).
+- **Persistence / state when switching context (fix in this phase):** During **initial import**, **create**, or changing **which assignment is selected** (edit flow), some controls do **not** reliably keep their values—**notably the Canvas module** (and possibly other fields). Audit `load` / `loadAssignments` / import completion / `setSearchParams` paths in [`TeacherConfigPage.tsx`](../../apps/web/src/pages/TeacherConfigPage.tsx) so **foundation fields** (module, access code, prompt mode where appropriate) **rehydrate from config or intentional defaults** and are not wiped by race conditions or partial state resets. Reproduce: pick module → import or switch assignment → confirm module (and siblings) still match saved config or user expectation.
 
 ## Phase 3 — Collapsible “Canvas assignment details” + advanced blocks
 
