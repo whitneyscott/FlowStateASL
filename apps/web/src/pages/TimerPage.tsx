@@ -1722,6 +1722,10 @@ export default function TimerPage({ context }: TimerPageProps) {
         <div className="prompter-card">
           <h1>Done</h1>
           <p className="prompter-info-message">Your submission has been sent to Canvas.</p>
+          <p className="prompter-info-message prompter-info-message-spaced">
+            You can close this tab and return to the Canvas module where you started this prompt submission to continue
+            in your course.
+          </p>
         </div>
       </div>
     </>
