@@ -35,7 +35,11 @@ export function TeacherPromptRte({ value, onChange, placeholder, className, remo
         key={String(remountKey)}
         theme="snow"
         value={value ?? ''}
-        onChange={onChange}
+        onChange={(html, _delta, source) => {
+          // Ignore mount/programmatic changes so async-loaded prompts are not overwritten with blank content.
+          if (source !== 'user') return;
+          onChange(html);
+        }}
         modules={MODULES}
         formats={FORMATS}
         placeholder={placeholder}
