@@ -572,6 +572,15 @@ export class PromptService {
     return Number.isFinite(n) && n > 0 ? n : 2;
   }
 
+  /** Max concurrent per-assignment Canvas work in getConfiguredAssignments (default 3). Env: CONFIGURED_ASSIGNMENTS_MAX_CONCURRENT. */
+  private getConfiguredAssignmentsMaxConcurrent(): number {
+    const raw =
+      this.config.get<string | undefined>('CONFIGURED_ASSIGNMENTS_MAX_CONCURRENT') ??
+      process.env.CONFIGURED_ASSIGNMENTS_MAX_CONCURRENT;
+    const n = parseInt((raw ?? '3').trim() || '3', 10);
+    return Number.isFinite(n) && n > 0 ? n : 3;
+  }
+
   /**
    * getSubmissions only needs `totalDurationSecondsFromStoredPromptBanks` (deck card durations from merged embed/blob).
    * Does not run full getConfig (assignment resolution, resource-link cross-checks, moduleId, deck normalization, etc.).
@@ -4556,34 +4565,33 @@ export class PromptService {
       versioned_attachments?: Array<Array<{ url?: string; download_url?: string }>>;
       workflow_state?: string;
     };
-    const configuredRows = await Promise.all(
-      assignmentIds.map(async (aid) => {
-        let assignmentExists = false;
-        let assignmentNameFromCanvas: string | undefined;
-        if (assignmentNamesById) {
-          assignmentNameFromCanvas = assignmentNamesById.get(aid);
-          assignmentExists = assignmentNameFromCanvas != null;
-        } else {
-          const assign = await this.canvas.getAssignment(ctx.courseId, aid, domainOverride, token);
-          assignmentExists = !!assign;
-          assignmentNameFromCanvas = assign?.name;
-        }
-        if (!assignmentExists) return null;
-        let list: SubRow[] = [];
-        try {
-          list = await this.canvas.listSubmissions(ctx.courseId, aid, domainOverride, token);
-        } catch {
-          /* assignment exists but submissions may fail; use empty list */
-        }
-        const name = assignmentNameFromCanvas ?? configs[aid]?.assignmentName ?? `Assignment ${aid}`;
-        const withFiles = list.filter(
-          (s) => submissionHasFile(s) || !!this.deepLinkFileStore.getSubmissionToken(ctx.courseId, aid, String(s.user_id ?? '')),
-        );
-        const submissionCount = withFiles.length;
-        const ungradedCount = withFiles.filter((s) => s.workflow_state !== 'graded').length;
-        return { id: aid, name, submissionCount, ungradedCount };
-      }),
-    );
+    const caLimit = this.getConfiguredAssignmentsMaxConcurrent();
+    const configuredRows = await mapWithConcurrency(assignmentIds, caLimit, async (aid) => {
+      let assignmentExists = false;
+      let assignmentNameFromCanvas: string | undefined;
+      if (assignmentNamesById) {
+        assignmentNameFromCanvas = assignmentNamesById.get(aid);
+        assignmentExists = assignmentNameFromCanvas != null;
+      } else {
+        const assign = await this.canvas.getAssignment(ctx.courseId, aid, domainOverride, token);
+        assignmentExists = !!assign;
+        assignmentNameFromCanvas = assign?.name;
+      }
+      if (!assignmentExists) return null;
+      let list: SubRow[] = [];
+      try {
+        list = await this.canvas.listSubmissions(ctx.courseId, aid, domainOverride, token);
+      } catch {
+        /* assignment exists but submissions may fail; use empty list */
+      }
+      const name = assignmentNameFromCanvas ?? configs[aid]?.assignmentName ?? `Assignment ${aid}`;
+      const withFiles = list.filter(
+        (s) => submissionHasFile(s) || !!this.deepLinkFileStore.getSubmissionToken(ctx.courseId, aid, String(s.user_id ?? '')),
+      );
+      const submissionCount = withFiles.length;
+      const ungradedCount = withFiles.filter((s) => s.workflow_state !== 'graded').length;
+      return { id: aid, name, submissionCount, ungradedCount };
+    });
     for (const row of configuredRows) {
       if (row) result.push(row);
     }
