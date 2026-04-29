@@ -63,7 +63,7 @@ function validateConfigSaveClient(input: {
   youtubeClipStartSec: number;
   youtubeClipEndSec: number;
 }): ConfigSaveClientValidation {
-  if (!input.moduleId.trim()) {
+  if (!normalizeCanvasIdString(input.moduleId)) {
     return {
       ok: false,
       blocker: 'module',
@@ -654,10 +654,10 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
 
   /** Align `moduleId` with `modules` option values so the control shows the saved module once lists load. */
   useEffect(() => {
-    const mid = moduleId.trim();
+    const mid = normalizeCanvasIdString(moduleId);
     if (!mid || modules.length === 0) return;
     const hit = modules.find((m) => String(m.id) === mid);
-    if (hit && String(hit.id) !== moduleId) {
+    if (hit && String(hit.id) !== normalizeCanvasIdString(moduleId)) {
       setModuleId(String(hit.id));
     }
   }, [modules, moduleId]);
@@ -665,7 +665,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   /** Ensures saved `moduleId` displays even if the course list loads later or the id was missing from the first fetch. */
   const moduleSelectOptions = useMemo(() => {
     const rows = modules.map((m) => ({ value: String(m.id), label: m.name }));
-    const mid = moduleId.trim();
+    const mid = normalizeCanvasIdString(moduleId);
     if (mid && !rows.some((r) => r.value === mid)) {
       return [
         {
@@ -781,7 +781,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
 
   const handleWizardNext = useCallback(() => {
     if (wizardStep === 1) {
-      if (!moduleId.trim()) {
+      if (!normalizeCanvasIdString(moduleId)) {
         setError('Select a Canvas module to continue.');
         setConfigSaveFieldErrorsVisible(true);
         scrollToConfigSaveBlocker({
@@ -852,7 +852,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         const { assignmentId: newId } = await promptApi.createAssignment(
           assignmentName.trim() || 'ASL Express Assignment',
           {
-            moduleId: moduleId.trim(),
+            moduleId: normalizeCanvasIdString(moduleId),
             assignmentGroupId: assignmentGroupId || undefined,
             newGroupName: assignmentGroupId === '__new__' ? createGroupName.trim() || undefined : undefined,
           }
@@ -874,7 +874,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
             promptMode === 'text' ? prompts.map((p) => sanitizeTeacherFeedbackHtml(p)) : prompts,
           accessCode,
           assignmentName: assignmentName.trim() || undefined,
-          moduleId: moduleId.trim(),
+          moduleId: normalizeCanvasIdString(moduleId),
           assignmentGroupId: assignmentGroupId || undefined,
           newGroupName: assignmentGroupId === '__new__' ? createGroupName.trim() || undefined : undefined,
           rubricId: rubricId || undefined,
@@ -1042,7 +1042,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
 
   const handleCreateNewAssignment = async () => {
     if (!teacher || !hasLti || creatingAssignment) return;
-    if (!moduleId.trim()) {
+    if (!normalizeCanvasIdString(moduleId)) {
       setError('Select a Canvas module. All assignments must be placed in a module.');
       setConfigSaveFieldErrorsVisible(true);
       scrollToConfigSaveBlocker({
@@ -1059,7 +1059,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     try {
       setLastFunction('POST /api/prompt/create-assignment');
       const { assignmentId: newId } = await promptApi.createAssignment(name, {
-        moduleId: moduleId.trim(),
+        moduleId: normalizeCanvasIdString(moduleId),
         assignmentGroupId: assignmentGroupId || undefined,
         newGroupName: assignmentGroupId === '__new__' ? createGroupName.trim() || undefined : undefined,
       });
@@ -1509,7 +1509,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     </div>
   );
 
-  const moduleSaveInvalid = configSaveFieldErrorsVisible && !moduleId.trim();
+  const moduleSaveInvalid = configSaveFieldErrorsVisible && !normalizeCanvasIdString(moduleId);
   const deckSaveInvalid =
     configSaveFieldErrorsVisible && promptMode === 'decks' && configSaveValidation.blocker === 'deck';
   const youtubeSaveInvalid =
@@ -1527,8 +1527,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         id="teacher-config-module-select"
         ref={moduleSelectRef}
         className="prompter-settings-input"
-        value={moduleId}
-        onChange={(e) => setModuleId(e.target.value)}
+        value={normalizeCanvasIdString(moduleId)}
+        onChange={(e) => setModuleId(normalizeCanvasIdString(e.target.value))}
         aria-invalid={moduleSaveInvalid}
         aria-describedby={moduleSaveInvalid ? 'teacher-config-module-save-error' : undefined}
       >
@@ -1590,7 +1590,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     </div>
   );
 
-  const foundationHasModule = Boolean(moduleId.trim());
+  const foundationHasModule = Boolean(normalizeCanvasIdString(moduleId));
 
   const accessCodeSection = (
     <div className="prompter-settings-section prompter-settings-access">
@@ -1886,8 +1886,13 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                     ) : (
                       <div className="prompter-settings-section" aria-hidden />
                     )}
+                    <details className="prompter-settings-details">
+                      <summary className="prompter-settings-details-summary">
+                        <strong>Canvas assignment details</strong>{' '}
+                        <span className="prompter-hint">(name, points, dates, instructions, rubric — optional)</span>
+                      </summary>
+                      <div className="prompter-settings-details-body">
                     <div className="prompter-settings-section prompter-settings-assignment-block">
-                      <label className="prompter-settings-label"><strong>Assignment Settings:</strong></label>
                       <div className="prompter-settings-field">
                         <label className="prompter-settings-label">Assignment Name: <span className="prompter-required">*</span></label>
                         <input type="text" value={assignmentName} onChange={(e) => setAssignmentName(e.target.value)} placeholder="e.g. ASL Warm-Up Submission" className="prompter-settings-input" required />
@@ -1961,6 +1966,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                       </div>
                       {rubricSelector}
                     </div>
+                      </div>
+                    </details>
                   </div>
                     )}
                   {setupUiMode === 'classic' && <div className="prompter-settings-resize-handle" title="Column divider" />}
@@ -2057,8 +2064,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                           </p>
                         )}
                         <p className="prompter-hint">
-                          Filter by curriculum, unit, and section (same as the flashcard deck browser), then add decks below.
-                          Prompts use round-robin across all selected decks.
+                          Prompts rotate across selected decks (round-robin). Add decks from the list below; open filters if you
+                          need to narrow the catalog.
                         </p>
 
                         <div className="prompter-settings-field">
@@ -2080,6 +2087,9 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                           <p className="prompter-error-message">{deckPickerError}</p>
                         )}
 
+                        <details className="prompter-settings-details prompter-settings-details-compact">
+                          <summary className="prompter-settings-details-summary">Filter decks (curriculum, unit, section)</summary>
+                          <div className="prompter-settings-details-body">
                         <div className="prompter-deck-picker-filters teacher-settings-multiselect-row">
                           <div className="teacher-settings-checkbox-group prompter-deck-picker-filter-col">
                             <span className="teacher-settings-label">Curriculum</span>
@@ -2139,6 +2149,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                             </div>
                           </div>
                         </div>
+                          </div>
+                        </details>
 
                         <div className="prompter-settings-field">
                           <label className="prompter-settings-label">Available decks ({deckPickerPlaylists.length})</label>
@@ -2376,6 +2388,9 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                             video above. Values clamp to the video length once the preview loads.
                           </p>
                         </div>
+                        <details className="prompter-settings-details prompter-settings-details-compact">
+                          <summary className="prompter-settings-details-summary">Recording &amp; caption options (optional)</summary>
+                          <div className="prompter-settings-details-body">
                         <div className="prompter-settings-field">
                           <label className="prompter-settings-label" htmlFor="youtube-allow-student-cc">
                             <input
@@ -2431,6 +2446,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                             grading CC
                           </label>
                         </div>
+                          </div>
+                        </details>
                       </div>
                     )}
                     </div>

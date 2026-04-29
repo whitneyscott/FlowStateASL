@@ -343,6 +343,39 @@
   gap: 8px;
 }
 
+/* Phase 3: collapsible assignment / deck / YouTube sections */
+.prompter-settings-details {
+  text-align: left;
+  margin: 12px 0;
+  padding: 4px 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fafbfc;
+}
+
+.prompter-settings-details-compact {
+  margin: 10px 0;
+}
+
+.prompter-settings-details-summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 10px 12px;
+  list-style-position: outside;
+  color: #1e293b;
+}
+
+.prompter-settings-details-summary .prompter-hint {
+  font-weight: 400;
+}
+
+.prompter-settings-details-body {
+  padding: 4px 12px 12px;
+  border-top: 1px solid #e2e8f0;
+  background: #fff;
+  border-radius: 0 0 6px 6px;
+}
+
 .prompter-info-message {
   color: #666;
   margin: 10px 0;

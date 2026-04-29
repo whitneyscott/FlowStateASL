@@ -17,10 +17,12 @@
 - **Step-by-step:** Toggle **Classic (one page)** vs **Step-by-step**; choice is stored in `localStorage` under `flowstateasl:teacher-prompt-config-ui`. Wizard steps: (1) foundation only, (2) assignment details only, (3) prompt content only. **Next** on step 1 requires a module (same messaging as Save). **Back / Next** between steps.
 - **UI sync (module & group selects):** Boot loads **`GET /modules` → groups → rubrics → `GET /config`** in order so the module dropdown has options before config applies. **`configLoadGenRef`** drops stale config responses when switching assignments quickly. **`normalizeCanvasIdString`** on `moduleId` / group from config; **effects** align `moduleId` and `assignmentGroupId` with loaded lists; **orphan module option** if the saved id is missing from the list. **Import** calls **`loadModules()`** before **`load(sid)`** after a successful merge.
 
-## Phase 3 — Collapsible “Canvas assignment details” + advanced blocks
+## Phase 3 — Collapsible “Canvas assignment details” + advanced blocks (shipped)
 
-- Collapse points, dates, attempts, instructions, rubric into **“Assignment details (optional)”**.
-- Default-collapsed **deck filters**, **YouTube advanced**, **sign-to-voice** per earlier approachability plan.
+- **Canvas assignment details:** `<details>` — name, group, points, dates, attempts, instructions, rubric (collapsed by default; warm-up / deck mode note stays visible above).
+- **Deck mode:** curriculum / unit / section filters in a **collapsed** `<details>`; total cards, available decks, and selected decks stay open.
+- **YouTube mode:** student captions, subtitle mask, and sign-to-voice in **Recording & caption options (optional)** `<details>`; URL, preview, and clip controls stay open.
+- **Bugfixes bundled:** module `<select>` uses **trimmed/normalized** `value` + `onChange` so the choice does not fall off options when IDs differ by whitespace; **prompt/instruction images** use **`sanitizeTeacherFeedbackHtmlForDisplay`** so signed `/view?sig=…` URLs are kept for readonly HTML (Quill already had signed URLs; preview was stripping `sig` and breaking `<img>`).
 
 ## Phase 4 — Copy, sticky save, empty state
 

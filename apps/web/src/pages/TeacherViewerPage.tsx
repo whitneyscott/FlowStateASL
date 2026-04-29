@@ -15,7 +15,11 @@ import { YoutubeIframePlayer, type YoutubeIframePlayerHandle } from '../componen
 import { AppBlockingLoader } from '../components/AppBlockingLoader';
 import { CaptionsAccessibilityPanel } from '../components/CaptionsAccessibilityPanel';
 import { TeacherFeedbackRichEditor } from '../components/TeacherFeedbackRichEditor';
-import { feedbackEditorIsEmpty, sanitizeTeacherFeedbackHtml } from '../utils/teacher-feedback-html';
+import {
+  feedbackEditorIsEmpty,
+  sanitizeTeacherFeedbackHtml,
+  sanitizeTeacherFeedbackHtmlForDisplay,
+} from '../utils/teacher-feedback-html';
 import './PrompterPage.css';
 
 interface FeedbackEntry {
@@ -41,7 +45,7 @@ function parseTimestampedFeedback(comments: Array<{ id: number; comment: string 
 }
 
 function FeedbackHtmlSnippet({ html }: { html: string }) {
-  const safe = sanitizeTeacherFeedbackHtml(html);
+  const safe = sanitizeTeacherFeedbackHtmlForDisplay(html);
   if (!safe) return <span className="prompter-viewer-feedback-empty-inline">—</span>;
   return <span className="teacher-feedback-html-display" dangerouslySetInnerHTML={{ __html: safe }} />;
 }
