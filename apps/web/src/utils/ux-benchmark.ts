@@ -1,5 +1,5 @@
 import { appendBridgeLog } from './bridge-log';
-import { readStoredAppMode } from './app-mode';
+import { isDeveloperModeActive, readStoredAppMode } from './app-mode';
 
 export type UxBenchmarkLevel = 'ok' | 'warn' | 'fail';
 
@@ -24,9 +24,10 @@ function nowMs(): number {
   return typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now();
 }
 
+/** Spans and Bridge `ux-b` lines in all app modes; verbose `[UX BENCH]` console is developer-only. */
 function isUxBenchmarkEnabled(): boolean {
   if (typeof window === 'undefined') return false;
-  return readStoredAppMode() === 'developer';
+  return true;
 }
 
 function levelForDuration(durationMs: number, budget: UxBenchmarkBudget): UxBenchmarkLevel {
@@ -36,6 +37,9 @@ function levelForDuration(durationMs: number, budget: UxBenchmarkBudget): UxBenc
 }
 
 function tryConsoleLog(level: UxBenchmarkLevel, name: string, payload: Record<string, unknown>): void {
+  if (!isDeveloperModeActive(readStoredAppMode())) {
+    return;
+  }
   try {
     const ms = typeof payload.durationMs === 'number' ? Math.round(payload.durationMs) : payload.durationMs;
     const prefix = level === 'fail' ? '[UX BENCH][FAIL]' : level === 'warn' ? '[UX BENCH][WARN]' : '[UX BENCH][OK]';

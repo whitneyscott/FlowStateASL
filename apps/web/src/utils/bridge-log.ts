@@ -75,7 +75,10 @@ export function clearBridgeClientFallbackLines(): void {
   }
 }
 
-/** Same policy as BridgeLog UI: only Developer app mode (localStorage; Prompt Manager + Flashcards). */
+/**
+ * Gated client POSTs: Developer mode only, unless the tag is in `shouldAlwaysBridgeLog`
+ * (e.g. `ux-benchmark`, `student-*`).
+ */
 function isBridgeClientDiagnosticsEnabled(): boolean {
   if (typeof window === 'undefined') return false;
   try {
@@ -87,12 +90,16 @@ function isBridgeClientDiagnosticsEnabled(): boolean {
 }
 
 /**
- * Tags that must log even when not in Developer app mode (e.g. student Timer / promptMode).
- * Otherwise students never hit appendBridgeLog and teachers see no lines in the server LTI buffer.
+ * Tags that log + POST even when not in Developer app mode (e.g. student Timer, or UX spans in any mode).
+ * Otherwise `appendBridgeLog` bails before POST and teachers may miss `ux-benchmark` and student client lines.
  */
-/** Log + POST to /api/debug/lti-log even when `aslExpressAppMode` is not `developer` (student prompter, etc.). */
 function shouldAlwaysBridgeLog(tag: string): boolean {
-  return tag.startsWith('student-') || tag === 'prompt-manager-config' || tag === 'prompt-image-debug';
+  return (
+    tag.startsWith('student-') ||
+    tag === 'prompt-manager-config' ||
+    tag === 'prompt-image-debug' ||
+    tag === 'ux-benchmark'
+  );
 }
 
 export function appendBridgeLog(tag: string, message: string, extra?: Record<string, unknown>): void {
@@ -100,7 +107,11 @@ export function appendBridgeLog(tag: string, message: string, extra?: Record<str
 
   if (shouldAlwaysBridgeLog(tag)) {
     try {
-      console.info(`[ASL Bridge] [${tag}]`, message, extra ?? '');
+      if (tag === 'ux-benchmark' && !isBridgeClientDiagnosticsEnabled()) {
+        // POST to server; skip console in Demo/Production so students are not spammed
+      } else {
+        console.info(`[ASL Bridge] [${tag}]`, message, extra ?? '');
+      }
     } catch {
       /* ignore */
     }
