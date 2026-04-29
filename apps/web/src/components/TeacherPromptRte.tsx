@@ -1,5 +1,4 @@
 import Quill from 'quill';
-import { SizeStyle } from 'quill/formats/size';
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 
@@ -22,8 +21,10 @@ const FONT_SIZES = [
   '48px',
 ] as const;
 
+/** Same registry `react-quill` uses — avoid a second copy from `quill/formats/size` import. */
+const SizeStyle = Quill.import('attributors/style/size') as { whitelist: string[] };
 SizeStyle.whitelist = [...FONT_SIZES];
-Quill.register('formats/size', SizeStyle, true);
+Quill.register({ 'formats/size': SizeStyle }, true);
 
 const MODULES = {
   toolbar: [
