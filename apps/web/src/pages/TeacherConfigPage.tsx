@@ -242,6 +242,9 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const youtubeUrlInputRef = useRef<HTMLInputElement | null>(null);
   const youtubeClipEndInputRef = useRef<HTMLInputElement | null>(null);
   const [configSaveFieldErrorsVisible, setConfigSaveFieldErrorsVisible] = useState(false);
+  /** Set when config finishes loading in edit mode; used to show an unsaved-changes hint (Phase 4). */
+  const [configBaselineFingerprint, setConfigBaselineFingerprint] = useState<string | null>(null);
+  const prevLoadingForConfigBaselineRef = useRef(false);
   const [setupUiMode, setSetupUiMode] = useState<'classic' | 'wizard'>(() => {
     try {
       return localStorage.getItem(TEACHER_CONFIG_UI_STORAGE_KEY) === 'wizard' ? 'wizard' : 'classic';
@@ -292,6 +295,84 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       }),
     [moduleId, promptMode, selectedDecks.length, youtubeUrlOrId, youtubeClipStartSec, youtubeClipEndSec],
   );
+
+  const configFormFingerprint = useMemo(() => {
+    const decks = [...selectedDecks].sort((a, b) => a.id.localeCompare(b.id));
+    return JSON.stringify({
+      moduleId: normalizeCanvasIdString(moduleId),
+      accessCode,
+      promptMode,
+      assignmentName,
+      assignmentGroupId,
+      createGroupName,
+      rubricId,
+      pointsPossible,
+      dueAt,
+      unlockAt,
+      lockAt,
+      allowedAttempts,
+      instructions,
+      minutes,
+      prompts,
+      selectedDecks: decks,
+      totalCards,
+      deckFilterCurricula: [...deckFilterCurricula].sort(),
+      deckFilterUnits: [...deckFilterUnits].sort(),
+      deckFilterSections: [...deckFilterSections].sort(),
+      youtubeUrlOrId,
+      youtubeLabel,
+      youtubeClipStartSec,
+      youtubeClipEndSec,
+      youtubeAllowStudentCaptions,
+      youtubeSubtitleMaskEnabled,
+      youtubeSubtitleMaskHeight,
+      signToVoiceRequired,
+    });
+  }, [
+    moduleId,
+    accessCode,
+    promptMode,
+    assignmentName,
+    assignmentGroupId,
+    createGroupName,
+    rubricId,
+    pointsPossible,
+    dueAt,
+    unlockAt,
+    lockAt,
+    allowedAttempts,
+    instructions,
+    minutes,
+    prompts,
+    selectedDecks,
+    totalCards,
+    deckFilterCurricula,
+    deckFilterUnits,
+    deckFilterSections,
+    youtubeUrlOrId,
+    youtubeLabel,
+    youtubeClipStartSec,
+    youtubeClipEndSec,
+    youtubeAllowStudentCaptions,
+    youtubeSubtitleMaskEnabled,
+    youtubeSubtitleMaskHeight,
+    signToVoiceRequired,
+  ]);
+
+  useEffect(() => {
+    setConfigBaselineFingerprint(null);
+  }, [assignmentId]);
+
+  useEffect(() => {
+    if (!assignmentId || assignmentActionMode !== 'edit') {
+      prevLoadingForConfigBaselineRef.current = loading;
+      return;
+    }
+    if (prevLoadingForConfigBaselineRef.current && !loading) {
+      setConfigBaselineFingerprint(configFormFingerprint);
+    }
+    prevLoadingForConfigBaselineRef.current = loading;
+  }, [loading, assignmentId, assignmentActionMode, configFormFingerprint]);
 
   useEffect(() => {
     if (configSaveValidation.ok) {
@@ -1230,6 +1311,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       setLastApiResult('PUT /api/prompt/config', 200, true);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
+      await load(assignmentId);
     } catch (e: unknown) {
       if (e instanceof promptApi.NeedsManualTokenError) {
         setShowManualTokenModal(true);
@@ -1451,6 +1533,39 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     );
   }
 
+  const assignmentConfigUnsaved =
+    canEditAssignmentSettings &&
+    !loading &&
+    !saving &&
+    !resetting &&
+    configBaselineFingerprint !== null &&
+    configFormFingerprint !== configBaselineFingerprint;
+
+  const saveResetActions = (
+    <>
+      <button type="button" onClick={handleSave} disabled={saving} className="prompter-btn-ready">
+        {saving ? (
+          <>
+            <span className="prompter-inline-spinner" />
+            Saving...
+          </>
+        ) : (
+          'Save'
+        )}
+      </button>
+      <button type="button" onClick={handleReset} disabled={saving} className="prompter-btn-secondary">
+        {resetting ? (
+          <>
+            <span className="prompter-inline-spinner" />
+            Resetting...
+          </>
+        ) : (
+          'Reset'
+        )}
+      </button>
+    </>
+  );
+
   const assignmentGroupSelector = (
     <div className="prompter-settings-section">
       <label className="prompter-settings-label"><strong>Assignment Group:</strong></label>
@@ -1465,7 +1580,9 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
             {g.name}
           </option>
         ))}
-        <option value="__new__">+ Create New Group...</option>
+        <option value="__new__" title="Creates a new assignment group in Canvas when you save.">
+          + Create New Group...
+        </option>
       </select>
       {assignmentGroupId === '__new__' && (
         <div className="prompter-new-group-input">
@@ -1617,7 +1734,10 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         <strong>Prompt source</strong>
       </label>
       <p className="prompter-hint">Choose what students respond to (text you write, flashcard decks, or a YouTube clip).</p>
-      <label className="prompter-settings-label prompter-settings-label-block">
+      <label
+        className="prompter-settings-label prompter-settings-label-block"
+        title="You write the prompts; students read them and record."
+      >
         <input
           type="radio"
           name="promptMode"
@@ -1625,9 +1745,12 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
           checked={promptMode === 'text'}
           onChange={() => setPromptMode('text')}
         />{' '}
-        Text prompts (manual)
+        Text prompts (you write them)
       </label>
-      <label className="prompter-settings-label prompter-settings-label-block">
+      <label
+        className="prompter-settings-label prompter-settings-label-block"
+        title="Prompts come from your flashcard decks (Sprout), shown one at a time during recording."
+      >
         <input
           type="radio"
           name="promptMode"
@@ -1637,7 +1760,10 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         />{' '}
         Deck prompts (from flashcard decks)
       </label>
-      <label className="prompter-settings-label prompter-settings-label-block">
+      <label
+        className="prompter-settings-label prompter-settings-label-block"
+        title="Students watch a clip you choose, then record their response."
+      >
         <input
           type="radio"
           name="promptMode"
@@ -1645,17 +1771,22 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
           checked={promptMode === 'youtube'}
           onChange={() => setPromptMode('youtube')}
         />{' '}
-        YouTube video prompt
+        YouTube clip as the prompt
       </label>
     </div>
   );
 
   const foundationBlock = (
     <div className="prompter-settings-foundation">
-      <h3 className="prompter-settings-subsection-title">Module, access &amp; prompt type</h3>
+      <h3
+        className="prompter-settings-subsection-title"
+        title="The module is the section of your Canvas course where students find this assignment and open the prompt tool."
+      >
+        Where it lives, access, and what students see
+      </h3>
       <p className="prompter-hint">
-        Set the Canvas module, student access code, and prompt source first. Prompt text, decks, and YouTube options stay in
-        sync with what you save.
+        Set the course module, the student access code, and the kind of prompt first. Everything below stays in sync with
+        what you save.
       </p>
       {moduleSelector}
       {accessCodeSection}
@@ -1668,7 +1799,10 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       {configBlockingOverlay}
     <div className="prompter-page">
       <div className="prompter-page-inner">
-        <h1 className="prompter-settings-page-title">Prompt Manager Settings</h1>
+        <h1 className="prompter-settings-page-title">Set up prompts for your assignment</h1>
+        <p className="prompter-settings-page-subtitle">
+          Pick a Canvas assignment, add text prompts or media, then save. Students open the activity from the course module.
+        </p>
         {error && (
           <div className="prompter-alert-error" role="alert" tabIndex={-1}>
             {error}
@@ -1686,6 +1820,19 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                 <h2 className="prompter-settings-card-title">Assignments</h2>
                   <div className="prompter-settings-section">
                     <label className="prompter-settings-label">Action</label>
+                    {!loadingAssignments && configuredAssignments.length === 0 && (
+                      <div
+                        className="prompter-settings-empty-assignments"
+                        role="status"
+                        aria-label="No Prompt Manager assignments yet"
+                      >
+                        <p className="prompter-settings-empty-assignments-title">Start here</p>
+                        <p className="prompter-hint">
+                          No assignments in this course use the prompt tool yet. Use <strong>New Assignment</strong> to
+                          create one, or <strong>Import</strong> to copy settings from another assignment.
+                        </p>
+                      </div>
+                    )}
                     <div className="prompter-settings-actions-row prompter-settings-actions-row-mb-sm">
                       <button
                         type="button"
@@ -1815,7 +1962,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
 
         {showForm && (
           <div className="prompter-settings-card">
-            <h2 className="prompter-settings-card-title">Configure Assignment</h2>
+            <h2 className="prompter-settings-card-title">Set up this assignment</h2>
             {!canEditAssignmentSettings ? (
               <p className="prompter-hint">
                 Create an assignment first, then switch to Edit mode to configure prompt settings.
@@ -1838,12 +1985,20 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                     Step-by-step
                   </button>
                 </div>
+                {assignmentConfigUnsaved && (
+                  <p className="prompter-hint prompter-settings-unsaved-hint" role="status">
+                    You have unsaved changes — use <strong>Save</strong> when you are done editing.
+                  </p>
+                )}
+                <div className="prompter-settings-save-row prompter-settings-save-row--top prompter-settings-actions-row">
+                  {saveResetActions}
+                </div>
                 {setupUiMode === 'wizard' && (
                   <>
                     <p className="prompter-hint" role="status">
                       Step {wizardStep} of 3
                       {wizardStep === 1
-                        ? ' — Module, access & prompt type'
+                        ? ' — Where it lives, access, and prompt type'
                         : wizardStep === 2
                           ? ' — Assignment details in Canvas'
                           : ' — Prompt content (text, decks, or YouTube)'}
@@ -2455,13 +2610,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
                   )}
                 </div>
                 )}
-                <div className="prompter-settings-save-row prompter-settings-actions-row">
-                  <button type="button" onClick={handleSave} disabled={saving} className="prompter-btn-ready">
-                    {saving ? <><span className="prompter-inline-spinner" /> Saving...</> : 'Save'}
-                  </button>
-                  <button type="button" onClick={handleReset} disabled={saving} className="prompter-btn-secondary">
-                    {resetting ? <><span className="prompter-inline-spinner" /> Resetting...</> : 'Reset'}
-                  </button>
+                <div className="prompter-settings-save-sticky-wrap">
+                  <div className="prompter-settings-save-row prompter-settings-actions-row">{saveResetActions}</div>
                 </div>
               </div>
             )}
@@ -2472,11 +2622,15 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       {importModalOpen && (
         <div className="prompter-modal-overlay" onClick={closeImportModal}>
           <div className="prompter-modal prompter-modal-wide" onClick={(e) => e.stopPropagation()}>
-            <h3 className="prompter-settings-card-title" style={{ marginTop: 0 }}>
-              Import Prompt Manager settings
+            <p className="prompter-hint" style={{ marginTop: 0 }}>
+              Copy prompt settings from another assignment in this course (or apply a title-based template) so you do not
+              have to rebuild everything by hand.
+            </p>
+            <h3 className="prompter-settings-card-title" style={{ marginTop: '0.75rem' }}>
+              Import settings
             </h3>
             <p className="prompter-hint">
-              For assignments whose titles match TRUE+WAY naming patterns, merge default Prompt Manager fields from the template.
+              For assignments whose titles match TRUE+WAY naming patterns, merge default prompt fields from the template.
             </p>
             <div className="prompter-settings-actions-row prompter-settings-actions-row-mb-sm">
               <button
@@ -2495,8 +2649,8 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
             )}
             <hr style={{ border: 'none', borderTop: '1px solid rgba(0, 0, 0, 0.12)', margin: '1rem 0' }} />
             <p className="prompter-hint">
-              Copy settings from another assignment in this course: choose a <strong>source assignment</strong> and{' '}
-              <strong>module</strong>, then <strong>Import selected source assignment</strong>.
+              Choose a <strong>source assignment</strong> and the <strong>Canvas module</strong> where the tool should
+              appear, then run <strong>Import selected source assignment</strong>.
             </p>
             {importModalBusy && (
               <p className="prompter-hint" role="status" aria-live="polite">
@@ -2540,8 +2694,13 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
               <p className="prompter-hint">Loading modules…</p>
             )}
             <label className="prompter-settings-label">Prompt type</label>
-            <p className="prompter-hint" style={{ marginTop: 4 }}>
-              Auto reads the source assignment’s hidden config (when present) and infers mode; pick a type only if you need to override.
+            <p
+              className="prompter-hint"
+              style={{ marginTop: 4 }}
+              title="Auto uses the source assignment’s saved prompt mode when available; pick Text, Decks, or YouTube only if you need to force a type."
+            >
+              <strong>Auto (recommended)</strong> reads the source assignment’s saved setup when present. Pick a type only
+              if you need to override.
             </p>
             <select
               className="prompter-settings-input"

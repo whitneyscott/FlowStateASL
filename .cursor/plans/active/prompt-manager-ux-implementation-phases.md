@@ -24,11 +24,12 @@
 - **YouTube mode:** student captions, subtitle mask, and sign-to-voice in **Recording & caption options (optional)** `<details>`; URL, preview, and clip controls stay open.
 - **Bugfixes bundled:** module `<select>` uses **trimmed/normalized** `value` + `onChange` so the choice does not fall off options when IDs differ by whitespace; **prompt/instruction images** use **`sanitizeTeacherFeedbackHtmlForDisplay`** so signed `/view?sig=…` URLs are kept for readonly HTML (Quill already had signed URLs; preview was stripping `sig` and breaking `<img>`).
 
-## Phase 4 — Copy, sticky save, empty state
+## Phase 4 — Copy, sticky save, empty state (shipped)
 
-- Plain-language H1/subtitle, import modal lead-in, tooltips for jargon.
-- **Sticky** Save row (or duplicate at top).
-- **Empty assignments** short “Start here” panel.
+- Plain-language H1/subtitle, import modal lead-in, tooltips on prompt-type radios and foundation heading.
+- **Sticky** Save/Reset row at the bottom of the configure card plus a **duplicate** row under the Classic / Step-by-step toggle; optional **unsaved changes** hint when the form differs from the last loaded config.
+- **Empty assignments** “Start here” panel when the course has no Prompt Manager assignments yet.
+- **Reset** calls `load` after a successful server reset so the form and baseline stay aligned.
 
 ## Phase 5 — QA pass
 
