@@ -6212,7 +6212,16 @@ export class PromptService {
       });
     }
     const mime = (meta.content_type ?? '').trim().toLowerCase();
-    if (!mime.startsWith('image/')) {
+    const looksLikeImageByName = PromptService.isLikelyImagePickerFile({
+      content_type: mime,
+      display_name: meta.display_name ?? '',
+    });
+    if (!mime.startsWith('image/') && !looksLikeImageByName) {
+      appendLtiLog('prompt-image-debug', 'streamCoursePromptImage rejected non-image', {
+        fileId,
+        contentType: meta.content_type ?? '(none)',
+        displayName: meta.display_name ?? '(none)',
+      });
       throw new BadRequestException('Not an image file');
     }
     const downloadUrl = meta.url?.trim();
