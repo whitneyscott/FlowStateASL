@@ -248,8 +248,17 @@ const TEACHER_PATTERNS = [
   'ta',
 ];
 
-// TEMP DIAGNOSTIC FLAG: set to false (or remove block) to disable resize bridge logging.
-const ENABLE_RESIZE_DEBUG_LOG = true;
+const ENABLE_TEACHER_VIEWER_DEBUG_LOG =
+  import.meta.env.DEV &&
+  (new URLSearchParams(window.location.search).has('debugTeacherViewer') ||
+    window.localStorage.getItem('fs_debug_teacher_viewer') === '1');
+
+function teacherViewerDbg(...args: unknown[]): void {
+  if (ENABLE_TEACHER_VIEWER_DEBUG_LOG) console.log(...args);
+}
+
+// TEMP DIAGNOSTIC FLAG: opt-in via debug gate above.
+const ENABLE_RESIZE_DEBUG_LOG = ENABLE_TEACHER_VIEWER_DEBUG_LOG;
 
 function isTeacher(roles: string): boolean {
   if (!roles || typeof roles !== 'string') return false;
@@ -801,8 +810,8 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
       setLastApiResult('GET /api/prompt/submissions', 200, true);
       const subsList = Array.isArray(subs) ? subs : [];
       setSubmissions(subsList);
-      if (isDev && subsList.length > 0) {
-        console.log('[TeacherViewer] getSubmissions result', {
+      if (ENABLE_TEACHER_VIEWER_DEBUG_LOG && subsList.length > 0) {
+        teacherViewerDbg('[TeacherViewer] getSubmissions result', {
           total: subsList.length,
           withVideoUrl: subsList.filter((s) => !!s.videoUrl).length,
         });
@@ -875,11 +884,14 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
 
   const loadConfiguredAssignments = useCallback(async () => {
     if (!teacher || !context?.courseId) {
-      console.log('[TeacherViewer] loadConfiguredAssignments SKIPPED', { teacher: !!teacher, courseId: context?.courseId });
+      teacherViewerDbg('[TeacherViewer] loadConfiguredAssignments SKIPPED', {
+        teacher: !!teacher,
+        courseId: context?.courseId,
+      });
       setLoadingAssignments(false);
       return;
     }
-    console.log('[TeacherViewer] loadConfiguredAssignments CALLING /api/prompt/configured-assignments');
+    teacherViewerDbg('[TeacherViewer] loadConfiguredAssignments CALLING /api/prompt/configured-assignments');
     setLoadingAssignments(true);
     try {
       setLastFunction('GET /api/prompt/configured-assignments');

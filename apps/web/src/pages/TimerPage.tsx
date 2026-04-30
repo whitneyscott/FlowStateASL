@@ -16,6 +16,16 @@ import { YoutubeIframePlayer } from '../components/YoutubeIframePlayer';
 import { TeacherAuthoredHtmlBlock } from '../components/TeacherAuthoredHtmlBlock';
 import './PrompterPage.css';
 
+const ENABLE_TIMER_DEBUG_LOG =
+  import.meta.env.DEV &&
+  typeof window !== 'undefined' &&
+  (new URLSearchParams(window.location.search).has('debugTimer') ||
+    window.localStorage.getItem('fs_debug_timer') === '1');
+
+function timerDbg(...args: unknown[]): void {
+  if (ENABLE_TIMER_DEBUG_LOG) console.log(...args);
+}
+
 const TEACHER_ROLE_PATTERNS = [
   'instructor',
   'administrator',
@@ -406,7 +416,7 @@ export default function TimerPage({ context }: TimerPageProps) {
       blob: Blob | null,
       deckTimeline?: promptApi.DeckTimelineEntry[],
     ) => {
-      console.log('[TimerPage:doSubmit] ENTER', {
+      timerDbg('[TimerPage:doSubmit] ENTER', {
         hasBlob: !!blob,
         blobSize: blob?.size,
         promptLength: promptSnapshot?.length,
@@ -471,49 +481,52 @@ export default function TimerPage({ context }: TimerPageProps) {
           );
         }
         if (!isDeckSubmit) {
-          console.log('[TimerPage:doSubmit] Step 1: savePrompt');
+          timerDbg('[TimerPage:doSubmit] Step 1: savePrompt');
           setLastFunction('POST /api/prompt/save-prompt');
           await promptApi.savePrompt(promptSnapshot, effectiveAssignmentId);
           setLastApiResult('POST /api/prompt/save-prompt', 200, true);
-          console.log('[TimerPage:doSubmit] savePrompt OK');
+          timerDbg('[TimerPage:doSubmit] savePrompt OK');
         } else {
-          console.log('[TimerPage:doSubmit] Step 1: skip savePrompt (deck submission; deckTimeline is authoritative)');
+          timerDbg('[TimerPage:doSubmit] Step 1: skip savePrompt (deck submission; deckTimeline is authoritative)');
         }
 
         if (isDeepLink && blob) {
           lastEndpoint = 'POST /api/prompt/submit-deep-link';
-          console.log('[TimerPage:doSubmit] Step 2a: submitDeepLink (isDeepLink=true)', { blobSize: blob.size });
+          timerDbg('[TimerPage:doSubmit] Step 2a: submitDeepLink (isDeepLink=true)', { blobSize: blob.size });
           setLastFunction('POST /api/prompt/submit-deep-link');
           const result = await promptApi.submitDeepLink(blob, `asl_submission_${Date.now()}.webm`, effectiveAssignmentId);
           setLastApiResult('POST /api/prompt/submit-deep-link', 200, true);
           let html: string;
           if (typeof result === 'object' && result?.dev) {
             const dev = result.dev;
-            console.log('[TimerPage:doSubmit]', dev.message);
-            console.log('[TimerPage:doSubmit] Video title for submission:', {
+            timerDbg('[TimerPage:doSubmit]', dev.message);
+            timerDbg('[TimerPage:doSubmit] Video title for submission:', {
               contentItemTitle: dev.contentItemTitle ?? '(not returned)',
               videoTitle: dev.videoTitle ?? '(not returned)',
               length: (dev.contentItemTitle ?? dev.videoTitle ?? '').length,
             });
             if (dev.contentItemTitle) {
-              console.log('[TimerPage:doSubmit] Content item title sent to Canvas (should appear on submission):', dev.contentItemTitle);
+              timerDbg(
+                '[TimerPage:doSubmit] Content item title sent to Canvas (should appear on submission):',
+                dev.contentItemTitle,
+              );
             }
             await new Promise((r) => setTimeout(r, dev.delayMs ?? 2500));
             html = result.html;
           } else {
             html = typeof result === 'string' ? result : '';
           }
-          console.log('[TimerPage:doSubmit] submitDeepLink OK, document.write...');
+          timerDbg('[TimerPage:doSubmit] submitDeepLink OK, document.write...');
           document.open();
           document.write(html);
           document.close();
-          console.log('[TimerPage:doSubmit] document.write done → Canvas panel should load');
+          timerDbg('[TimerPage:doSubmit] document.write done → Canvas panel should load');
           return;
         }
         if (!isDeepLink) {
           // PHP parity: submit_prompt_first.php then upload_handler.php — submission row must exist before file attach.
           lastEndpoint = 'POST /api/prompt/submit';
-          console.log('[TimerPage:doSubmit] Step 2: submitPrompt (create submission row; submit_prompt_first.php)');
+          timerDbg('[TimerPage:doSubmit] Step 2: submitPrompt (create submission row; submit_prompt_first.php)');
           setLastFunction('POST /api/prompt/submit');
           // #region agent log
           appendBridgeLog('agent-debug', 'TimerPage doSubmit: before submitPrompt', {
@@ -534,10 +547,10 @@ export default function TimerPage({ context }: TimerPageProps) {
             },
           );
           setLastApiResult('POST /api/prompt/submit', 200, true);
-          console.log('[TimerPage:doSubmit] submitPrompt OK');
+          timerDbg('[TimerPage:doSubmit] submitPrompt OK');
           if (blob) {
             lastEndpoint = 'POST /api/prompt/upload-video';
-            console.log('[TimerPage:doSubmit] Step 3: uploadVideo (attach to row; upload_handler.php)', {
+            timerDbg('[TimerPage:doSubmit] Step 3: uploadVideo (attach to row; upload_handler.php)', {
               blobSize: blob.size,
             });
             setLastFunction('POST /api/prompt/upload-video');
@@ -570,11 +583,11 @@ export default function TimerPage({ context }: TimerPageProps) {
               },
             );
             setLastApiResult('POST /api/prompt/upload-video', 200, true);
-            console.log('[TimerPage:doSubmit] uploadVideo OK', result);
+            timerDbg('[TimerPage:doSubmit] uploadVideo OK', result);
           }
         }
         setPhase('done');
-        console.log('[TimerPage:doSubmit] DONE');
+        timerDbg('[TimerPage:doSubmit] DONE');
       } catch (e) {
         console.error('[TimerPage:doSubmit] FAILED', { lastEndpoint, error: e });
         const rawMessage = e instanceof Error ? e.message : 'Submit failed';
@@ -647,7 +660,7 @@ export default function TimerPage({ context }: TimerPageProps) {
             audioBitsPerSecond: profile.audioBitsPerSecond,
             mimeType: pickSupportedMimeType() || 'browser-default',
           };
-          console.log('[TimerPage:preflight] capture profile selected', telemetry);
+          timerDbg('[TimerPage:preflight] capture profile selected', telemetry);
           streamRef.current = stream;
           setCaptureProfile(telemetry);
           setPreflightReady(true);
@@ -1174,7 +1187,7 @@ export default function TimerPage({ context }: TimerPageProps) {
       if (autoFinishFiredRef.current) return;
       autoFinishFiredRef.current = true;
     }
-    console.log('[TimerPage] Timer expired (recordSecondsLeft=0), calling finishAndSubmit');
+    timerDbg('[TimerPage] Timer expired (recordSecondsLeft=0), calling finishAndSubmit');
     finishAndSubmit();
   }, [
     phase,
@@ -1231,7 +1244,7 @@ export default function TimerPage({ context }: TimerPageProps) {
     };
     recorder.onstop = () => {
       const blob = new Blob(chunksRef.current, { type: 'video/webm' });
-      console.log('[TimerPage:recorder.onstop] MediaRecorder stopped', {
+      timerDbg('[TimerPage:recorder.onstop] MediaRecorder stopped', {
         blobSize: blob.size,
         chunksCount: chunksRef.current.length,
         submitOnStop: submitOnStopRef.current,
@@ -1251,7 +1264,7 @@ export default function TimerPage({ context }: TimerPageProps) {
               }))
             : undefined;
         lastDeckTimelineRef.current = deckTimeline;
-        console.log('[TimerPage:recorder.onstop] Calling doSubmit...');
+        timerDbg('[TimerPage:recorder.onstop] Calling doSubmit...');
         doSubmit(promptSnapshot, blob, deckTimeline);
       }
     };
@@ -1722,10 +1735,6 @@ export default function TimerPage({ context }: TimerPageProps) {
         <div className="prompter-card">
           <h1>Done</h1>
           <p className="prompter-info-message">Your submission has been sent to Canvas.</p>
-          <p className="prompter-info-message prompter-info-message-spaced">
-            You can close this tab and return to the Canvas module where you started this prompt submission to continue
-            in your course.
-          </p>
         </div>
       </div>
     </>

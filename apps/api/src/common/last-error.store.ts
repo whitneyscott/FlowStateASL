@@ -3,6 +3,21 @@ const ltiLog: string[] = [];
 const MAX_LTI_LOG_LINES = 400;
 let lastCanvasApiResponse: { status: number; statusText: string; bodyPreview: string } | null = null;
 
+function shouldEmitLtiLogToConsole(tag: string): boolean {
+  const enabled = process.env.ENABLE_LTI_LOG_CONSOLE === '1' || process.env.ENABLE_LTI_LOG_CONSOLE === 'true';
+  if (!enabled) return false;
+
+  const raw = (process.env.LTI_LOG_CONSOLE_TAGS ?? '').trim();
+  if (!raw) return true; // enabled globally
+
+  const tags = raw
+    .split(',')
+    .map((t) => t.trim())
+    .filter(Boolean);
+  if (tags.includes('*')) return true;
+  return tags.includes(tag);
+}
+
 export type PlacementLtiVersion = '1.1' | '1.3' | 'unknown';
 export type PlacementPath =
   | 'assignment_anchor'
@@ -39,7 +54,7 @@ export function appendLtiLog(tag: string, message: string, extra?: Record<string
   const line = `[${new Date().toISOString()}] [${tag}] ${message}${extra ? ' ' + JSON.stringify(extra) : ''}`;
   ltiLog.push(line);
   while (ltiLog.length > MAX_LTI_LOG_LINES) ltiLog.shift();
-  console.info(line);
+  if (shouldEmitLtiLogToConsole(tag)) console.info(line);
 }
 
 export function appendPlacementMarker(marker: PlacementMarker): void {
