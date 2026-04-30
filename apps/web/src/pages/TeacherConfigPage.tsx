@@ -1613,6 +1613,79 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     setSearchParams,
   ]);
 
+  const detectedDeckSizeFromStoredBanks = useMemo(() => {
+    if (promptMode !== 'decks') return 0;
+    const banks = config?.videoPromptConfig?.storedPromptBanks;
+    if (!Array.isArray(banks) || banks.length === 0) return 0;
+    const lens = banks.map((b) => (Array.isArray(b) ? b.length : 0));
+    return Math.max(0, ...lens);
+  }, [promptMode, config?.videoPromptConfig?.storedPromptBanks]);
+
+  const autoRubricCriteriaCacheRef = useRef(autoRubricCriteriaCache);
+  autoRubricCriteriaCacheRef.current = autoRubricCriteriaCache;
+
+  const fetchRubricDetailsForIds = useCallback(async (rubricIds: string[]) => {
+    const ids = Array.from(new Set(rubricIds.map((s) => String(s ?? '').trim()).filter(Boolean)));
+    if (ids.length === 0) return;
+
+    const prev = autoRubricCriteriaCacheRef.current;
+    const toFetch = ids.filter((id) => !prev[id]);
+    if (toFetch.length === 0) return;
+
+    setAutoRubricFetching(true);
+    setAutoRubricFetchError(null);
+    try {
+      const next: Record<string, { criteriaCount: number; pointsPossible: number; title: string }> = {};
+      for (const rid of toFetch) {
+        next[rid] = await promptApi.getRubricDetails(rid);
+      }
+      setAutoRubricCriteriaCache((p) => ({ ...p, ...next }));
+    } catch (e) {
+      setAutoRubricFetchError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAutoRubricFetching(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!autoRubricModalOpen) return;
+    if (promptMode !== 'decks') return;
+    if (detectedDeckSizeFromStoredBanks <= 0) return;
+    if (rubrics.length === 0) return;
+    const cache = autoRubricCriteriaCacheRef.current;
+    const missing = rubrics.map((r) => r.id).filter((id) => id && !cache[id]);
+    if (missing.length === 0) return;
+    void fetchRubricDetailsForIds(missing);
+  }, [
+    autoRubricModalOpen,
+    promptMode,
+    detectedDeckSizeFromStoredBanks,
+    rubrics,
+    fetchRubricDetailsForIds,
+  ]);
+
+  const autoRubricMatches = useMemo(() => {
+    const N = detectedDeckSizeFromStoredBanks;
+    if (promptMode !== 'decks' || N <= 0 || rubrics.length === 0) {
+      return {
+        exact: [] as Array<{ id: string; title: string; pointsPossible: number; criteriaCount: number }>,
+        overall: [] as Array<{ id: string; title: string; pointsPossible: number; criteriaCount: number }>,
+      };
+    }
+    const rows = rubrics
+      .map((r) => {
+        const d = autoRubricCriteriaCache[r.id];
+        const criteriaCount = d?.criteriaCount ?? 0;
+        const title = d?.title?.trim() ? d.title : r.title;
+        const pointsPossible = Number.isFinite(Number(d?.pointsPossible)) ? Number(d?.pointsPossible) : r.pointsPossible;
+        return { id: r.id, title, pointsPossible, criteriaCount };
+      })
+      .filter((x) => x.criteriaCount > 0);
+    const exact = rows.filter((r) => r.criteriaCount === N);
+    const overall = rows.filter((r) => r.criteriaCount === N + 1);
+    return { exact, overall };
+  }, [promptMode, detectedDeckSizeFromStoredBanks, rubrics, autoRubricCriteriaCache]);
+
   if (!teacher || !context) {
     return (
       <>
@@ -1704,88 +1777,6 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const rubricInCourseList = !!rubricIdTrim && rubrics.some((r) => r.id === rubricIdTrim);
   /** Config/assignment rubric id does not match any loaded course rubric option (yet or at all). */
   const rubricOrphanFromAssignment = !!rubricIdTrim && !rubricInCourseList;
-
-  const detectedDeckSizeFromStoredBanks = useMemo(() => {
-    if (promptMode !== 'decks') return 0;
-    const banks = config?.videoPromptConfig?.storedPromptBanks;
-    if (!Array.isArray(banks) || banks.length === 0) return 0;
-    const lens = banks.map((b) => (Array.isArray(b) ? b.length : 0));
-    return Math.max(0, ...lens);
-  }, [promptMode, config?.videoPromptConfig?.storedPromptBanks]);
-
-  const fetchRubricDetailsForIds = useCallback(
-    async (rubricIds: string[]) => {
-      const ids = Array.from(new Set(rubricIds.map((s) => String(s ?? '').trim()).filter(Boolean)));
-      if (ids.length === 0) return;
-
-      setAutoRubricFetching(true);
-      setAutoRubricFetchError(null);
-      try {
-        // Small concurrency limit to avoid flooding the API for large courses.
-        const CONCURRENCY = 6;
-        const next: Record<string, { criteriaCount: number; pointsPossible: number; title: string }> = {};
-        let idx = 0;
-        const workers = Array.from({ length: Math.min(CONCURRENCY, ids.length) }, async () => {
-          while (idx < ids.length) {
-            const i = idx++;
-            const rid = ids[i];
-            if (!rid) continue;
-            if (autoRubricCriteriaCache[rid]) {
-              next[rid] = autoRubricCriteriaCache[rid];
-              continue;
-            }
-            const details = await promptApi.getRubricDetails(rid);
-            next[rid] = details;
-          }
-        });
-        await Promise.all(workers);
-        setAutoRubricCriteriaCache((prev) => ({ ...prev, ...next }));
-      } catch (e) {
-        setAutoRubricFetchError(e instanceof Error ? e.message : String(e));
-      } finally {
-        setAutoRubricFetching(false);
-      }
-    },
-    [autoRubricCriteriaCache],
-  );
-
-  useEffect(() => {
-    if (!autoRubricModalOpen) return;
-    if (promptMode !== 'decks') return;
-    if (detectedDeckSizeFromStoredBanks <= 0) return;
-    if (rubrics.length === 0) return;
-    const missing = rubrics
-      .map((r) => r.id)
-      .filter((id) => id && !autoRubricCriteriaCache[id]);
-    if (missing.length === 0) return;
-    void fetchRubricDetailsForIds(missing);
-  }, [
-    autoRubricModalOpen,
-    promptMode,
-    detectedDeckSizeFromStoredBanks,
-    rubrics,
-    autoRubricCriteriaCache,
-    fetchRubricDetailsForIds,
-  ]);
-
-  const autoRubricMatches = useMemo(() => {
-    const N = detectedDeckSizeFromStoredBanks;
-    if (promptMode !== 'decks' || N <= 0 || rubrics.length === 0) {
-      return { exact: [] as Array<{ id: string; title: string; pointsPossible: number; criteriaCount: number }>, overall: [] as Array<{ id: string; title: string; pointsPossible: number; criteriaCount: number }> };
-    }
-    const rows = rubrics
-      .map((r) => {
-        const d = autoRubricCriteriaCache[r.id];
-        const criteriaCount = d?.criteriaCount ?? 0;
-        const title = d?.title?.trim() ? d.title : r.title;
-        const pointsPossible = Number.isFinite(Number(d?.pointsPossible)) ? Number(d?.pointsPossible) : r.pointsPossible;
-        return { id: r.id, title, pointsPossible, criteriaCount };
-      })
-      .filter((x) => x.criteriaCount > 0);
-    const exact = rows.filter((r) => r.criteriaCount === N);
-    const overall = rows.filter((r) => r.criteriaCount === N + 1);
-    return { exact, overall };
-  }, [promptMode, detectedDeckSizeFromStoredBanks, rubrics, autoRubricCriteriaCache]);
 
   const rubricSelector = (
     <div className="prompter-settings-section">
