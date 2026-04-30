@@ -1306,8 +1306,8 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     [embedSubmissionVtt, submissionCaptionsVtt],
   );
   /**
-   * Teacher grading with a selected submission: stack order is video, then deck “Active item” (prompt only;
-   * rubric stays in the left sidebar), then timestamped freeform for deck+grading; non-deck keeps freeform after video.
+   * Teacher grading with a selected submission: stack order is video, then deck Active item (prompt + optional
+   * quick rating row for the active card — full rubric table stays in the left sidebar only), then freeform.
    */
   const viewerGradingStackOrder = gradingMode && !!teacher && !!current && !noSubmissionsInGradingMode;
   /** OS/browser live-caption tips: only where transcript-style playback matters (not deck or static text). */
@@ -1516,6 +1516,24 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     if (aligned != null) return aligned;
     return matches.sort((a, b) => a - b)[0];
   }, [activeDeckIndex, resolvedRubricDeckIndexMap, rubricPromptIndexMap]);
+
+  /**
+   * Single rubric row whose rating buttons appear under the video for the active deck card (center column only).
+   * Full rubric remains in the left sidebar; this is the quick-grade strip for the current segment.
+   */
+  const quickGradeRubricRowIndex = useMemo(() => {
+    if (rubric.length === 0) return -1;
+    if (activeDeckRubricRowIndex >= 0 && activeDeckRubricRowIndex < rubric.length) {
+      return activeDeckRubricRowIndex;
+    }
+    if (activeDeckIndex < 0) return -1;
+    if (rubric.length === deckTimeline.length && activeDeckIndex < rubric.length) {
+      return activeDeckIndex;
+    }
+    if (rubric.length === 1) return 0;
+    if (activeDeckIndex < rubric.length) return activeDeckIndex;
+    return -1;
+  }, [rubric, activeDeckRubricRowIndex, activeDeckIndex, deckTimeline.length]);
 
   const activeCardRubricNotFullCredit = useMemo(() => {
     if (activeDeckRubricRowIndex < 0 || activeDeckRubricRowIndex >= rubric.length) return false;
@@ -2472,7 +2490,60 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                 <h2 className="prompter-viewer-section-heading">Active item</h2>
               </div>
               <div className="prompter-viewer-center-row prompter-viewer-center-row--active-item">
-                {activeDeckPrompt ? (
+                {activeDeckPrompt && quickGradeRubricRowIndex >= 0 && rubric[quickGradeRubricRowIndex] ? (
+                  <div className="prompter-viewer-active-item-panel prompter-viewer-active-item-panel--stacked">
+                    <div className="prompter-viewer-active-item-ratings">
+                      {rubric[quickGradeRubricRowIndex].ratings?.map((r) => {
+                        const c = rubric[quickGradeRubricRowIndex];
+                        const critId = String(c.id ?? quickGradeRubricRowIndex);
+                        const selectedRatingId =
+                          rubricDraft[critId]?.rating_id ?? getRubricRowAssessment(rubricAssessment, c, critId)?.rating_id;
+                        const rid = String(r.id ?? '');
+                        const pts = r.points ?? 0;
+                        const isSelected = selectedRatingId != null && String(selectedRatingId) === rid;
+                        return (
+                          <button
+                            key={`active-${rid}`}
+                            type="button"
+                            className={`prompter-viewer-rubric-rating prompter-viewer-rubric-rating--active-item ${isSelected ? 'selected' : ''}`}
+                            disabled={!teacher}
+                            onClick={() => teacher && handleRubricRatingClick(critId, rid, pts)}
+                          >
+                            {r.description ?? ''} ({pts} pts)
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="prompter-viewer-active-item-meta">
+                      <div className="prompter-viewer-active-item-time-prompt-inline">
+                        <span className="prompter-viewer-active-item-time">
+                          {formatTime(Math.floor(activeDeckPrompt.startSec))}
+                        </span>
+                        <div
+                          className="prompter-viewer-active-item-prompt-html"
+                          dangerouslySetInnerHTML={{ __html: activeDeckPrompt.title || '—' }}
+                        />
+                        {showSourceCardButton && (
+                          <button
+                            type="button"
+                            className="prompter-viewer-show-source-card-btn prompter-viewer-show-source-card-btn--inline-prompt"
+                            disabled={!activeDeckSproutVideoId || !activeDeckSproutSecurityToken}
+                            title={
+                              !activeDeckSproutVideoId
+                                ? 'No Sprout source video is recorded for this card on the timeline'
+                                : !activeDeckSproutSecurityToken
+                                  ? 'No Sprout security token for this card (sync decks or re-submit to refresh)'
+                                  : 'Pause submission video and open the Sprout source for this card'
+                            }
+                            onClick={openSourceCardModal}
+                          >
+                            Show me the card
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ) : activeDeckPrompt ? (
                   <div className="prompter-viewer-active-item-panel prompter-viewer-active-item-panel--prompt-only prompter-viewer-active-item-panel--stacked">
                     <div className="prompter-viewer-active-item-meta">
                       <div className="prompter-viewer-active-item-time-prompt-inline">
@@ -2504,7 +2575,8 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                     </div>
                     {rubric.length > 0 ? (
                       <p className="prompter-viewer-active-item-hint" role="status">
-                        Rubric ratings and per-criterion comments are in the table on the left.
+                        No quick grade row is aligned for this card with the current rubric. Use the table in the
+                        left column, or fix rubric descriptions / card count vs. criteria count.
                       </p>
                     ) : null}
                   </div>

@@ -1418,8 +1418,8 @@
 }
 
 /**
- * Grading: video first, then deck “Active item” (prompt context only; rubric stays in the left sidebar),
- * then timestamped free-form comment in DOM order.
+ * Grading: video first, then deck Active item (quick rating row + prompt for the active card; full rubric table
+ * only in the left sidebar), then timestamped free-form comment in DOM order.
  * Flex column = stable top-to-bottom stack (same as a one-column table).
  */
 .prompter-viewer-slot-submission-media {
@@ -1433,7 +1433,8 @@
 }
 
 /**
- * Deck grading: active-card prompt sits under the video; rubric controls are only in the left sidebar.
+ * Deck grading: quick ratings + active-card prompt under the video; complete rubric (all rows, criterion comments)
+ * stays in the left sidebar only.
  */
 .prompter-viewer-grading-below-submission {
   margin-top: 10px;
