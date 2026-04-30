@@ -156,7 +156,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   /** Unlink from Prompt Manager only, or full Canvas delete — mutually exclusive while in flight. */
   const [assignmentRemoval, setAssignmentRemoval] = useState<null | 'prompts' | 'canvas'>(null);
   const [createAssignName, setCreateAssignName] = useState('');
-  const [gradeConfirmModal, setGradeConfirmModal] = useState<{ name: string; id: string } | null>(null);
+  // Grading navigation should be immediate; avoid confirmation modals that interrupt teacher workflow.
   const [modules, setModules] = useState<promptApi.CanvasModule[]>([]);
   const [assignmentGroups, setAssignmentGroups] = useState<promptApi.CanvasAssignmentGroup[]>([]);
   const [rubrics, setRubrics] = useState<promptApi.CanvasRubric[]>([]);
@@ -1178,7 +1178,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
       const a = configuredAssignments.find((x) => x.id === v);
       if (a) {
         setGradeDropdownValue(v);
-        setGradeConfirmModal({ name: a.name, id: a.id });
+        navigate(`/viewer?assignmentId=${encodeURIComponent(a.id)}&grading=1`);
       }
       return;
     }
@@ -1309,18 +1309,7 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
     }
   };
 
-  const confirmGradeOpen = () => {
-    if (gradeConfirmModal) {
-      navigate(`/viewer?assignmentId=${encodeURIComponent(gradeConfirmModal.id)}`);
-      setGradeConfirmModal(null);
-      setGradeDropdownValue('');
-    }
-  };
-
-  const cancelGradeOpen = () => {
-    setGradeConfirmModal(null);
-    setGradeDropdownValue('');
-  };
+  // (No grade confirmation modal)
 
   const handleReset = async () => {
     if (!teacher || !hasLti) return;
@@ -2870,17 +2859,6 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
               <button type="button" className="prompter-btn-secondary" onClick={closeImportModal} disabled={importModalBusy}>
                 Close
               </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {gradeConfirmModal && (
-        <div className="prompter-modal-overlay" onClick={cancelGradeOpen}>
-          <div className="prompter-modal" onClick={(e) => e.stopPropagation()}>
-            <p>Opening <strong>{gradeConfirmModal.name}</strong> for Grading</p>
-            <div className="prompter-modal-actions">
-              <button type="button" onClick={confirmGradeOpen} className="prompter-btn-ready">OK</button>
-              <button type="button" onClick={cancelGradeOpen} className="prompter-btn-secondary">Cancel</button>
             </div>
           </div>
         </div>
