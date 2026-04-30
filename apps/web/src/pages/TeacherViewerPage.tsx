@@ -2524,7 +2524,23 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
               <div
                 className={`prompter-viewer-center-row prompter-viewer-center-row--freeform-feedback${viewerGradingStackOrder ? ' prompter-viewer-slot-freeform-group' : ''}`}
               >
-                <h2 className="prompter-viewer-section-heading">Timestamped comment (HTML)</h2>
+                <div className="prompter-viewer-textarea-wrap" onKeyDown={handleCommentKeyDown}>
+                  <TeacherFeedbackRichEditor
+                    key={`freeform-${current?.userId ?? 'none'}`}
+                    editorRef={commentEditorRef}
+                    initialHtml=""
+                    autoFocus={false}
+                    toolbarAtBottom
+                  />
+                </div>
+                <p className="prompter-hint prompter-viewer-feedback-richtext-hint">
+                  Shown for the <strong>current card/segment</strong> while the playhead is within that segment. Rich
+                  text is stored on the Canvas submission. <strong>Enter</strong> posts at the segment start;{' '}
+                  <strong>Shift+Enter</strong> is a new line.
+                </p>
+                <h2 className="prompter-viewer-section-heading prompter-viewer-freeform-subheading">
+                  Timestamped comment (HTML)
+                </h2>
                 {activeFeedback.length > 0 && (
                   <div className="prompter-viewer-feedback-at-playhead" aria-live="polite">
                     {activeFeedback.map((f) => (
@@ -2535,19 +2551,6 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                     ))}
                   </div>
                 )}
-                <p className="prompter-hint prompter-viewer-feedback-richtext-hint">
-                  Shown for the <strong>current card/segment</strong> while the playhead is within that segment. Rich
-                  text is stored on the Canvas submission. <strong>Enter</strong> posts at the segment start;{' '}
-                  <strong>Shift+Enter</strong> is a new line.
-                </p>
-                <div className="prompter-viewer-textarea-wrap" onKeyDown={handleCommentKeyDown}>
-                  <TeacherFeedbackRichEditor
-                    key={`freeform-${current?.userId ?? 'none'}`}
-                    editorRef={commentEditorRef}
-                    initialHtml=""
-                    autoFocus={false}
-                  />
-                </div>
               </div>
             )}
             </>
@@ -2624,7 +2627,23 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
             <div
               className={`prompter-viewer-center-row prompter-viewer-center-row--freeform-feedback${viewerGradingStackOrder ? ' prompter-viewer-slot-freeform-group' : ''}`}
             >
-              <h2 className="prompter-viewer-section-heading">Timestamped comment (HTML)</h2>
+              <div className="prompter-viewer-textarea-wrap" onKeyDown={handleCommentKeyDown}>
+                <TeacherFeedbackRichEditor
+                  key={`freeform-${current?.userId ?? 'none'}`}
+                  editorRef={commentEditorRef}
+                  initialHtml=""
+                  autoFocus={false}
+                  toolbarAtBottom
+                />
+              </div>
+              <p className="prompter-hint prompter-viewer-feedback-richtext-hint">
+                Shown for the <strong>current card/segment</strong> while the playhead is within that segment. Rich text
+                is stored on the Canvas submission. <strong>Enter</strong> posts at the segment start;{' '}
+                <strong>Shift+Enter</strong> is a new line.
+              </p>
+              <h2 className="prompter-viewer-section-heading prompter-viewer-freeform-subheading">
+                Timestamped comment (HTML)
+              </h2>
               {activeFeedback.length > 0 && (
                 <div className="prompter-viewer-feedback-at-playhead" aria-live="polite">
                   {activeFeedback.map((f) => (
@@ -2635,18 +2654,6 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                   ))}
                 </div>
               )}
-              <p className="prompter-hint prompter-viewer-feedback-richtext-hint">
-                Shown for the <strong>current card/segment</strong> while the playhead is within that segment. Rich text is stored on the Canvas
-                submission. <strong>Enter</strong> posts at the segment start; <strong>Shift+Enter</strong> is a new line.
-              </p>
-              <div className="prompter-viewer-textarea-wrap" onKeyDown={handleCommentKeyDown}>
-                <TeacherFeedbackRichEditor
-                  key={`freeform-${current?.userId ?? 'none'}`}
-                  editorRef={commentEditorRef}
-                  initialHtml=""
-                  autoFocus={false}
-                />
-              </div>
             </div>
           )}
 

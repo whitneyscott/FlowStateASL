@@ -1761,6 +1761,26 @@
   margin-top: 4px;
 }
 
+/* Editor + toolbar first; hint, then subheading, then at-playhead notes */
+.prompter-viewer-center-row--freeform-feedback .prompter-viewer-textarea-wrap {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.prompter-viewer-center-row--freeform-feedback .prompter-viewer-feedback-richtext-hint {
+  margin: 0 0 10px 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.prompter-viewer-freeform-subheading {
+  margin: 0 0 8px 0;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #333;
+  text-align: left;
+}
+
 .prompter-viewer-feedback-at-playhead {
   margin-bottom: 8px;
   padding: 10px 12px;
@@ -2522,10 +2542,6 @@
   max-width: none;
   margin-top: 10px;
   display: flex;
-}
-
-.prompter-viewer-center-row--freeform-feedback .prompter-viewer-textarea-wrap {
-  margin-top: 0;
 }
 
 .prompter-viewer-textarea-wrap {

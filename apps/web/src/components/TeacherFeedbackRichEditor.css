@@ -23,6 +23,19 @@
   background: #eee;
 }
 
+.teacher-feedback-richtext--toolbar-bottom .teacher-feedback-richtext-editor {
+  border-radius: 4px 4px 0 0;
+  border-bottom: 0;
+}
+
+.teacher-feedback-richtext--toolbar-bottom .teacher-feedback-richtext-toolbar {
+  border: 1px solid #ccc;
+  border-top: 0;
+  border-radius: 0 0 4px 4px;
+  padding: 6px 8px 8px;
+  background: #f5f5f5;
+}
+
 .teacher-feedback-richtext-editor {
   min-height: 120px;
   max-height: 280px;
