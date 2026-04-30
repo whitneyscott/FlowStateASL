@@ -945,7 +945,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
       const payload = buildRubricAssessmentPayload(rubric, draft, rubricPromptEditorCtxRef.current);
       if (Object.keys(payload).length === 0) return;
       setSaving(true);
-      setRubricSaveStatus('');
+      setRubricSaveStatus('Saving…');
       try {
         setLastFunction('POST /api/prompt/grade');
         const gradeResult = await promptApi.submitGrade(
@@ -1734,9 +1734,6 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   }, [loading, textPromptVisible]);
 
   const viewerBlockingLoader = useMemo(() => {
-    if (saving && assignmentId) {
-      return { active: true as const, message: 'Saving…', subMessage: undefined as string | undefined };
-    }
     if (assignmentId && loading) {
       return {
         active: true as const,
@@ -1748,7 +1745,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
       return { active: true as const, message: 'Loading assignments…', subMessage: undefined as string | undefined };
     }
     return { active: false as const, message: '', subMessage: undefined as string | undefined };
-  }, [saving, assignmentId, loading, gradingMode, loadingAssignments]);
+  }, [assignmentId, loading, gradingMode, loadingAssignments]);
 
   const viewerBlockingOverlay = (
     <AppBlockingLoader
