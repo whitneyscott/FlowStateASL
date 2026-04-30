@@ -2131,7 +2131,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                   Next →
                 </button>
               </div>
-              {current && pointsPossible != null && (
+              {current && pointsPossible != null && rubric.length === 0 && (
                 <div className="prompter-viewer-grade-row-full prompter-viewer-grade-row-full--grading-toolbar">
                   <label htmlFor="grade-input">Grade:</label>
                   <input

@@ -4446,14 +4446,18 @@ export class PromptService {
         token,
       );
     }
-    const scoreMax = scoreMaximum > 0 ? scoreMaximum : 100;
-    await this.ltiAgs.submitGradeViaAgs(ctx, {
-      score,
-      scoreMaximum: scoreMax,
-      resultContent: resultContent ?? undefined,
+
+    // Teacher grading: use Canvas REST for posted_grade to avoid AGS token requirements (client_id + key),
+    // which may not be configured on all deploys. (AGS is still used in submission flow Step 12.)
+    const postedGrade = Number.isFinite(score) ? String(score) : null;
+    return await this.canvas.putSubmissionGrade(
+      ctx.courseId,
+      assignmentId,
       userId,
-    });
-    return { score };
+      { postedGrade },
+      domainOverride,
+      token,
+    );
   }
 
   /** Teacher only - guard applied at controller. */
