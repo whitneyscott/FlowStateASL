@@ -2538,9 +2538,6 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                   text is stored on the Canvas submission. <strong>Enter</strong> posts at the segment start;{' '}
                   <strong>Shift+Enter</strong> is a new line.
                 </p>
-                <h2 className="prompter-viewer-section-heading prompter-viewer-freeform-subheading">
-                  Timestamped comment (HTML)
-                </h2>
                 {activeFeedback.length > 0 && (
                   <div className="prompter-viewer-feedback-at-playhead" aria-live="polite">
                     {activeFeedback.map((f) => (
@@ -2641,9 +2638,6 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                 is stored on the Canvas submission. <strong>Enter</strong> posts at the segment start;{' '}
                 <strong>Shift+Enter</strong> is a new line.
               </p>
-              <h2 className="prompter-viewer-section-heading prompter-viewer-freeform-subheading">
-                Timestamped comment (HTML)
-              </h2>
               {activeFeedback.length > 0 && (
                 <div className="prompter-viewer-feedback-at-playhead" aria-live="polite">
                   {activeFeedback.map((f) => (
