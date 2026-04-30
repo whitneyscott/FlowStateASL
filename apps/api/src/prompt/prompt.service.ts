@@ -5140,6 +5140,37 @@ export class PromptService {
     return this.canvas.listRubrics(ctx.courseId, domainOverride, token);
   }
 
+  /** Teacher only. Rubric metadata + criteria count for auto-rubric UI. */
+  async getRubricDetails(
+    ctx: LtiContext,
+    rubricId: string,
+  ): Promise<{ criteriaCount: number; pointsPossible: number; title: string }> {
+    const rid = (rubricId ?? '').trim();
+    if (!rid) return { criteriaCount: 0, pointsPossible: 0, title: '' };
+    const token = await this.courseSettings.getEffectiveCanvasToken(ctx.courseId, ctx.canvasAccessToken);
+    if (!token) return { criteriaCount: 0, pointsPossible: 0, title: '' };
+    const domainOverride = canvasApiBaseFromLtiContext(ctx, this.config.get<string>('CANVAS_API_BASE_URL'));
+
+    const criteria = await this.canvas.getRubric(ctx.courseId, rid, domainOverride, token);
+    const criteriaCount = Array.isArray(criteria) ? criteria.length : 0;
+
+    // Canvas /rubrics/:id doesn't include title/points_possible; reuse course rubrics list to populate those fields.
+    let title = '';
+    let pointsPossible = 0;
+    try {
+      const list = await this.canvas.listRubrics(ctx.courseId, domainOverride, token);
+      const hit = list.find((r) => String(r.id).trim() === rid);
+      if (hit) {
+        title = hit.title ?? '';
+        pointsPossible = Number(hit.pointsPossible ?? 0) || 0;
+      }
+    } catch {
+      // best effort; criteriaCount is the primary signal for auto-rubric matching
+    }
+
+    return { criteriaCount, pointsPossible, title };
+  }
+
   /** Teacher only. Create a new assignment group in the course. */
   async createAssignmentGroup(
     ctx: LtiContext,

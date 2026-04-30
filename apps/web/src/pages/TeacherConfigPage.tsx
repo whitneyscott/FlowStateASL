@@ -179,6 +179,13 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   const [showCreateModule, setShowCreateModule] = useState(false);
   const [assignmentGroupId, setAssignmentGroupId] = useState<string>('');
   const [rubricId, setRubricId] = useState<string>('');
+  const [autoRubricModalOpen, setAutoRubricModalOpen] = useState(false);
+  const [autoRubricFetching, setAutoRubricFetching] = useState(false);
+  const [autoRubricFetchError, setAutoRubricFetchError] = useState<string | null>(null);
+  const [autoRubricCriteriaCache, setAutoRubricCriteriaCache] = useState<
+    Record<string, { criteriaCount: number; pointsPossible: number; title: string }>
+  >({});
+  const [autoRubricHintVisible, setAutoRubricHintVisible] = useState(false);
   const [createGroupName, setCreateGroupName] = useState('');
   const [assignmentName, setAssignmentName] = useState('');
   const [pointsPossible, setPointsPossible] = useState(10);
@@ -1698,6 +1705,88 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
   /** Config/assignment rubric id does not match any loaded course rubric option (yet or at all). */
   const rubricOrphanFromAssignment = !!rubricIdTrim && !rubricInCourseList;
 
+  const detectedDeckSizeFromStoredBanks = useMemo(() => {
+    if (promptMode !== 'decks') return 0;
+    const banks = config?.videoPromptConfig?.storedPromptBanks;
+    if (!Array.isArray(banks) || banks.length === 0) return 0;
+    const lens = banks.map((b) => (Array.isArray(b) ? b.length : 0));
+    return Math.max(0, ...lens);
+  }, [promptMode, config?.videoPromptConfig?.storedPromptBanks]);
+
+  const fetchRubricDetailsForIds = useCallback(
+    async (rubricIds: string[]) => {
+      const ids = Array.from(new Set(rubricIds.map((s) => String(s ?? '').trim()).filter(Boolean)));
+      if (ids.length === 0) return;
+
+      setAutoRubricFetching(true);
+      setAutoRubricFetchError(null);
+      try {
+        // Small concurrency limit to avoid flooding the API for large courses.
+        const CONCURRENCY = 6;
+        const next: Record<string, { criteriaCount: number; pointsPossible: number; title: string }> = {};
+        let idx = 0;
+        const workers = Array.from({ length: Math.min(CONCURRENCY, ids.length) }, async () => {
+          while (idx < ids.length) {
+            const i = idx++;
+            const rid = ids[i];
+            if (!rid) continue;
+            if (autoRubricCriteriaCache[rid]) {
+              next[rid] = autoRubricCriteriaCache[rid];
+              continue;
+            }
+            const details = await promptApi.getRubricDetails(rid);
+            next[rid] = details;
+          }
+        });
+        await Promise.all(workers);
+        setAutoRubricCriteriaCache((prev) => ({ ...prev, ...next }));
+      } catch (e) {
+        setAutoRubricFetchError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setAutoRubricFetching(false);
+      }
+    },
+    [autoRubricCriteriaCache],
+  );
+
+  useEffect(() => {
+    if (!autoRubricModalOpen) return;
+    if (promptMode !== 'decks') return;
+    if (detectedDeckSizeFromStoredBanks <= 0) return;
+    if (rubrics.length === 0) return;
+    const missing = rubrics
+      .map((r) => r.id)
+      .filter((id) => id && !autoRubricCriteriaCache[id]);
+    if (missing.length === 0) return;
+    void fetchRubricDetailsForIds(missing);
+  }, [
+    autoRubricModalOpen,
+    promptMode,
+    detectedDeckSizeFromStoredBanks,
+    rubrics,
+    autoRubricCriteriaCache,
+    fetchRubricDetailsForIds,
+  ]);
+
+  const autoRubricMatches = useMemo(() => {
+    const N = detectedDeckSizeFromStoredBanks;
+    if (promptMode !== 'decks' || N <= 0 || rubrics.length === 0) {
+      return { exact: [] as Array<{ id: string; title: string; pointsPossible: number; criteriaCount: number }>, overall: [] as Array<{ id: string; title: string; pointsPossible: number; criteriaCount: number }> };
+    }
+    const rows = rubrics
+      .map((r) => {
+        const d = autoRubricCriteriaCache[r.id];
+        const criteriaCount = d?.criteriaCount ?? 0;
+        const title = d?.title?.trim() ? d.title : r.title;
+        const pointsPossible = Number.isFinite(Number(d?.pointsPossible)) ? Number(d?.pointsPossible) : r.pointsPossible;
+        return { id: r.id, title, pointsPossible, criteriaCount };
+      })
+      .filter((x) => x.criteriaCount > 0);
+    const exact = rows.filter((r) => r.criteriaCount === N);
+    const overall = rows.filter((r) => r.criteriaCount === N + 1);
+    return { exact, overall };
+  }, [promptMode, detectedDeckSizeFromStoredBanks, rubrics, autoRubricCriteriaCache]);
+
   const rubricSelector = (
     <div className="prompter-settings-section">
       <label className="prompter-settings-label"><strong>Rubric (optional):</strong></label>
@@ -1705,18 +1794,64 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
         Matches the rubric attached to this assignment in Canvas when one is set (including after import).
         Labels come from the course rubrics list.
       </p>
-      <select
-        className="prompter-settings-input"
-        value={rubricInCourseList ? rubricId : ''}
-        onChange={(e) => setRubricId(e.target.value)}
-      >
-        <option value="">— No Rubric —</option>
-        {rubrics.map((r) => (
-          <option key={r.id} value={r.id}>
-            {r.title} ({r.pointsPossible} pts)
-          </option>
-        ))}
-      </select>
+      {promptMode === 'decks' && autoRubricHintVisible && rubricIdTrim ? (
+        <div
+          className="prompter-info-message"
+          style={{ marginTop: 6, marginBottom: 10 }}
+          role="status"
+          aria-live="polite"
+        >
+          Rubric selected — click Save to attach.
+        </div>
+      ) : null}
+      {promptMode === 'decks' ? (
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <select
+            className="prompter-settings-input"
+            value={rubricInCourseList ? rubricId : ''}
+            onChange={(e) => {
+              setRubricId(e.target.value);
+              setAutoRubricHintVisible(false);
+            }}
+          >
+            <option value="">— No Rubric —</option>
+            {rubrics.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.title} ({r.pointsPossible} pts)
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            className="prompter-btn-secondary"
+            onClick={() => {
+              setAutoRubricModalOpen(true);
+              setAutoRubricFetchError(null);
+            }}
+            disabled={detectedDeckSizeFromStoredBanks <= 0}
+            title={
+              detectedDeckSizeFromStoredBanks <= 0
+                ? 'Card count not yet available.'
+                : 'Find rubrics matching this deck size'
+            }
+          >
+            Auto-rubric
+          </button>
+        </div>
+      ) : (
+        <select
+          className="prompter-settings-input"
+          value={rubricInCourseList ? rubricId : ''}
+          onChange={(e) => setRubricId(e.target.value)}
+        >
+          <option value="">— No Rubric —</option>
+          {rubrics.map((r) => (
+            <option key={r.id} value={r.id}>
+              {r.title} ({r.pointsPossible} pts)
+            </option>
+          ))}
+        </select>
+      )}
       {rubricOrphanFromAssignment ? (
         <p className="prompter-hint" style={{ marginTop: 6 }}>
           Canvas linked rubric id {rubricIdTrim} is not in the loaded course rubrics list. Choose a rubric below to
@@ -2733,6 +2868,180 @@ export default function TeacherConfigPage({ context }: TeacherConfigPageProps) {
           </div>
         )}
       </div>
+
+      {autoRubricModalOpen && (
+        <div
+          className="prompter-modal-overlay"
+          onClick={() => {
+            if (autoRubricFetching) return;
+            setAutoRubricModalOpen(false);
+            setAutoRubricFetchError(null);
+          }}
+        >
+          <div className="prompter-modal prompter-modal-wide" onClick={(e) => e.stopPropagation()}>
+            <h3 className="prompter-settings-card-title" style={{ marginTop: 0 }}>
+              Auto-rubric
+            </h3>
+            <p className="prompter-hint" style={{ marginTop: 6 }}>
+              Detected deck size: <strong>{detectedDeckSizeFromStoredBanks || '—'}</strong> cards
+            </p>
+
+            {autoRubricFetching && (
+              <p className="prompter-hint" role="status" aria-live="polite">
+                <span className="prompter-inline-spinner" /> Fetching rubric details…
+              </p>
+            )}
+
+            {autoRubricFetchError && (
+              <div className="prompter-alert-error" role="alert" style={{ marginTop: 10 }}>
+                Could not load rubric details: {autoRubricFetchError}
+                <div className="prompter-settings-actions-row" style={{ marginTop: 10 }}>
+                  <button
+                    type="button"
+                    className="prompter-btn-ready"
+                    onClick={() => {
+                      const missing = rubrics
+                        .map((r) => r.id)
+                        .filter((id) => id && !autoRubricCriteriaCache[id]);
+                      void fetchRubricDetailsForIds(missing.length ? missing : rubrics.map((r) => r.id));
+                    }}
+                    disabled={autoRubricFetching}
+                  >
+                    Retry
+                  </button>
+                  <button
+                    type="button"
+                    className="prompter-btn-secondary"
+                    onClick={() => {
+                      if (autoRubricFetching) return;
+                      setAutoRubricModalOpen(false);
+                      setAutoRubricFetchError(null);
+                    }}
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {!autoRubricFetchError && (
+              <>
+                <div style={{ marginTop: 10 }}>
+                  <h4 className="prompter-settings-card-title" style={{ marginTop: 10 }}>
+                    Exact match
+                  </h4>
+                  {autoRubricMatches.exact.length === 0 ? (
+                    <p className="prompter-hint">No rubrics match criteria count = {detectedDeckSizeFromStoredBanks}.</p>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {autoRubricMatches.exact.map((r) => (
+                        <div
+                          key={r.id}
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            gap: 12,
+                            alignItems: 'center',
+                            border: '1px solid rgba(0,0,0,0.12)',
+                            borderRadius: 8,
+                            padding: 10,
+                          }}
+                        >
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontWeight: 700 }}>{r.title || `Rubric ${r.id}`}</div>
+                            <div className="prompter-hint" style={{ marginTop: 4 }}>
+                              {Math.round(r.pointsPossible)} pts · {r.criteriaCount} criteria
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            className="prompter-btn-ready"
+                            onClick={() => {
+                              setRubricId(r.id);
+                              setAutoRubricHintVisible(true);
+                              setAutoRubricModalOpen(false);
+                              setAutoRubricFetchError(null);
+                            }}
+                          >
+                            Select
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ marginTop: 14 }}>
+                  <h4 className="prompter-settings-card-title" style={{ marginTop: 10 }}>
+                    Includes Overall criterion
+                  </h4>
+                  {autoRubricMatches.overall.length === 0 ? (
+                    <p className="prompter-hint">
+                      No rubrics match criteria count = {detectedDeckSizeFromStoredBanks + 1}.
+                    </p>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {autoRubricMatches.overall.map((r) => (
+                        <div
+                          key={r.id}
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            gap: 12,
+                            alignItems: 'center',
+                            border: '1px solid rgba(0,0,0,0.12)',
+                            borderRadius: 8,
+                            padding: 10,
+                          }}
+                        >
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontWeight: 700 }}>{r.title || `Rubric ${r.id}`}</div>
+                            <div className="prompter-hint" style={{ marginTop: 4 }}>
+                              {Math.round(r.pointsPossible)} pts · {r.criteriaCount} criteria
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            className="prompter-btn-ready"
+                            onClick={() => {
+                              setRubricId(r.id);
+                              setAutoRubricHintVisible(true);
+                              setAutoRubricModalOpen(false);
+                              setAutoRubricFetchError(null);
+                            }}
+                          >
+                            Select
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {autoRubricMatches.exact.length === 0 && autoRubricMatches.overall.length === 0 && !autoRubricFetching && (
+                  <p className="prompter-hint" style={{ marginTop: 12 }}>
+                    No matching rubrics found. You can create one manually or save and add a rubric later.
+                  </p>
+                )}
+
+                <div className="prompter-modal-actions" style={{ marginTop: 14 }}>
+                  <button
+                    type="button"
+                    className="prompter-btn-secondary"
+                    onClick={() => {
+                      if (autoRubricFetching) return;
+                      setAutoRubricModalOpen(false);
+                      setAutoRubricFetchError(null);
+                    }}
+                  >
+                    Close
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {importModalOpen && (
         <div className="prompter-modal-overlay" onClick={closeImportModal}>

@@ -568,6 +568,16 @@ export async function getRubrics(): Promise<CanvasRubric[]> {
   return fetchJsonWithOAuthRedirect<CanvasRubric[]>(base + '/rubrics');
 }
 
+export async function getRubricDetails(
+  rubricId: string,
+): Promise<{ criteriaCount: number; pointsPossible: number; title: string }> {
+  const rid = rubricId.trim();
+  if (!rid) throw new Error('Rubric id required');
+  return fetchJsonWithOAuthRedirect<{ criteriaCount: number; pointsPossible: number; title: string }>(
+    `${base}/rubrics/${encodeURIComponent(rid)}`,
+  );
+}
+
 export async function createAssignmentGroup(name: string): Promise<CanvasAssignmentGroup> {
   return fetchJsonWithOAuthRedirect<CanvasAssignmentGroup>(base + '/assignment-groups', {
     method: 'POST',

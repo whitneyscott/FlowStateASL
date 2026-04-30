@@ -1173,6 +1173,21 @@ export class PromptController {
     }
   }
 
+  @Get('rubrics/:rubricId')
+  @UseGuards(TeacherRoleGuard)
+  async getRubricDetails(@Req() req: Request, @Res() res: Response, @Param('rubricId') rubricId: string) {
+    const ctx = this.getCtx(req);
+    try {
+      const out = await this.prompt.getRubricDetails(ctx, rubricId);
+      return res.json(out);
+    } catch (err) {
+      if (err instanceof CanvasTokenExpiredError) {
+        return res.status(401).json(getOAuth401Body(req));
+      }
+      throw err;
+    }
+  }
+
   @Post('assignment-groups')
   @HttpCode(HttpStatus.CREATED)
   @UseGuards(TeacherRoleGuard)
