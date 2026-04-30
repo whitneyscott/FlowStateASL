@@ -37,6 +37,15 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
   const [lines, setLines] = useState<string[]>(['Initializing...']);
   const containerRef = useRef<HTMLDivElement>(null);
 
+  const enableBridgeWebm =
+    typeof window !== 'undefined' &&
+    (new URLSearchParams(window.location.search).has('bridgeWebm') ||
+      window.localStorage.getItem('fs_bridge_webm') === '1');
+  const enableBridgeSignToVoice =
+    typeof window !== 'undefined' &&
+    (new URLSearchParams(window.location.search).has('bridgeSignToVoice') ||
+      window.localStorage.getItem('fs_bridge_sign_to_voice') === '1');
+
   const [expanded, setExpanded] = useState(true);
   useEffect(() => {
     if (developerUi) {
@@ -105,23 +114,33 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
     newLines.push(`web=${webSha} api=${apiSha} branch=${apiBranch} env=${nodeEnv}`);
     newLines.push('');
     newLines.push('--- WebM prompt (tag webm-prompt) ---');
-    const wm = ltiLog.filter((line) => line.includes('] [webm-prompt] '));
-    if (wm.length === 0) {
-      newLines.push(
-        '(no webm-prompt lines yet — submit a WebM, open grading/submissions, or GET /api/debug/ping)',
-      );
+    if (!enableBridgeWebm) {
+      newLines.push('(hidden — enable with ?bridgeWebm=1 or localStorage.fs_bridge_webm="1")');
     } else {
-      newLines.push(...wm);
+      const wm = ltiLog.filter((line) => line.includes('] [webm-prompt] '));
+      if (wm.length === 0) {
+        newLines.push(
+          '(no webm-prompt lines yet — submit a WebM, open grading/submissions, or GET /api/debug/ping)',
+        );
+      } else {
+        newLines.push(...wm);
+      }
     }
     newLines.push('');
     newLines.push('--- Sign-to-voice / Deepgram captions (tag sign-to-voice) ---');
-    const stv = ltiLog.filter((line) => line.includes('] [sign-to-voice] '));
-    if (stv.length === 0) {
+    if (!enableBridgeSignToVoice) {
       newLines.push(
-        '(no sign-to-voice log lines yet — this panel only shows server events. After Save in Prompt Manager and a student upload, lines appear here; if the pipeline was skipped, look for SKIPPED or resolveSignToVoiceRequired.)',
+        '(hidden — enable with ?bridgeSignToVoice=1 or localStorage.fs_bridge_sign_to_voice="1")',
       );
     } else {
-      newLines.push(...stv);
+      const stv = ltiLog.filter((line) => line.includes('] [sign-to-voice] '));
+      if (stv.length === 0) {
+        newLines.push(
+          '(no sign-to-voice log lines yet — this panel only shows server events. After Save in Prompt Manager and a student upload, lines appear here; if the pipeline was skipped, look for SKIPPED or resolveSignToVoiceRequired.)',
+        );
+      } else {
+        newLines.push(...stv);
+      }
     }
     newLines.push('');
     newLines.push('--- Prompt import trace (tag prompt-import-trace) ---');
