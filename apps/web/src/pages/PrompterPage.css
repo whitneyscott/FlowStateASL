@@ -1576,19 +1576,32 @@
   box-sizing: border-box;
 }
 
-/* Video, then full-width correct/incorrect row, then prompt (below the buttons). */
+/* One row: correct/incorrect + time + card title; wraps on narrow viewports. */
 .prompter-viewer-active-item-panel--stacked {
-  flex-direction: column;
-  flex-wrap: nowrap;
-  align-items: stretch;
-  gap: 12px;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
 }
 .prompter-viewer-active-item-panel--stacked .prompter-viewer-active-item-ratings {
-  width: 100%;
-  flex: none;
+  width: auto;
+  flex: 0 1 auto;
+  min-width: 0;
   max-width: 100%;
 }
 .prompter-viewer-active-item-panel--stacked .prompter-viewer-active-item-meta {
+  flex: 1 1 220px;
+  min-width: 0;
+  width: auto;
+  max-width: 100%;
+}
+/* Quick-grade row: title-only branch (no rubric match) is still a single line when possible. */
+.prompter-viewer-active-item-panel--stacked.prompter-viewer-active-item-panel--prompt-only {
+  flex-direction: column;
+  align-items: stretch;
+}
+.prompter-viewer-active-item-panel--stacked.prompter-viewer-active-item-panel--prompt-only
+  .prompter-viewer-active-item-meta {
   flex: none;
   width: 100%;
   max-width: 100%;
@@ -1673,9 +1686,12 @@
   gap: 8px 12px;
 }
 
-/* Center panel: time + prompt read as one continuous line (same origin as timestamp). */
+/* Center panel: time + prompt on one line next to the rating buttons. */
 .prompter-viewer-active-item-time-prompt-inline {
-  display: block;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25em 0.5em;
   width: 100%;
   max-width: 100%;
   min-width: 0;
