@@ -25,6 +25,82 @@
   box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
 }
 
+/* Student: submission complete (TimerPage phase === 'done') */
+.prompter-card--submission-complete {
+  max-width: 720px;
+  padding: 28px 24px 32px;
+  border-top: 10px solid var(--prompter-success-green);
+  text-align: left;
+}
+
+.prompter-submission-complete-eyebrow {
+  margin: 0 0 6px;
+  font-size: 0.95rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--prompter-success-green);
+}
+
+.prompter-submission-complete-title {
+  margin: 0 0 16px;
+  font-size: clamp(1.9rem, 5.5vw, 2.85rem);
+  font-weight: 800;
+  line-height: 1.15;
+  color: #0f172a;
+  text-align: left;
+}
+
+.prompter-submission-complete-lead {
+  margin: 0 0 22px;
+  font-size: clamp(1.2rem, 3vw, 1.5rem);
+  font-weight: 700;
+  line-height: 1.4;
+  color: #1e293b;
+}
+
+.prompter-submission-complete-instructions {
+  margin: 0;
+  padding: 18px 18px 20px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 10px;
+}
+
+.prompter-submission-complete-step {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  margin: 0 0 16px;
+  font-size: clamp(1.05rem, 2.4vw, 1.25rem);
+  line-height: 1.55;
+  color: #334155;
+}
+
+.prompter-submission-complete-step:last-of-type {
+  margin-bottom: 0;
+}
+
+.prompter-submission-complete-step-num {
+  flex-shrink: 0;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  background: var(--prompter-success-green);
+  color: #fff;
+  font-weight: 800;
+  font-size: 1.1rem;
+  line-height: 2rem;
+  text-align: center;
+}
+
+.prompter-submission-complete-note {
+  margin: 18px 0 0;
+  font-size: clamp(0.98rem, 2.1vw, 1.1rem);
+  line-height: 1.5;
+  color: #475569;
+}
+
 .prompter-timer-display {
   font-size: 60px;
   font-weight: bold;

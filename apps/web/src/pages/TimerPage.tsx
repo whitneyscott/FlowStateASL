@@ -1728,13 +1728,59 @@ export default function TimerPage({ context }: TimerPageProps) {
     );
   }
 
+  if (phase === 'done') {
+    return (
+      <>
+        {blockingOverlay}
+        <div className="prompter-page">
+          <div
+            className="prompter-card prompter-card--submission-complete"
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+          >
+            <p className="prompter-submission-complete-eyebrow">All set</p>
+            <h1 className="prompter-submission-complete-title">Your video was submitted</h1>
+            <p className="prompter-submission-complete-lead">
+              Canvas has your recording. You do not need to stay on this page.
+            </p>
+            <div className="prompter-submission-complete-instructions">
+              <p className="prompter-submission-complete-step">
+                <span className="prompter-submission-complete-step-num" aria-hidden>
+                  1
+                </span>
+                <span>
+                  <strong>Close this browser tab</strong> (or close this whole window if you prefer).
+                </span>
+              </p>
+              <p className="prompter-submission-complete-step">
+                <span className="prompter-submission-complete-step-num" aria-hidden>
+                  2
+                </span>
+                <span>
+                  In <strong>Canvas</strong>, go back to the <strong>module</strong> where you started this assignment
+                  (the same module you launched from). Continue your course work there, or confirm your submission if
+                  your instructor asked you to.
+                </span>
+              </p>
+            </div>
+            <p className="prompter-submission-complete-note">
+              If you do not see the module, open your course in Canvas and use <strong>Modules</strong> in the course
+              navigation.
+            </p>
+          </div>
+        </div>
+      </>
+    );
+  }
+
   return (
     <>
       {blockingOverlay}
       <div className="prompter-page">
         <div className="prompter-card">
-          <h1>Done</h1>
-          <p className="prompter-info-message">Your submission has been sent to Canvas.</p>
+          <h1>Something went wrong</h1>
+          <p className="prompter-info-message">This page is in an unexpected state. Please close the tab and reopen the assignment from Canvas.</p>
         </div>
       </div>
     </>
