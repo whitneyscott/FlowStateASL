@@ -3,6 +3,8 @@ import type { LtiContext } from '@aslexpress/shared-types';
 import { useAppMode } from '../contexts/AppModeContext';
 import { ltiTokenHeaders } from '../api/lti-token';
 import {
+  BRIDGE_LTI_LOG_SCOPES,
+  type BridgeLtiLogScope,
   clearBridgeClientFallbackLines,
   mergeBridgeLogLinesForDisplay,
   readBridgeClientFallbackLines,
@@ -37,14 +39,44 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
   const [lines, setLines] = useState<string[]>(['Initializing...']);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const enableBridgeWebm =
-    typeof window !== 'undefined' &&
-    (new URLSearchParams(window.location.search).has('bridgeWebm') ||
-      window.localStorage.getItem('fs_bridge_webm') === '1');
-  const enableBridgeSignToVoice =
-    typeof window !== 'undefined' &&
-    (new URLSearchParams(window.location.search).has('bridgeSignToVoice') ||
-      window.localStorage.getItem('fs_bridge_sign_to_voice') === '1');
+  const FILTER_STORAGE_KEY = 'fs_bridge_visible_tags_v1';
+  const DEFAULT_VISIBLE_TAGS: BridgeLtiLogScope[] = [
+    'prompt-manager-config',
+    'ux-benchmark',
+    'prompt-image-debug',
+    'prompt-import-trace',
+    'student-prompt-type',
+    'student-deck-live-build',
+  ];
+  const [visibleTags, setVisibleTags] = useState<BridgeLtiLogScope[]>(DEFAULT_VISIBLE_TAGS);
+  const [showFilters, setShowFilters] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = window.localStorage.getItem(FILTER_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as unknown;
+      if (!Array.isArray(parsed)) return;
+      const next = parsed.filter((t): t is BridgeLtiLogScope =>
+        BRIDGE_LTI_LOG_SCOPES.includes(t as BridgeLtiLogScope),
+      );
+      if (next.length) setVisibleTags(next);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify(visibleTags));
+    } catch {
+      // ignore
+    }
+  }, [visibleTags]);
+
+  const isTagVisible = (tag: BridgeLtiLogScope): boolean => visibleTags.includes(tag);
 
   const [expanded, setExpanded] = useState(true);
   useEffect(() => {
@@ -113,10 +145,8 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
     newLines.push('--- Build Fingerprint ---');
     newLines.push(`web=${webSha} api=${apiSha} branch=${apiBranch} env=${nodeEnv}`);
     newLines.push('');
-    newLines.push('--- WebM prompt (tag webm-prompt) ---');
-    if (!enableBridgeWebm) {
-      newLines.push('(hidden — enable with ?bridgeWebm=1 or localStorage.fs_bridge_webm="1")');
-    } else {
+    if (isTagVisible('webm-prompt')) {
+      newLines.push('--- WebM prompt (tag webm-prompt) ---');
       const wm = ltiLog.filter((line) => line.includes('] [webm-prompt] '));
       if (wm.length === 0) {
         newLines.push(
@@ -125,14 +155,11 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
       } else {
         newLines.push(...wm);
       }
+      newLines.push('');
     }
-    newLines.push('');
-    newLines.push('--- Sign-to-voice / Deepgram captions (tag sign-to-voice) ---');
-    if (!enableBridgeSignToVoice) {
-      newLines.push(
-        '(hidden — enable with ?bridgeSignToVoice=1 or localStorage.fs_bridge_sign_to_voice="1")',
-      );
-    } else {
+
+    if (isTagVisible('sign-to-voice')) {
+      newLines.push('--- Sign-to-voice / Deepgram captions (tag sign-to-voice) ---');
       const stv = ltiLog.filter((line) => line.includes('] [sign-to-voice] '));
       if (stv.length === 0) {
         newLines.push(
@@ -141,76 +168,94 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
       } else {
         newLines.push(...stv);
       }
+      newLines.push('');
     }
-    newLines.push('');
-    newLines.push('--- Prompt import trace (tag prompt-import-trace) ---');
-    const pit = ltiLog.filter((line) => line.includes('] [prompt-import-trace] '));
-    if (pit.length === 0) {
-      newLines.push(
-        '(no prompt-import-trace lines yet — run single-assignment import in Teacher Config to trace the import POST)',
-      );
-    } else {
-      newLines.push(...pit);
+
+    if (isTagVisible('prompt-import-trace')) {
+      newLines.push('--- Prompt import trace (tag prompt-import-trace) ---');
+      const pit = ltiLog.filter((line) => line.includes('] [prompt-import-trace] '));
+      if (pit.length === 0) {
+        newLines.push(
+          '(no prompt-import-trace lines yet — run single-assignment import in Teacher Config to trace the import POST)',
+        );
+      } else {
+        newLines.push(...pit);
+      }
+      newLines.push('');
     }
-    newLines.push('');
-    newLines.push('--- Teacher Prompt Manager / GET /config (tag prompt-manager-config) ---');
-    const pmc = ltiLog.filter((line) => line.includes('] [prompt-manager-config] '));
-    if (pmc.length === 0) {
-      newLines.push(
-        '(no prompt-manager-config yet — open Prompt Manager /config, pick an assignment, or look for readPromptConfig + getConfig lines on the server after GET /config)',
-      );
-    } else {
-      newLines.push(...pmc);
+
+    if (isTagVisible('prompt-manager-config')) {
+      newLines.push('--- Teacher Prompt Manager / GET /config (tag prompt-manager-config) ---');
+      const pmc = ltiLog.filter((line) => line.includes('] [prompt-manager-config] '));
+      if (pmc.length === 0) {
+        newLines.push(
+          '(no prompt-manager-config yet — open Prompt Manager /config, pick an assignment, or look for readPromptConfig + getConfig lines on the server after GET /config)',
+        );
+      } else {
+        newLines.push(...pmc);
+      }
+      newLines.push('');
     }
-    newLines.push('');
-    newLines.push('--- Prompt image diagnostics (tag prompt-image-debug) ---');
-    const pid = ltiLog.filter((line) => line.includes('] [prompt-image-debug] '));
-    if (pid.length === 0) {
-      newLines.push(
-        '(no prompt-image-debug lines yet — try Insert image (upload or pick), then check for pickFile/upload, signed-path, guard-check, stream, and RTE image load lines)',
-      );
-    } else {
-      newLines.push(...pid);
+
+    if (isTagVisible('prompt-image-debug')) {
+      newLines.push('--- Prompt image diagnostics (tag prompt-image-debug) ---');
+      const pid = ltiLog.filter((line) => line.includes('] [prompt-image-debug] '));
+      if (pid.length === 0) {
+        newLines.push(
+          '(no prompt-image-debug lines yet — try Insert image (upload or pick), then check for pickFile/upload, signed-path, guard-check, stream, and RTE image load lines)',
+        );
+      } else {
+        newLines.push(...pid);
+      }
+      newLines.push('');
+      newLines.push('--- Prompt image diagnostics raw tail (last 25) ---');
+      if (pid.length === 0) {
+        newLines.push('(raw tail empty)');
+      } else {
+        newLines.push(...pid.slice(-25));
+      }
+      newLines.push('');
     }
-    newLines.push('');
-    newLines.push('--- Prompt image diagnostics raw tail (last 25) ---');
-    if (pid.length === 0) {
-      newLines.push('(raw tail empty)');
-    } else {
-      newLines.push(...pid.slice(-25));
+
+    if (isTagVisible('student-prompt-type')) {
+      newLines.push('--- Student prompt mode / Timer (tag student-prompt-type) ---');
+      const spt = ltiLog.filter((line) => line.includes('] [student-prompt-type] '));
+      if (spt.length === 0) {
+        newLines.push(
+          '(no student-prompt-type lines yet — open the student prompter/Timer; lines also go to the browser console as [ASL Bridge])',
+        );
+      } else {
+        newLines.push(...spt);
+      }
+      newLines.push('');
     }
-    newLines.push('');
-    newLines.push('--- Student prompt mode / Timer (tag student-prompt-type) ---');
-    const spt = ltiLog.filter((line) => line.includes('] [student-prompt-type] '));
-    if (spt.length === 0) {
-      newLines.push(
-        '(no student-prompt-type lines yet — open the student prompter/Timer; lines also go to the browser console as [ASL Bridge])',
-      );
-    } else {
-      newLines.push(...spt);
+
+    if (isTagVisible('student-deck-live-build')) {
+      newLines.push('--- Student deck live build (tag student-deck-live-build) ---');
+      const sdl = ltiLog.filter((line) => line.includes('] [student-deck-live-build] '));
+      if (sdl.length === 0) {
+        newLines.push(
+          '(no student-deck-live-build lines yet — deck mode POST /build-deck-prompts; console: [ASL Bridge])',
+        );
+      } else {
+        newLines.push(...sdl);
+      }
+      newLines.push('');
     }
-    newLines.push('');
-    newLines.push('--- Student deck live build (tag student-deck-live-build) ---');
-    const sdl = ltiLog.filter((line) => line.includes('] [student-deck-live-build] '));
-    if (sdl.length === 0) {
-      newLines.push(
-        '(no student-deck-live-build lines yet — deck mode POST /build-deck-prompts; console: [ASL Bridge])',
-      );
-    } else {
-      newLines.push(...sdl);
-    }
-    newLines.push('');
-    newLines.push('--- UX benchmarking (tag ux-benchmark) ---');
-    const uxb = ltiLog.filter((line) => line.includes('] [ux-benchmark] '));
-    if (uxb.length === 0) {
-      newLines.push(
-        '(no ux-benchmark lines yet — switch to Developer mode, then load Prompt Settings / Timer / Flashcards. Lines also go to the browser console as [UX BENCH].)',
-      );
-    } else {
-      newLines.push(...uxb.slice(-80));
+
+    if (isTagVisible('ux-benchmark')) {
+      newLines.push('--- UX benchmarking (tag ux-benchmark) ---');
+      const uxb = ltiLog.filter((line) => line.includes('] [ux-benchmark] '));
+      if (uxb.length === 0) {
+        newLines.push(
+          '(no ux-benchmark lines yet — switch to Developer mode, then load Prompt Settings / Timer / Flashcards. Lines also go to the browser console as [UX BENCH].)',
+        );
+      } else {
+        newLines.push(...uxb.slice(-80));
+      }
     }
     setLines(newLines);
-  }, [ltiLog, debugVersion]);
+  }, [ltiLog, debugVersion, visibleTags]);
 
   const text = ['BRIDGE DEBUG LOG:', ...lines].join('\n');
 
@@ -262,6 +307,24 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
         >
           {expanded ? '▼' : '▶'} BRIDGE DEBUG LOG
         </button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button
+            type="button"
+            onClick={() => setShowFilters((s) => !s)}
+            style={{
+              background: 'none',
+              border: '1px solid #00ff88',
+              color: '#00ff88',
+              padding: '4px 8px',
+              borderRadius: 4,
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+              fontSize: 11,
+            }}
+            title="Choose which tagged sections to show"
+          >
+            {showFilters ? 'Hide filters' : 'Filters'}
+          </button>
         <button
           type="button"
           disabled={!canClearLog}
@@ -351,7 +414,53 @@ export function BridgeLog({ context, loading, error }: BridgeLogProps) {
         >
           {copied ? 'Copied!' : 'Copy'}
         </button>
+        </div>
       </div>
+      {expanded && showFilters && (
+        <div style={{ border: '1px solid #00ff88', padding: 8, borderRadius: 6, marginBottom: 8 }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+            <button
+              type="button"
+              onClick={() => setVisibleTags([...BRIDGE_LTI_LOG_SCOPES])}
+              style={{ background: 'none', border: '1px solid #00ff88', color: '#00ff88', padding: '2px 6px', borderRadius: 4, fontFamily: 'inherit', fontSize: 11, cursor: 'pointer' }}
+            >
+              All
+            </button>
+            <button
+              type="button"
+              onClick={() => setVisibleTags([])}
+              style={{ background: 'none', border: '1px solid #00ff88', color: '#00ff88', padding: '2px 6px', borderRadius: 4, fontFamily: 'inherit', fontSize: 11, cursor: 'pointer' }}
+            >
+              None
+            </button>
+            <button
+              type="button"
+              onClick={() => setVisibleTags(DEFAULT_VISIBLE_TAGS)}
+              style={{ background: 'none', border: '1px solid #00ff88', color: '#00ff88', padding: '2px 6px', borderRadius: 4, fontFamily: 'inherit', fontSize: 11, cursor: 'pointer' }}
+            >
+              Reset
+            </button>
+            <span style={{ color: '#66ffaa', fontSize: 11 }}>
+              Showing {visibleTags.length}/{BRIDGE_LTI_LOG_SCOPES.length}
+            </span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {BRIDGE_LTI_LOG_SCOPES.map((tag) => (
+              <label key={tag} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, color: '#00ff88' }}>
+                <input
+                  type="checkbox"
+                  checked={visibleTags.includes(tag)}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setVisibleTags((prev) => (checked ? Array.from(new Set([...prev, tag])) : prev.filter((t) => t !== tag)));
+                  }}
+                />
+                <span>{tag}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
       {expanded && <div>{text.split('\n').slice(1).join('\n')}</div>}
     </div>
   );

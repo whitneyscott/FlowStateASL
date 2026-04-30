@@ -39,7 +39,7 @@ export function readBridgeClientFallbackLines(): string[] {
 }
 
 /** Tags mirrored from server `appendLtiLog(scope, …)` for the Bridge debug panel. */
-const BRIDGE_LTI_LOG_SCOPES = [
+export const BRIDGE_LTI_LOG_SCOPES = [
   'webm-prompt',
   'sign-to-voice',
   'prompt-import-trace',
@@ -57,6 +57,8 @@ const BRIDGE_LTI_LOG_SCOPES = [
   /** Developer-only UX timing spans (teacher + student). */
   'ux-benchmark',
 ] as const;
+
+export type BridgeLtiLogScope = (typeof BRIDGE_LTI_LOG_SCOPES)[number];
 
 export function ltiLogLineMatchesBridgeFilter(line: string): boolean {
   return BRIDGE_LTI_LOG_SCOPES.some((scope) => line.includes(`] [${scope}] `));
