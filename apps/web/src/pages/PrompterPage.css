@@ -1418,9 +1418,23 @@
 }
 
 /**
- * Grading: quick grade row + prompt for deck live in slot-submission-media (under the video).
- * Do not set flex `order` on `.prompter-viewer-center` children here — it reorders the whole column
- * and can make nested rubric blocks appear in the wrong place.
+ * Grading: video first, then deck (Active item + quick ratings), then timestamped comment in DOM order
+ * (deck + comment use a Fragment; React hoists to direct children of this row).
+ * Flex column = stable top-to-bottom stack (same as a one-column table).
+ */
+.prompter-viewer-slot-submission-media {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+/**
+ * Grading: quick (Correct/Incorrect) row and prompt are nested in slot-submission-media so they sit
+ * directly under the video; main column order follows source order (no flex order on children).
  */
 .prompter-viewer-grading-below-submission {
   margin-top: 10px;
@@ -1573,13 +1587,11 @@
   width: 100%;
   flex: none;
   max-width: 100%;
-  order: 1;
 }
 .prompter-viewer-active-item-panel--stacked .prompter-viewer-active-item-meta {
   flex: none;
   width: 100%;
   max-width: 100%;
-  order: 2;
 }
 
 .prompter-viewer-active-item-panel--prompt-only {
@@ -2258,22 +2270,6 @@
   width: 100%;
   max-width: 100%;
   box-sizing: border-box;
-  display: grid;
-  grid-template-columns: 1fr;
-  grid-template-areas:
-    "title"
-    "ratings"
-    "comment";
-  row-gap: 8px;
-}
-.prompter-viewer-nondeck-criterion-panel > .prompter-viewer-nondeck-criterion-title {
-  grid-area: title;
-}
-.prompter-viewer-nondeck-criterion-panel > .prompter-viewer-rubric-ratings {
-  grid-area: ratings;
-}
-.prompter-viewer-nondeck-criterion-panel > .prompter-viewer-criterion-comment-wrap {
-  grid-area: comment;
 }
 .prompter-viewer-nondeck-criterion-ratings {
   margin-top: 4px;

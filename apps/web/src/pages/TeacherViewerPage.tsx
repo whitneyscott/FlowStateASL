@@ -1293,7 +1293,10 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     () => (embedSubmissionVtt ? submissionCaptionsVtt : undefined),
     [embedSubmissionVtt, submissionCaptionsVtt],
   );
-  /** Teacher grading with a selected submission: reorder column so video, comments, then rubric/context, then tools. */
+  /**
+   * Teacher grading with a selected submission: stack order is video, then in-slot rubric (deck: Active
+   * item + quick ratings), then timestamped comment for deck+grading; non-deck keeps freeform after the slot.
+   */
   const viewerGradingStackOrder = gradingMode && !!teacher && !!current && !noSubmissionsInGradingMode;
   /** OS/browser live-caption tips: only where transcript-style playback matters (not deck or static text). */
   const showCaptionsAccessibilityHelp = useMemo(
@@ -2414,8 +2417,8 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
             </>
           )}
 
-          {/* Deck: one rubric row’s rating buttons for the card at the playhead (Canvas labels, often binary). Full multi-criterion rubric in center is non-deck only, below. */}
           {isDeckPromptMode && (
+            <>
             <div className="prompter-viewer-grading-below-submission prompter-viewer-slot-deck-active-group">
               <div className="prompter-viewer-center-row prompter-viewer-center-row--active-header">
                 <h2 className="prompter-viewer-section-heading">Active item</h2>
@@ -2517,9 +2520,39 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                 )}
               </div>
             </div>
+            {teacher && !noSubmissionsInGradingMode && viewerGradingStackOrder && (
+              <div
+                className={`prompter-viewer-center-row prompter-viewer-center-row--freeform-feedback${viewerGradingStackOrder ? ' prompter-viewer-slot-freeform-group' : ''}`}
+              >
+                <h2 className="prompter-viewer-section-heading">Timestamped comment (HTML)</h2>
+                {activeFeedback.length > 0 && (
+                  <div className="prompter-viewer-feedback-at-playhead" aria-live="polite">
+                    {activeFeedback.map((f) => (
+                      <span key={f.id} className="prompter-viewer-feedback-at-playhead-item">
+                        <strong>{formatTime(f.time)}</strong>:{' '}
+                        <FeedbackHtmlSnippet html={f.text} />{' '}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <p className="prompter-hint prompter-viewer-feedback-richtext-hint">
+                  Shown for the <strong>current card/segment</strong> while the playhead is within that segment. Rich
+                  text is stored on the Canvas submission. <strong>Enter</strong> posts at the segment start;{' '}
+                  <strong>Shift+Enter</strong> is a new line.
+                </p>
+                <div className="prompter-viewer-textarea-wrap" onKeyDown={handleCommentKeyDown}>
+                  <TeacherFeedbackRichEditor
+                    key={`freeform-${current?.userId ?? 'none'}`}
+                    editorRef={commentEditorRef}
+                    initialHtml=""
+                    autoFocus={false}
+                  />
+                </div>
+              </div>
+            )}
+            </>
           )}
 
-          {/* Text / YouTube: full Canvas rubric in the center. Decks use the left table + “Active item” quick row only. */}
           {viewerGradingStackOrder && !isDeckPromptMode && rubric.length > 0 && (
             <div className="prompter-viewer-grading-below-submission prompter-viewer-slot-nondeck-grading-group">
               <div className="prompter-viewer-center-row prompter-viewer-center-row--active-header">
@@ -2587,7 +2620,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
 
           </div>
 
-          {teacher && !noSubmissionsInGradingMode && (
+          {teacher && !noSubmissionsInGradingMode && (!isDeckPromptMode || !viewerGradingStackOrder) && (
             <div
               className={`prompter-viewer-center-row prompter-viewer-center-row--freeform-feedback${viewerGradingStackOrder ? ' prompter-viewer-slot-freeform-group' : ''}`}
             >
