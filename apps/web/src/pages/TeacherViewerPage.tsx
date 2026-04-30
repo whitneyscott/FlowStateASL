@@ -570,7 +570,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
   const [configuredAssignments, setConfiguredAssignments] = useState<promptApi.ConfiguredAssignment[]>([]);
   const [loadingAssignments, setLoadingAssignments] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
-  /** Snap free-form feedback to the same deck row as the center panel (activeDeckRubricRowIndex), not raw video.currentTime. */
+  /** Snap free-form feedback to the same deck row as the active rubric row (activeDeckRubricRowIndex), not raw video.currentTime. */
   const deckFeedbackAnchorRef = useRef({
     isDeckPromptMode: false,
     deckTimeline: [] as DeckTimelineEntry[],
@@ -1306,8 +1306,8 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     [embedSubmissionVtt, submissionCaptionsVtt],
   );
   /**
-   * Teacher grading with a selected submission: stack order is video, then in-slot rubric (deck: Active
-   * item + quick ratings), then timestamped comment for deck+grading; non-deck keeps freeform after the slot.
+   * Teacher grading with a selected submission: stack order is video, then deck “Active item” (prompt only;
+   * rubric stays in the left sidebar), then timestamped freeform for deck+grading; non-deck keeps freeform after video.
    */
   const viewerGradingStackOrder = gradingMode && !!teacher && !!current && !noSubmissionsInGradingMode;
   /** OS/browser live-caption tips: only where transcript-style playback matters (not deck or static text). */
@@ -1498,7 +1498,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     return out;
   }, [feedbackEntries, deckTimeline, resolvedRubricDeckIndexMap]);
 
-  /** Rubric row for the deck segment at the playhead (middle panel + quick ratings). Prefer explicit card mapping when multiple rows tie to the same deck index. */
+  /** Rubric row for the deck segment at the playhead (anchors free-form feedback to the rubric row / card). Prefer explicit card mapping when multiple rows tie to the same deck index. */
   const activeDeckRubricRowIndex = useMemo(() => {
     if (activeDeckIndex < 0) return -1;
     const matches: number[] = [];
@@ -1516,26 +1516,6 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
     if (aligned != null) return aligned;
     return matches.sort((a, b) => a - b)[0];
   }, [activeDeckIndex, resolvedRubricDeckIndexMap, rubricPromptIndexMap]);
-
-  /**
-   * Row in `rubric` whose rating buttons to show in the main column under the video for the
-   * active card. Uses `activeDeckRubricRowIndex` when the Canvas rubric lines up with the deck; falls
-   * back so the quick grade strip does not vanish (e.g. 1:1 card/criterion by index, single
-   * criterion, or first row) when the strict mapper returns -1.
-   */
-  const quickGradeRubricRowIndex = useMemo(() => {
-    if (rubric.length === 0) return -1;
-    if (activeDeckRubricRowIndex >= 0 && activeDeckRubricRowIndex < rubric.length) {
-      return activeDeckRubricRowIndex;
-    }
-    if (activeDeckIndex < 0) return -1;
-    if (rubric.length === deckTimeline.length && activeDeckIndex < rubric.length) {
-      return activeDeckIndex;
-    }
-    if (rubric.length === 1) return 0;
-    if (activeDeckIndex < rubric.length) return activeDeckIndex;
-    return -1;
-  }, [rubric, activeDeckRubricRowIndex, activeDeckIndex, deckTimeline.length]);
 
   const activeCardRubricNotFullCredit = useMemo(() => {
     if (activeDeckRubricRowIndex < 0 || activeDeckRubricRowIndex >= rubric.length) return false;
@@ -1852,9 +1832,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
         >
           {rubric.length > 0 && (
             <div className="prompter-viewer-rubric-container">
-              <div className="prompter-viewer-feedback-title">
-                {isDeckPromptMode ? 'Rubric' : 'All time-stamped notes'}
-              </div>
+              <div className="prompter-viewer-feedback-title">Rubric</div>
               {isDeckPromptMode ? (
                 <table className="prompter-viewer-rubric-table">
                     <thead>
@@ -2006,66 +1984,127 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                     </tbody>
                 </table>
               ) : (
-                <div className="prompter-viewer-text-timestamped-col prompter-viewer-text-timestamped-col--sidebar-only">
-                  <div className="prompter-viewer-feedback-title">All timestamped feedback</div>
-                  <p className="prompter-viewer-hint-muted prompter-viewer-hint--sidebar-timestamped">
-                    Rubric ratings and criterion comments are under the student video. Below lists every time-stamped note; the
-                    strip under the video shows only notes for the current card/segment.
-                  </p>
-                  <table className="prompter-viewer-timestamped-feedback-table">
-                    <thead>
-                      <tr>
-                        <th>Time</th>
-                        <th>Feedback</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {feedbackEntries.length === 0 ? (
+                <>
+                  <div className="prompter-viewer-nondeck-grading-panels prompter-viewer-nondeck-grading-panels--sidebar">
+                    {rubric.map((c, rowIdx) => {
+                      const critId = String(c.id ?? rowIdx);
+                      const assess = getRubricRowAssessment(rubricAssessment, c, critId);
+                      const selectedRatingId = rubricDraft[critId]?.rating_id ?? assess?.rating_id;
+                      const commentVal = rubricDraft[critId]?.comments ?? '';
+                      return (
+                        <div key={`left-rubric-${critId}`} className="prompter-viewer-nondeck-criterion-panel">
+                          <div className="prompter-viewer-canvas-criterion-desc prompter-viewer-nondeck-criterion-title">
+                            {c.description ?? 'Criterion'}{' '}
+                            <span className="prompter-viewer-criterion-pts">({c.points ?? 0} pts)</span>
+                          </div>
+                          <div className="prompter-viewer-rubric-ratings prompter-viewer-nondeck-criterion-ratings">
+                            {c.ratings?.map((r) => {
+                              const rid = String(r.id ?? '');
+                              const pts = r.points ?? 0;
+                              const isSelected = selectedRatingId != null && String(selectedRatingId) === rid;
+                              return (
+                                <button
+                                  key={rid}
+                                  type="button"
+                                  className={`prompter-viewer-rubric-rating prompter-viewer-rubric-rating--active-item ${isSelected ? 'selected' : ''}`}
+                                  disabled={!teacher}
+                                  onClick={() => teacher && handleRubricRatingClick(critId, rid, pts)}
+                                >
+                                  {r.description ?? ''} ({pts} pts)
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <div className="prompter-viewer-criterion-comment-wrap">
+                            <label
+                              className="prompter-viewer-criterion-comment-label"
+                              htmlFor={`rubric-comment-left-${critId}`}
+                            >
+                              Criterion comment
+                            </label>
+                            <textarea
+                              id={`rubric-comment-left-${critId}`}
+                              className="prompter-viewer-criterion-comment-textarea"
+                              rows={2}
+                              value={commentVal}
+                              onChange={(e) =>
+                                setRubricDraft((prev) => ({
+                                  ...prev,
+                                  [critId]: { ...(prev[critId] ?? {}), comments: e.target.value },
+                                }))
+                              }
+                              onBlur={(e) => {
+                                if (!teacher) return;
+                                handleRubricCriterionCommentBlur(critId, e.target.value);
+                              }}
+                              disabled={!teacher}
+                              placeholder="Optional — saved to Canvas when you leave this field"
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="prompter-viewer-text-timestamped-col prompter-viewer-text-timestamped-col--sidebar-only">
+                    <div className="prompter-viewer-feedback-title">All timestamped feedback</div>
+                    <p className="prompter-viewer-hint-muted prompter-viewer-hint--sidebar-timestamped">
+                      Time-stamped notes below. Segment-scoped rich comments are added under the video (free-form feedback).
+                    </p>
+                    <table className="prompter-viewer-timestamped-feedback-table">
+                      <thead>
                         <tr>
-                          <td colSpan={2}>
-                            <span className="prompter-viewer-feedback-empty-inline">No timestamped feedback</span>
-                          </td>
+                          <th>Time</th>
+                          <th>Feedback</th>
                         </tr>
-                      ) : (
-                        feedbackEntries.map((f) => (
-                          <tr key={`ts-${f.id}`}>
-                            <td className="prompter-viewer-timestamped-time-cell">{formatTime(f.time)}</td>
-                            <td>
-                              <button
-                                type="button"
-                                className="prompter-viewer-feedback-seek-btn"
-                                onClick={() => handleFeedbackClick(f.time)}
-                              >
-                                Seek
-                              </button>
-                              <div className="prompter-viewer-timestamped-feedback-html">
-                                <FeedbackHtmlSnippet html={f.text} />
-                              </div>
-                              {teacher && (
-                                <div className="prompter-viewer-comment-actions">
-                                  <button
-                                    type="button"
-                                    className="prompter-viewer-comment-action-btn"
-                                    onClick={() => handleEditComment(f)}
-                                  >
-                                    Edit
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="prompter-viewer-comment-action-btn danger"
-                                    onClick={() => handleDeleteComment(f)}
-                                  >
-                                    Delete
-                                  </button>
-                                </div>
-                              )}
+                      </thead>
+                      <tbody>
+                        {feedbackEntries.length === 0 ? (
+                          <tr>
+                            <td colSpan={2}>
+                              <span className="prompter-viewer-feedback-empty-inline">No timestamped feedback</span>
                             </td>
                           </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+                        ) : (
+                          feedbackEntries.map((f) => (
+                            <tr key={`ts-${f.id}`}>
+                              <td className="prompter-viewer-timestamped-time-cell">{formatTime(f.time)}</td>
+                              <td>
+                                <button
+                                  type="button"
+                                  className="prompter-viewer-feedback-seek-btn"
+                                  onClick={() => handleFeedbackClick(f.time)}
+                                >
+                                  Seek
+                                </button>
+                                <div className="prompter-viewer-timestamped-feedback-html">
+                                  <FeedbackHtmlSnippet html={f.text} />
+                                </div>
+                                {teacher && (
+                                  <div className="prompter-viewer-comment-actions">
+                                    <button
+                                      type="button"
+                                      className="prompter-viewer-comment-action-btn"
+                                      onClick={() => handleEditComment(f)}
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="prompter-viewer-comment-action-btn danger"
+                                      onClick={() => handleDeleteComment(f)}
+                                    >
+                                      Delete
+                                    </button>
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
               )}
               {teacher && rubricSaveStatus && (
                 <span className="prompter-viewer-rubric-save-status">{rubricSaveStatus}</span>
@@ -2433,60 +2472,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                 <h2 className="prompter-viewer-section-heading">Active item</h2>
               </div>
               <div className="prompter-viewer-center-row prompter-viewer-center-row--active-item">
-                {activeDeckPrompt && quickGradeRubricRowIndex >= 0 && rubric[quickGradeRubricRowIndex] ? (
-                  <div className="prompter-viewer-active-item-panel prompter-viewer-active-item-panel--stacked">
-                    <div className="prompter-viewer-active-item-ratings">
-                      {rubric[quickGradeRubricRowIndex].ratings?.map((r) => {
-                        const c = rubric[quickGradeRubricRowIndex];
-                        const critId = String(c.id ?? quickGradeRubricRowIndex);
-                        const selectedRatingId =
-                          rubricDraft[critId]?.rating_id ?? getRubricRowAssessment(rubricAssessment, c, critId)?.rating_id;
-                        const rid = String(r.id ?? '');
-                        const pts = r.points ?? 0;
-                        const isSelected = selectedRatingId != null && String(selectedRatingId) === rid;
-                        return (
-                          <button
-                            key={`active-${rid}`}
-                            type="button"
-                            className={`prompter-viewer-rubric-rating prompter-viewer-rubric-rating--active-item ${isSelected ? 'selected' : ''}`}
-                            disabled={!teacher}
-                            onClick={() => teacher && handleRubricRatingClick(critId, rid, pts)}
-                          >
-                            {r.description ?? ''} ({pts} pts)
-                          </button>
-                        );
-                      })}
-                    </div>
-                    <div className="prompter-viewer-active-item-meta">
-                      <div className="prompter-viewer-active-item-time-prompt-inline">
-                        <span className="prompter-viewer-active-item-time">
-                          {formatTime(Math.floor(activeDeckPrompt.startSec))}
-                        </span>
-                        <div
-                          className="prompter-viewer-active-item-prompt-html"
-                          dangerouslySetInnerHTML={{ __html: activeDeckPrompt.title || '—' }}
-                        />
-                        {showSourceCardButton && (
-                          <button
-                            type="button"
-                            className="prompter-viewer-show-source-card-btn prompter-viewer-show-source-card-btn--inline-prompt"
-                            disabled={!activeDeckSproutVideoId || !activeDeckSproutSecurityToken}
-                            title={
-                              !activeDeckSproutVideoId
-                                ? 'No Sprout source video is recorded for this card on the timeline'
-                                : !activeDeckSproutSecurityToken
-                                  ? 'No Sprout security token for this card (sync decks or re-submit to refresh)'
-                                  : 'Pause submission video and open the Sprout source for this card'
-                            }
-                            onClick={openSourceCardModal}
-                          >
-                            Show me the card
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ) : activeDeckPrompt ? (
+                {activeDeckPrompt ? (
                   <div className="prompter-viewer-active-item-panel prompter-viewer-active-item-panel--prompt-only prompter-viewer-active-item-panel--stacked">
                     <div className="prompter-viewer-active-item-meta">
                       <div className="prompter-viewer-active-item-time-prompt-inline">
@@ -2518,9 +2504,7 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
                     </div>
                     {rubric.length > 0 ? (
                       <p className="prompter-viewer-active-item-hint" role="status">
-                        No quick grade row is aligned for this card with the current rubric. Use the
-                        table in the left column, or fix rubric descriptions / card count vs. criteria
-                        count.
+                        Rubric ratings and per-criterion comments are in the table on the left.
                       </p>
                     ) : null}
                   </div>
@@ -2560,71 +2544,6 @@ export default function TeacherViewerPage({ context }: TeacherViewerPageProps) {
               </div>
             )}
             </>
-          )}
-
-          {viewerGradingStackOrder && !isDeckPromptMode && rubric.length > 0 && (
-            <div className="prompter-viewer-grading-below-submission prompter-viewer-slot-nondeck-grading-group">
-              <div className="prompter-viewer-center-row prompter-viewer-center-row--active-header">
-                <h2 className="prompter-viewer-section-heading">Rubric (this response)</h2>
-              </div>
-              <div className="prompter-viewer-nondeck-grading-panels">
-                {rubric.map((c, rowIdx) => {
-                  const critId = String(c.id ?? rowIdx);
-                  const assess = getRubricRowAssessment(rubricAssessment, c, critId);
-                  const selectedRatingId = rubricDraft[critId]?.rating_id ?? assess?.rating_id;
-                  const commentVal = rubricDraft[critId]?.comments ?? '';
-                  return (
-                    <div key={`center-rubric-${critId}`} className="prompter-viewer-nondeck-criterion-panel">
-                      <div className="prompter-viewer-canvas-criterion-desc prompter-viewer-nondeck-criterion-title">
-                        {c.description ?? 'Criterion'}{' '}
-                        <span className="prompter-viewer-criterion-pts">({c.points ?? 0} pts)</span>
-                      </div>
-                      <div className="prompter-viewer-rubric-ratings prompter-viewer-nondeck-criterion-ratings">
-                        {c.ratings?.map((r) => {
-                          const rid = String(r.id ?? '');
-                          const pts = r.points ?? 0;
-                          const isSelected = selectedRatingId != null && String(selectedRatingId) === rid;
-                          return (
-                            <button
-                              key={rid}
-                              type="button"
-                              className={`prompter-viewer-rubric-rating prompter-viewer-rubric-rating--active-item ${isSelected ? 'selected' : ''}`}
-                              disabled={!teacher}
-                              onClick={() => teacher && handleRubricRatingClick(critId, rid, pts)}
-                            >
-                              {r.description ?? ''} ({pts} pts)
-                            </button>
-                          );
-                        })}
-                      </div>
-                      <div className="prompter-viewer-criterion-comment-wrap">
-                        <label className="prompter-viewer-criterion-comment-label" htmlFor={`rubric-comment-center-${critId}`}>
-                          Criterion comment
-                        </label>
-                        <textarea
-                          id={`rubric-comment-center-${critId}`}
-                          className="prompter-viewer-criterion-comment-textarea"
-                          rows={2}
-                          value={commentVal}
-                          onChange={(e) =>
-                            setRubricDraft((prev) => ({
-                              ...prev,
-                              [critId]: { ...(prev[critId] ?? {}), comments: e.target.value },
-                            }))
-                          }
-                          onBlur={(e) => {
-                            if (!teacher) return;
-                            handleRubricCriterionCommentBlur(critId, e.target.value);
-                          }}
-                          disabled={!teacher}
-                          placeholder="Optional — saved to Canvas when you leave this field"
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
           )}
 
           </div>

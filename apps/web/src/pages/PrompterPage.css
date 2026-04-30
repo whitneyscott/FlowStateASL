@@ -1418,8 +1418,8 @@
 }
 
 /**
- * Grading: video first, then deck (Active item + quick ratings), then timestamped comment in DOM order
- * (deck + comment use a Fragment; React hoists to direct children of this row).
+ * Grading: video first, then deck “Active item” (prompt context only; rubric stays in the left sidebar),
+ * then timestamped free-form comment in DOM order.
  * Flex column = stable top-to-bottom stack (same as a one-column table).
  */
 .prompter-viewer-slot-submission-media {
@@ -1433,8 +1433,7 @@
 }
 
 /**
- * Grading: quick (Correct/Incorrect) row and prompt are nested in slot-submission-media so they sit
- * directly under the video; main column order follows source order (no flex order on children).
+ * Deck grading: active-card prompt sits under the video; rubric controls are only in the left sidebar.
  */
 .prompter-viewer-grading-below-submission {
   margin-top: 10px;
@@ -2281,7 +2280,7 @@
   min-height: 44px;
 }
 
-/* Text / YouTube (non-deck) rubric: directly under the student video, above timestamped feedback. */
+/* Non-deck rubric panels (text / YouTube): shown in the left sidebar above the timestamped list. */
 .prompter-viewer-nondeck-grading-panels {
   display: flex;
   flex-direction: column;
@@ -2289,6 +2288,10 @@
   width: 100%;
   max-width: 100%;
   min-width: 0;
+}
+
+.prompter-viewer-nondeck-grading-panels--sidebar {
+  margin-bottom: 12px;
 }
 .prompter-viewer-nondeck-criterion-panel {
   padding: 12px 14px;
